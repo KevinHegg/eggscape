@@ -1,5 +1,5 @@
 import RAPIER from "@dimforge/rapier3d-deterministic-compat";
-import { COURSE, courseEnd, heightAt, slopeAt, type CourseDef, type MobDef } from "./course";
+import { COURSE, courseEnd, heightAt, slopeAt, type ClutterDef, type ClutterKind, type CourseDef, type MobDef } from "./course";
 
 /** Fixed simulation step. Slow motion changes how many steps run, never the step. */
 export const STEP = 1 / 60;
@@ -54,6 +54,16 @@ const GUN_COOLDOWN = 0.4;
 export const GUN_RANGE = 25;
 const SHOT_SPEED = 44;
 const SHOT_SCATTER = 2.4;
+
+// The sling. One of the men has a bag of stones and no particular orders.
+export const START_STONES = 12;
+export const SLING_RANGE = 30;
+const SLING_COOLDOWN = 0.18;
+const STONE_SPEED = 60;
+/** Seconds a cook keeps his head down after a stone finds him. */
+export const DUCK = 2.5;
+/** Seconds the whole kitchen stands and stares when the Queen loses her crown. */
+const GASP = 3;
 
 // The bell.
 /** The tower lets go of the bell when it has fallen this far, in radians from upright. */
@@ -122,18 +132,21 @@ export interface Flight {
 
 export type GameEvent =
   | { type: "shoot" }
+  | { type: "sling"; to: Vec3 }
+  | { type: "ping"; at: Vec3; what: "pan" | "cook" | "ground"; kind: number }
+  | { type: "smash"; id: number; kind: ClutterKind; at: Vec3 }
   | { type: "bang"; at: Vec3; target: TargetKind }
-  | { type: "dry"; why: "empty" | "aimless" }
+  | { type: "dry"; why: "empty" | "aimless" | "stones" | "far" }
   | { type: "brake" }
   | { type: "letGo"; at: Vec3 }
   | { type: "bellLoose"; at: Vec3 }
   | { type: "slam"; at: Vec3 }
   | { type: "toll"; at: Vec3; hard: number }
   | { type: "panic"; id: number; rank: number }
-  | { type: "bowled"; id: number; at: Vec3; by: "bell" | "wain" | "shot" | "cart" }
+  | { type: "bowled"; id: number; at: Vec3; by: Bowler }
   | { type: "regroup"; rank: number }
   | { type: "throw"; id: number }
-  | { type: "pan"; at: Vec3; hit: boolean }
+  | { type: "pan"; at: Vec3; hit: boolean; kind: number }
   | { type: "wainOff"; at: Vec3 }
   | { type: "wainCrash"; at: Vec3 }
   | { type: "jolt"; amount: number; absorbed: number }
@@ -143,7 +156,8 @@ export type GameEvent =
   | { type: "air"; time: number; distance: number }
   | { type: "finish" };
 
-export type PropKind = "hay" | "beam" | "shell" | "block" | "folk";
+export type PropKind = "hay" | "beam" | "shell" | "block" | "folk" | "shard" | "hen" | "crown";
+export type Bowler = "bell" | "wain" | "shot" | "cart" | "pot";
 
 /** A loose physical thing the view draws by id. */
 export interface Prop {
@@ -196,6 +210,38 @@ export interface Pan {
   from: Vec3;
   to: Vec3;
   t: number;
+  /** A stone is on its way to it. */
+  doomed: boolean;
+}
+
+/** What a slung stone is meant for: something thrown, a cook, a piece of clutter, or just a spot. */
+export type SlingAim = { pan: number } | { cook: number } | { clutter: number } | { at: Vec3 };
+
+/** A stone from the sling, on its way. */
+export interface Stone {
+  id: number;
+  from: Vec3;
+  to: Vec3;
+  t: number;
+  total: number;
+  aim: SlingAim;
+}
+
+export interface Clutter {
+  def: ClutterDef;
+  at: Vec3;
+  /** Set off already. */
+  done: boolean;
+}
+
+/** Where a thrown thing is, `t` seconds into its flight. */
+export function panAt(pan: Pan, t: number = pan.t): Vec3 {
+  const k = clamp(t / PAN_FLIGHT, 0, 1);
+  return {
+    x: pan.from.x + (pan.to.x - pan.from.x) * k,
+    y: pan.from.y + (pan.to.y - pan.from.y) * k + Math.sin(k * Math.PI) * 2.2,
+    z: pan.from.z + (pan.to.z - pan.from.z) * k,
+  };
 }
 
 export interface Input {
@@ -205,6 +251,8 @@ export interface Input {
   brake?: number;
   /** Fire this step: at the named target, or with `true` at whatever is next in range. */
   shoot?: string | boolean;
+  /** Sling a stone this step. */
+  sling?: SlingAim;
 }
 
 let ready: Promise<void> | null = null;
@@ -279,6 +327,8 @@ export class Game {
   airtime = 0;
   /** Rounds left in the rack. */
   ammo = START_AMMO;
+  /** Stones left in the sling bag. */
+  stones = START_STONES;
   /** Pans that landed and townsfolk run into: none is a clean street. */
   knocks = 0;
 
@@ -291,6 +341,8 @@ export class Game {
   readonly wain: Wain;
   readonly mob: Mobster[] = [];
   readonly pans: Pan[] = [];
+  readonly stoneFlights: Stone[] = [];
+  readonly clutter: Clutter[] = [];
   readonly props: Prop[] = [];
 
   private events: GameEvent[] = [];
@@ -303,6 +355,9 @@ export class Game {
   private tipTime = 0;
   private stalled = 0;
   private gunCooldown = 0;
+  private slingCooldown = 0;
+  /** Until when the kitchen is too shocked to throw. */
+  private gasp = 0;
   private airFrom = 0;
   private readonly regrouped = new Map<number, number>();
 
@@ -353,6 +408,9 @@ export class Game {
     this.wain = this.parkWain();
     for (const def of course.mob) {
       this.mob.push({ def, pos: { x: def.x, y: heightAt(course, def.d), z: -def.d }, state: "stand", until: 0, next: -1 });
+    }
+    for (const def of course.clutter) {
+      this.clutter.push({ def, at: { x: def.x, y: heightAt(course, def.d) + def.up, z: -def.d }, done: false });
     }
     const windlass = course.windlass;
     this.targets.push({ id: "windlass", kind: "windlass", at: { x: windlass.x, y: heightAt(course, windlass.d) + 1.1, z: -windlass.d }, lit: false, done: false, doomed: false });
@@ -446,9 +504,12 @@ export class Game {
     if (this.over) this.after += STEP;
 
     this.gunCooldown = Math.max(0, this.gunCooldown - STEP);
+    this.slingCooldown = Math.max(0, this.slingCooldown - STEP);
     this.aim();
     if (!this.over && input.shoot) this.shoot(input.shoot);
+    if (!this.over && input.sling) this.sling(input.sling);
     this.stepFlights();
+    this.stepStones();
 
     this.steer(this.over ? 0 : input.lean);
     this.push(this.over ? 0 : clamp(input.brake ?? 0, 0, 1));
@@ -601,6 +662,123 @@ export class Game {
       if (one.def.rank !== rank || one.state === "out") continue;
       if (Math.hypot(one.pos.x - at.x, one.pos.z - at.z) <= SHOT_SCATTER) this.bowl(one, "shot", { x: (one.pos.x - at.x) * 3, y: 7, z: -3 });
       else this.dive(one);
+    }
+  }
+
+  // ---------------------------------------------------------------- the sling
+
+  /**
+   * A stone at whatever was pointed at. It costs nothing to miss but the stone; it will knock a
+   * thrown pan out of the air, put a cook's head down for a moment, and set off anything loose.
+   */
+  private sling(aim: SlingAim): void {
+    if (this.slingCooldown > 0) return;
+    if (this.stones <= 0) {
+      this.slingCooldown = 0.3;
+      this.events.push({ type: "dry", why: "stones" });
+      return;
+    }
+    const cart = this.chassis.translation();
+    const from = { x: cart.x - 0.5, y: cart.y + 1.2, z: cart.z - 0.8 };
+    let to: Vec3;
+    let total = 0;
+    if ("pan" in aim) {
+      const pan = this.pans.find((one) => one.id === aim.pan && !one.doomed);
+      if (!pan) return;
+      // A stone in time always gets there: it is laid off for where the thing will be.
+      const left = PAN_FLIGHT - pan.t - STEP;
+      if (left < STEP * 2) return;
+      const now = panAt(pan);
+      total = clamp(Math.hypot(now.x - from.x, now.y - from.y, now.z - from.z) / STONE_SPEED, 0.08, left);
+      to = panAt(pan, pan.t + total);
+      pan.doomed = true;
+    } else if ("cook" in aim) {
+      const one = this.mob.find((cook) => cook.def.id === aim.cook);
+      if (!one || one.state === "out") return;
+      to = { x: one.pos.x, y: one.pos.y + 1.1, z: one.pos.z };
+    } else if ("clutter" in aim) {
+      const thing = this.clutter.find((one) => one.def.id === aim.clutter);
+      if (!thing || thing.done) return;
+      to = { ...thing.at };
+    } else {
+      to = { ...aim.at };
+    }
+    let reach = Math.hypot(to.x - from.x, to.y - from.y, to.z - from.z);
+    if (reach > SLING_RANGE) {
+      if (!("at" in aim)) {
+        this.slingCooldown = 0.3;
+        this.events.push({ type: "dry", why: "far" });
+        return;
+      }
+      // A stone at nothing in particular just falls short.
+      const k = SLING_RANGE / reach;
+      to = { x: from.x + (to.x - from.x) * k, y: heightAt(this.course, -(from.z + (to.z - from.z) * k)), z: from.z + (to.z - from.z) * k };
+      reach = SLING_RANGE;
+    }
+    if (total === 0) total = clamp(reach / STONE_SPEED, 0.1, 0.6);
+    this.stones -= 1;
+    this.slingCooldown = SLING_COOLDOWN;
+    this.stoneFlights.push({ id: this.nextId++, from, to, t: 0, total, aim });
+    this.events.push({ type: "sling", to: { ...to } });
+  }
+
+  private stepStones(): void {
+    for (let index = this.stoneFlights.length - 1; index >= 0; index -= 1) {
+      const stone = this.stoneFlights[index]!;
+      stone.t += STEP;
+      if (stone.t < stone.total) continue;
+      this.stoneFlights.splice(index, 1);
+      const aim = stone.aim;
+      if ("pan" in aim) {
+        const at = this.pans.findIndex((one) => one.id === aim.pan);
+        if (at >= 0) {
+          const pan = this.pans[at]!;
+          this.pans.splice(at, 1);
+          this.events.push({ type: "ping", at: { ...stone.to }, what: "pan", kind: pan.by });
+          continue;
+        }
+      } else if ("cook" in aim) {
+        const one = this.mob.find((cook) => cook.def.id === aim.cook);
+        if (one?.state === "stand") {
+          this.dive(one, DUCK);
+          this.events.push({ type: "ping", at: { ...stone.to }, what: "cook", kind: one.def.id });
+          continue;
+        }
+      } else if ("clutter" in aim) {
+        const thing = this.clutter.find((one) => one.def.id === aim.clutter);
+        if (thing && !thing.done) {
+          this.smash(thing);
+          continue;
+        }
+      }
+      this.events.push({ type: "ping", at: { ...stone.to }, what: "ground", kind: 0 });
+    }
+  }
+
+  /** Something in the village goes: whoever is under it is flattened, whoever is near it dives. */
+  private smash(thing: Clutter): void {
+    thing.done = true;
+    const at = thing.at;
+    const kind = thing.def.kind;
+    this.events.push({ type: "smash", id: thing.def.id, kind, at: { ...at } });
+    const inward = -Math.sign(at.x || 1);
+    if (kind === "pot") {
+      for (let piece = 0; piece < 4; piece += 1) this.spawn("shard", { x: 0.16, y: 0.1, z: 0.16 }, 2, { x: at.x, y: at.y - 0.2, z: at.z }, { x: this.random() * 4 - 2, y: this.random() * 2, z: this.random() * 4 - 2 });
+    } else if (kind === "barrel") {
+      for (let piece = 0; piece < 6; piece += 1) this.spawn("beam", { x: 0.07, y: 0.07, z: 0.5 }, 2, { x: at.x, y: at.y, z: at.z }, { x: inward * (1 + this.random() * 5), y: 3 + this.random() * 4, z: -2 - this.random() * 5 });
+    } else if (kind === "coop") {
+      for (let piece = 0; piece < 4; piece += 1) this.spawn("beam", { x: 0.06, y: 0.06, z: 0.4 }, 1, { x: at.x, y: at.y, z: at.z }, { x: inward * this.random() * 4, y: 3 + this.random() * 3, z: this.random() * 4 - 2 });
+      for (let hen = 0; hen < 4; hen += 1) this.spawn("hen", { x: 0.22, y: 0.1, z: 0.22 }, 1, { x: at.x, y: at.y + 0.3, z: at.z }, { x: inward * (2 + this.random() * 4), y: 5 + this.random() * 3, z: -1 - this.random() * 6 });
+    } else {
+      // Her crown, off the balcony and into the street.
+      this.spawn("crown", { x: 0.3, y: 0.14, z: 0.3 }, 1, { x: at.x, y: at.y + 0.3, z: at.z }, { x: inward * 3.5, y: 5, z: -1.5 });
+      this.gasp = this.time + GASP;
+    }
+    for (const one of this.mob) {
+      if (one.state === "out") continue;
+      const away = Math.hypot(one.pos.x - at.x, one.pos.z - at.z);
+      if (away <= thing.def.bowl) this.bowl(one, "pot", { x: inward * 2, y: 4, z: -3 });
+      else if (away <= thing.def.fright) this.dive(one);
     }
   }
 
@@ -843,7 +1021,7 @@ export class Game {
       const ahead = one.def.d - d;
       if (ahead > THROW_REACH || ahead < -3) continue;
       if (one.next < 0) one.next = this.time + 0.25 + this.random() * 0.9;
-      if (this.time < one.next) continue;
+      if (this.time < one.next || this.time < this.gasp) continue;
       one.next = this.time + THROW_EVERY + this.random() * 0.4;
       // Thrown at where he will be if nothing changes. Change something.
       const reach = this.course.width / 2 - 0.5;
@@ -854,20 +1032,21 @@ export class Game {
         from: { x: one.pos.x, y: one.pos.y + 1.6, z: one.pos.z },
         to: { x: clamp(cart.x + v.x * PAN_FLIGHT, -reach, reach), y: heightAt(this.course, toD) + 0.9, z: -toD },
         t: 0,
+        doomed: false,
       });
       this.events.push({ type: "throw", id: one.def.id });
     }
   }
 
-  private dive(one: Mobster): void {
+  private dive(one: Mobster, seconds: number = PANIC): void {
     if (one.state === "out") return;
     const fresh = one.state === "stand";
     one.state = "down";
-    one.until = this.time + PANIC;
+    one.until = fresh ? this.time + seconds : Math.max(one.until, this.time + seconds);
     if (fresh) this.events.push({ type: "panic", id: one.def.id, rank: one.def.rank });
   }
 
-  private bowl(one: Mobster, by: "bell" | "wain" | "shot" | "cart", velocity: Vec3): void {
+  private bowl(one: Mobster, by: Bowler, velocity: Vec3): void {
     if (one.state === "out") return;
     one.state = "out";
     this.spawn("folk", { x: 0.26, y: 0.3, z: 0.26 }, 8, { x: one.pos.x, y: one.pos.y + 1, z: one.pos.z }, velocity);
@@ -882,7 +1061,7 @@ export class Game {
       if (pan.t < PAN_FLIGHT) continue;
       this.pans.splice(index, 1);
       const hit = !this.over && Math.hypot(cart.x - pan.to.x, cart.z - pan.to.z) <= PAN_REACH && Math.abs(cart.y - pan.to.y) < 2.5;
-      this.events.push({ type: "pan", at: { ...pan.to }, hit });
+      this.events.push({ type: "pan", at: { ...pan.to }, hit, kind: pan.by });
       if (hit) {
         this.knocks += 1;
         this.damage(PAN_DAMAGE, "mob");
@@ -899,7 +1078,7 @@ export class Game {
         .setLinvel(velocity.x, velocity.y, velocity.z)
         .setAngvel({ x: this.random() * 10 - 5, y: this.random() * 10 - 5, z: this.random() * 10 - 5 }),
     );
-    const shape = kind === "folk" ? RAPIER.ColliderDesc.capsule(size.y, size.x) : RAPIER.ColliderDesc.cuboid(size.x, size.y, size.z);
+    const shape = kind === "folk" || kind === "hen" ? RAPIER.ColliderDesc.capsule(size.y, size.x) : RAPIER.ColliderDesc.cuboid(size.x, size.y, size.z);
     this.world.createCollider(shape.setMass(mass).setFriction(0.8).setRestitution(0.2).setCollisionGroups(RUBBLE_GROUPS), body);
     const prop: Prop = { id: this.nextId++, kind, body, size, age: 0 };
     this.props.push(prop);

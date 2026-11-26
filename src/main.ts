@@ -2,7 +2,7 @@ import "./style.css";
 import { Sound } from "./audio";
 import { View } from "./render/view";
 import { leanAt, leanToward, steady } from "./sim/autoplay";
-import { Game, START_AMMO, START_HAY, STEP, initPhysics, type GameEvent } from "./sim/game";
+import { Game, START_AMMO, START_HAY, STEP, initPhysics, type GameEvent, type Input, type SlingAim } from "./sim/game";
 
 const STORAGE_KEY = "eggscape:v2";
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -53,16 +53,20 @@ let drag: Drag | null = null;
 const keys = new Set<string>();
 /** A shot was asked for and the sim has not yet heard: at a named target, or at whatever is next. */
 let trigger: string | true | null = null;
+/** A stone was asked for, and at what. */
+let slung: SlingAim | null = null;
+/** What the cooks throw, by which of them threw it. */
+const THROWN = ["Pan", "Rolling pin", "Egg beater", "Cabbage"] as const;
 /** Seconds the world holds its breath after a big hit. */
 let freeze = 0;
 let flying = false;
 let rounds = -1;
+let stones = -1;
 const hinted = new Map<string, number>();
 let steered = false;
 let cushioned = 0;
 /** What this run has to show for itself. */
 let bowled = 0;
-let pans = 0;
 /** How the tower stood when he broke, for the telling of it. */
 let towerAtEnd: Game["tower"]["state"] = "held";
 
@@ -83,13 +87,14 @@ async function stage(run: boolean): Promise<void> {
   resultShown = false;
   accumulator = 0;
   trigger = null;
+  slung = null;
   freeze = 0;
   flying = false;
   rounds = -1;
+  stones = -1;
   drag = null;
   cushioned = 0;
   bowled = 0;
-  pans = 0;
   towerAtEnd = "held";
   if (run) drawBar();
 }
@@ -110,6 +115,11 @@ function drawHud(current: Game): void {
   if (current.ammo !== rounds) {
     rounds = current.ammo;
     $("rounds").innerHTML = rounds > 0 ? Array.from({ length: START_AMMO }, (_, index) => `<i class="${index < rounds ? "" : "spent"}"></i>`).join("") : "empty";
+  }
+  if (current.stones !== stones) {
+    stones = current.stones;
+    $("stones").textContent = String(stones);
+    $("sling").classList.toggle("empty", stones === 0);
   }
   const fire = $("fire");
   fire.classList.toggle("empty", current.ammo === 0);
@@ -149,7 +159,39 @@ function narrate(event: GameEvent, current: Game): void {
     case "dry":
       sound.click();
       if (event.why === "empty") hint("dry", "Three rounds were all he had");
+      else if (event.why === "stones") hint("stones", "The bag is empty");
+      else if (event.why === "far") hint("far", "Too far for a stone");
       else hint("aimless", "Out of range: wait for a ring to turn gold");
+      break;
+    case "sling":
+      sound.sling();
+      break;
+    case "ping":
+      if (event.what === "pan") {
+        sound.clang();
+        toast(`${THROWN[event.kind % 4]} down!`);
+      } else if (event.what === "cook") {
+        sound.swat(false);
+        toast("Ow!");
+      } else sound.splinter();
+      break;
+    case "smash":
+      if (event.kind === "coop") {
+        sound.splinter();
+        sound.cluck();
+        toast("Hens loose!");
+      } else if (event.kind === "barrel") {
+        sound.smash();
+        sound.splash();
+        toast("The Queen's claret!");
+      } else if (event.kind === "queen") {
+        sound.clang();
+        sound.lost();
+        toast("Her crown!");
+      } else {
+        sound.crack(true);
+        sound.rubble(3);
+      }
       break;
     case "letGo":
       sound.groan();
@@ -177,12 +219,12 @@ function narrate(event: GameEvent, current: Game): void {
       break;
     case "throw":
       sound.whoosh();
+      hint("sling", "Tap what they throw to knock it down");
       break;
     case "pan":
       if (event.hit) {
-        pans += 1;
         sound.clang();
-        toast(["Pan!", "Rolling pin!", "Egg beater!", "Cabbage!"][pans % 4]!, "bad");
+        toast(`${THROWN[event.kind % 4]}!`, "bad");
       } else sound.splinter();
       break;
     case "wainOff":
@@ -319,10 +361,22 @@ function steer(current: Game): { lean: number; brake: number } {
   return { lean: leanAt(current, Math.max(-1, Math.min(1, rate))), brake };
 }
 
-/** A touch that means the gun: at the gold ring under it, or failing that at whatever is next. */
+/** A touch on the street: a round at the gold ring under it, or a stone at whatever else is there. */
 function tap(x: number, y: number): void {
   if (!game) return;
-  trigger = view.pick(x, y, game) ?? true;
+  const pick = view.pickAt(x, y, game);
+  if ("shoot" in pick) trigger = pick.shoot;
+  else slung = pick.sling;
+}
+
+/** What the hands are asking for this step, and nothing held over to the next. */
+function hands(current: Game): Input {
+  const input: Input = steer(current);
+  if (trigger !== null) input.shoot = trigger;
+  if (slung) input.sling = slung;
+  trigger = null;
+  slung = null;
+  return input;
 }
 
 const stageHost = $("stage");
@@ -418,10 +472,8 @@ $("again").addEventListener("click", () => void start());
 
 function advance(current: Game, steps: number): void {
   for (let index = 0; index < steps; index += 1) {
-    const shoot = trigger;
-    trigger = null;
-    const input = auto ? steady(current) : shoot === null ? steer(current) : { ...steer(current), shoot };
-    current.step(input);
+    const asked = hands(current);
+    current.step(auto ? steady(current) : asked);
     for (const event of current.takeEvents()) {
       view.handle(event, current);
       narrate(event, current);
@@ -470,17 +522,18 @@ Object.assign(window, {
     },
     view,
     start,
-    step(seconds: number, input: { lean?: number; goal?: number; brake?: number; shoot?: string | boolean } = {}) {
+    step(seconds: number, input: { lean?: number; goal?: number; brake?: number; shoot?: string | boolean; sling?: SlingAim } = {}) {
       if (!game) return null;
       const steps = Math.round(seconds / STEP);
       for (let index = 0; index < steps; index += 1) {
         // With nothing said, whatever finger or key is down steers, as it would in a live frame.
-        const hands = steer(game);
-        const lean = input.goal !== undefined ? leanToward(game, input.goal) : (input.lean ?? hands.lean);
-        const asked = index === 0 ? (input.shoot || trigger || null) : null;
-        if (index === 0) trigger = null;
-        const brake = input.brake ?? hands.brake;
-        game.step(auto ? steady(game) : asked ? { lean, brake, shoot: asked } : { lean, brake });
+        const asked = hands(game);
+        if (input.goal !== undefined) asked.lean = leanToward(game, input.goal);
+        else if (input.lean !== undefined) asked.lean = input.lean;
+        if (input.brake !== undefined) asked.brake = input.brake;
+        if (index === 0 && input.shoot) asked.shoot = input.shoot;
+        if (index === 0 && input.sling) asked.sling = input.sling;
+        game.step(auto ? steady(game) : asked);
         for (const event of game.takeEvents()) {
           view.handle(event, game);
           narrate(event, game);
@@ -490,7 +543,7 @@ Object.assign(window, {
       drawHud(game);
       coach(game);
       if (game.over && !resultShown && game.after > (game.phase === "won" ? 3.4 : 2.4)) showResult(game);
-      return { d: Math.round(game.distance), v: Math.round(game.speed * 10) / 10, shell: Math.round(game.shell), hay: game.hay, ammo: game.ammo, phase: game.phase, cause: game.cause, tower: game.tower.state };
+      return { d: Math.round(game.distance), v: Math.round(game.speed * 10) / 10, shell: Math.round(game.shell), hay: game.hay, ammo: game.ammo, stones: game.stones, phase: game.phase, cause: game.cause, tower: game.tower.state };
     },
   },
 });

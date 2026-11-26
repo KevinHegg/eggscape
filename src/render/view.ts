@@ -1,6 +1,9 @@
 import * as pc from "playcanvas";
 import { chasms, courseEnd, heightAt, type CourseDef } from "../sim/course";
-import { MEN, type Game, type GameEvent, type Prop, type Vec3 } from "../sim/game";
+import { MEN, SLING_RANGE, panAt, type Game, type GameEvent, type Prop, type SlingAim, type Vec3 } from "../sim/game";
+
+/** What a touch on the street means: a round from the gun at a ringed target, or a stone at anything else. */
+export type Pick = { shoot: string } | { sling: SlingAim };
 
 type Triple = readonly [number, number, number];
 type Shape = "box" | "sphere" | "cylinder" | "cone" | "capsule";
@@ -110,6 +113,9 @@ export class View {
   private readonly sights = new Map<string, pc.Entity>();
   private readonly props = new Map<number, pc.Entity>();
   private readonly shots = new Map<number, pc.Entity>();
+  private readonly stones = new Map<number, pc.Entity>();
+  /** The part of each piece of clutter that goes when it is hit. */
+  private readonly clutter = new Map<number, pc.Entity>();
 
   private hen: { root: pc.Entity; head: pc.Entity; wings: pc.Entity[] } | null = null;
   private puffs: Puff[] = [];
@@ -309,19 +315,23 @@ export class View {
     if (hat === "cap") this.shape("sphere", root, [0, 0.86, 0], [0.34, 0.2, 0.34], m.canvas, [0, 0, 0], batch);
     else if (hat === "straw") this.shape("cylinder", root, [0, 0.85, 0], [0.48, 0.05, 0.48], m.hay, [0, 0, 0], batch);
     else if (hat === "hood") this.shape("cone", root, [0, 0.9, 0], [0.32, 0.28, 0.32], coat, [0, 0, 0], batch);
-    else {
-      this.shape("cylinder", root, [0, 0.9, 0], [0.3, 0.12, 0.3], m.gold, [0, 0, 0], batch);
-      for (let spike = 0; spike < 5; spike += 1) {
-        const turn = (spike / 5) * Math.PI * 2;
-        this.shape("cone", root, [Math.cos(turn) * 0.12, 1.02, Math.sin(turn) * 0.12], [0.08, 0.16, 0.08], m.gold, [0, 0, 0], batch);
-      }
-    }
+    else this.crownShape(this.group("crown", root, [0, 0.9, 0]));
     const arms = [-1, 1].map((hand) => {
       const arm = this.group("arm", root, [hand * 0.21, 0.5, 0], [0, 0, hand * -150]);
       this.shape("box", arm, [0, 0.2, 0], [0.08, 0.4, 0.08], coat, [0, 0, 0], batch);
       return arm;
     });
     return { root, arms };
+  }
+
+  /** A crown in a frame of its own, so it can be knocked off. */
+  private crownShape(root: pc.Entity): void {
+    const m = this.m;
+    this.shape("cylinder", root, [0, 0, 0], [0.3, 0.12, 0.3], m.gold);
+    for (let spike = 0; spike < 5; spike += 1) {
+      const turn = (spike / 5) * Math.PI * 2;
+      this.shape("cone", root, [Math.cos(turn) * 0.12, 0.12, Math.sin(turn) * 0.12], [0.08, 0.16, 0.08], m.gold);
+    }
   }
 
   /** Something from the kitchen: a pan, a rolling pin, an egg beater or a cabbage. */
@@ -351,6 +361,8 @@ export class View {
     this.app.root.addChild(this.scene);
     this.props.clear();
     this.shots.clear();
+    this.stones.clear();
+    this.clutter.clear();
     this.mob.clear();
     this.pans.clear();
     this.sights.clear();
@@ -381,6 +393,7 @@ export class View {
     this.buildTower(game.course);
     this.buildWorks(game);
     this.buildMob(game);
+    this.buildClutter(game);
     this.buildCart();
     this.app.batcher.generate();
   }
@@ -701,6 +714,58 @@ export class View {
     this.queen = queen.root;
   }
 
+  /** What a stone can set off: baskets hung over the street, barrels and hen coops on the kerb. */
+  private buildClutter(game: Game): void {
+    const m = this.m;
+    const course = game.course;
+    const half = course.width / 2;
+    for (const thing of game.clutter) {
+      const def = thing.def;
+      const side = Math.sign(def.x) || 1;
+      const at: Triple = [thing.at.x, thing.at.y, thing.at.z];
+      if (def.kind === "queen") {
+        const crown = this.queen?.findByName("crown");
+        if (crown instanceof pc.Entity) this.clutter.set(def.id, crown);
+        continue;
+      }
+      if (def.kind === "pot") {
+        // A bracket out from the house front, a chain, and a basket of flowers on the end of it.
+        const wall = side * (half + 1.1);
+        this.shape("box", this.scene, [(wall + def.x) / 2, at[1] + 1.05, at[2]], [Math.abs(wall - def.x) + 0.3, 0.12, 0.12], m.oakDark, [0, 0, 0], true);
+        this.shape("box", this.scene, [wall - side * 0.5, at[1] + 0.6, at[2]], [0.1, 1.1, 0.1], m.oakDark, [0, 0, side * 40], true);
+        this.shape("box", this.scene, [def.x, at[1] + 0.8, at[2]], [0.05, 0.5, 0.05], m.iron, [0, 0, 0], true);
+        const basket = this.group("basket", this.scene, at);
+        basket.setLocalScale(1.6, 1.6, 1.6);
+        this.shape("sphere", basket, [0, 0, 0], [1, 0.8, 1], m.oak);
+        this.shape("cylinder", basket, [0, 0.14, 0], [0.96, 0.1, 0.96], m.grassDark);
+        for (let bloom = 0; bloom < 6; bloom += 1) {
+          const turn = (bloom / 6) * Math.PI * 2 + def.id;
+          this.shape("sphere", basket, [Math.cos(turn) * 0.3, 0.32 + (bloom % 2) * 0.1, Math.sin(turn) * 0.3], [0.3, 0.3, 0.3], [m.vermilion, m.gold, m.egg][bloom % 3]!);
+        }
+        this.clutter.set(def.id, basket);
+      } else if (def.kind === "barrel") {
+        const barrel = this.group("barrel", this.scene, at);
+        barrel.setLocalScale(1.45, 1.45, 1.45);
+        this.shape("cylinder", barrel, [0, 0, 0], [0.95, 1.1, 0.95], m.oak);
+        this.shape("sphere", barrel, [0, 0, 0], [1.08, 0.9, 1.08], m.oak);
+        for (const y of [-0.34, 0.34]) this.shape("cylinder", barrel, [0, y, 0], [1.06, 0.08, 1.06], m.iron);
+        this.shape("cylinder", barrel, [0, 0.56, 0], [0.8, 0.03, 0.8], m.oakDark);
+        this.clutter.set(def.id, barrel);
+      } else {
+        const coop = this.group("coop", this.scene, at);
+        coop.setLocalScale(1.4, 1.4, 1.4);
+        this.shape("box", coop, [0, 0, 0], [1.1, 0.9, 1.3], m.oak);
+        for (const z of [-0.4, 0, 0.4]) this.shape("box", coop, [-side * 0.56, 0, z], [0.04, 0.8, 0.1], m.oakDark);
+        this.shape("box", coop, [0, 0.62, 0], [1.4, 0.12, 1.6], m.vermilion, [0, 0, side * 14]);
+        // One of the inmates, looking out at the street.
+        this.shape("sphere", coop, [-side * 0.6, 0.1, 0.2], [0.32, 0.32, 0.32], m.hen);
+        this.shape("cone", coop, [-side * 0.78, 0.08, 0.2], [0.1, 0.16, 0.1], m.gold, [0, 0, side * 90]);
+        this.shape("sphere", coop, [-side * 0.6, 0.28, 0.2], [0.1, 0.14, 0.18], m.vermilion);
+        this.clutter.set(def.id, coop);
+      }
+    }
+  }
+
   private buildMob(game: Game): void {
     const m = this.m;
     const coats = [m.canvas, m.plasterWarm, m.verdigris, this.vellum, m.lapis];
@@ -862,6 +927,8 @@ export class View {
     this.syncWorks(game);
     this.syncMob(game, dt);
     this.syncPans(game);
+    this.syncStones(game);
+    this.syncClutter(game);
     this.syncProps(game);
     this.syncGun(game, dt);
     this.syncSights(game);
@@ -988,14 +1055,46 @@ export class View {
         look.setLocalScale(1.7, 1.7, 1.7);
         this.pans.set(pan.id, look);
       }
-      const k = Math.min(1, pan.t / 0.7);
-      look.setPosition(pan.from.x + (pan.to.x - pan.from.x) * k, pan.from.y + (pan.to.y - pan.from.y) * k + Math.sin(k * Math.PI) * 2.2, pan.from.z + (pan.to.z - pan.from.z) * k);
+      const at = panAt(pan);
+      look.setPosition(at.x, at.y, at.z);
       look.rotateLocal(19, 7, 23);
     }
     for (const [id, look] of this.pans) {
       if (alive.has(id)) continue;
       look.destroy();
       this.pans.delete(id);
+    }
+  }
+
+  /** Stones from the sling: small, fast and flat. */
+  private syncStones(game: Game): void {
+    const alive = new Set<number>();
+    for (const stone of game.stoneFlights) {
+      alive.add(stone.id);
+      let look = this.stones.get(stone.id);
+      if (!look) {
+        look = this.shape("sphere", this.scene, [0, 0, 0], [0.26, 0.26, 0.26], this.m.kerb);
+        this.stones.set(stone.id, look);
+      }
+      const k = Math.min(1, stone.t / stone.total);
+      const at = { x: stone.from.x + (stone.to.x - stone.from.x) * k, y: stone.from.y + (stone.to.y - stone.from.y) * k + Math.sin(k * Math.PI) * 0.5, z: stone.from.z + (stone.to.z - stone.from.z) * k };
+      look.setPosition(at.x, at.y, at.z);
+      this.puff(at, this.m.dust, 0.2, 0.18, [0, 0.2, 0]);
+    }
+    for (const [id, look] of this.stones) {
+      if (alive.has(id)) continue;
+      look.destroy();
+      this.stones.delete(id);
+    }
+  }
+
+  private syncClutter(game: Game): void {
+    for (const thing of game.clutter) {
+      const look = this.clutter.get(thing.def.id);
+      if (!look) continue;
+      look.enabled = !thing.done;
+      // Baskets swing a little on their chains: the village is not nailed down.
+      if (thing.def.kind === "pot" && !thing.done) look.setLocalEulerAngles(Math.sin(this.clock * 1.7 + thing.def.id) * 7, 0, Math.cos(this.clock * 1.3 + thing.def.id) * 5);
     }
   }
 
@@ -1049,12 +1148,12 @@ export class View {
    * Which lit target, if any, is under a touch at these page coordinates. A thumb is not a
    * needle: the nearest ring within a generous reach counts.
    */
-  pick(clientX: number, clientY: number, game: Game): string | null {
+  pick(clientX: number, clientY: number, game: Game, within = 0): string | null {
     const camera = this.camera.camera;
     if (!camera) return null;
     const box = this.canvas.getBoundingClientRect();
     let best: string | null = null;
-    let nearest = Math.max(64, box.width * 0.17);
+    let nearest = within || Math.max(64, box.width * 0.17);
     const screen = new pc.Vec3();
     for (const target of game.targets) {
       if (!target.lit) continue;
@@ -1067,6 +1166,50 @@ export class View {
       }
     }
     return best;
+  }
+
+  /**
+   * What a touch at these page coordinates is meant for. A gold ring under the thumb is a round
+   * from the gun; anything else is a stone: at whatever is thrown, standing or loose there, and
+   * failing all of those at the spot of ground itself.
+   */
+  pickAt(clientX: number, clientY: number, game: Game): Pick {
+    const ring = this.pick(clientX, clientY, game, Math.max(46, this.canvas.clientWidth * 0.12));
+    const camera = this.camera.camera;
+    const box = this.canvas.getBoundingClientRect();
+    if (!camera) return ring ? { shoot: ring } : { sling: { at: game.position } };
+    const cart = game.position;
+    const hand = { x: cart.x - 0.5, y: cart.y + 1.2, z: cart.z - 0.8 };
+    const screen = new pc.Vec3();
+    const reach = Math.max(44, box.width * 0.115);
+    let best: SlingAim | null = null;
+    let nearest = Infinity;
+    const offer = (at: Vec3, aim: SlingAim, within: number, weight: number): void => {
+      if (Math.hypot(at.x - hand.x, at.y - hand.y, at.z - hand.z) > SLING_RANGE - 0.5) return;
+      camera.worldToScreen(new pc.Vec3(at.x, at.y, at.z), screen);
+      if (screen.z < 0) return;
+      const away = Math.hypot(screen.x + box.left - clientX, screen.y + box.top - clientY);
+      if (away > within || away * weight >= nearest) return;
+      nearest = away * weight;
+      best = aim;
+    };
+    // What is in the air is small, fast and urgent: it gets the widest reach and first call.
+    for (const pan of game.pans) if (!pan.doomed) offer(panAt(pan), { pan: pan.id }, reach * 1.5, 0.5);
+    if (!best && ring) return { shoot: ring };
+    for (const one of game.mob) if (one.state === "stand") offer({ x: one.pos.x, y: one.pos.y + 1.1, z: one.pos.z }, { cook: one.def.id }, reach, 1);
+    for (const thing of game.clutter) if (!thing.done) offer(thing.at, { clutter: thing.def.id }, reach, 1);
+    if (best) return { sling: best };
+    // Nothing there: the stone goes where the thumb pointed, as far as the street under it.
+    const x = clientX - box.left;
+    const y = clientY - box.top;
+    const from = camera.screenToWorld(x, y, camera.nearClip);
+    const to = camera.screenToWorld(x, y, 90);
+    const at = new pc.Vec3();
+    for (let k = 0; k <= 1; k += 1 / 90) {
+      at.lerp(from, to, k);
+      if (at.y <= heightAt(game.course, -at.z)) break;
+    }
+    return { sling: { at: { x: at.x, y: at.y, z: at.z } } };
   }
 
   /** Rounds from the cart's gun, lobbed along the line the sim gave them. */
@@ -1138,6 +1281,19 @@ export class View {
       const coats = [m.canvas, m.plasterWarm, m.verdigris, this.vellum, m.lapis];
       const look = this.townsfolk(root, [0, -0.6, 0], coats[prop.id % coats.length]!, prop.id % 2 ? "cap" : "straw");
       look.arms.forEach((arm, index) => arm.setLocalEulerAngles(0, 0, index ? -30 : 30));
+    } else if (prop.kind === "shard") {
+      this.shape("box", root, [0, 0, 0], [s.x * 2, s.y * 2, s.z * 2], prop.id % 2 ? m.oak : m.vermilion);
+    } else if (prop.kind === "hen") {
+      // Out of the coop and not going back.
+      this.shape("sphere", root, [0, 0, 0], [0.5, 0.44, 0.6], m.hen);
+      this.shape("sphere", root, [0, 0.26, 0.24], [0.26, 0.26, 0.26], m.hen);
+      this.shape("cone", root, [0, 0.24, 0.42], [0.1, 0.14, 0.1], m.gold, [90, 0, 0]);
+      this.shape("sphere", root, [0, 0.4, 0.22], [0.08, 0.12, 0.16], m.vermilion);
+      for (const side of [-1, 1]) this.shape("sphere", root, [side * 0.28, 0.06, 0], [0.12, 0.3, 0.44], m.hen, [0, 0, side * 40]);
+    } else if (prop.kind === "crown") {
+      const crown = this.group("crown", root);
+      crown.setLocalScale(2, 2, 2);
+      this.crownShape(crown);
     } else {
       this.shape("sphere", root, [0, 0, 0], [0.8, 0.5, 0.8], m.egg);
       this.shape("sphere", root, [0, 0.08, 0], [0.5, 0.3, 0.5], m.yolk);
@@ -1327,6 +1483,36 @@ export class View {
         this.puff({ x: cart.x, y: cart.y + 1.4, z: cart.z }, m.flash, 1.2, 0.14, [0, 0, 0]);
       } else {
         this.burst({ x: event.at.x, y: event.at.y - 0.8, z: event.at.z }, m.dust, 3, 0.4, 3);
+      }
+    }
+    if (event.type === "ping") {
+      if (event.what === "pan") {
+        this.puff(event.at, m.flash, 1.1, 0.12, [0, 0, 0]);
+        this.burst(event.at, m.iron, 5, 0.22, 6);
+        this.burst(event.at, m.gold, 4, 0.16, 8);
+      } else if (event.what === "cook") {
+        this.burst({ x: event.at.x, y: event.at.y - 0.4, z: event.at.z }, m.dust, 4, 0.4, 3);
+        this.puff(event.at, m.flash, 0.7, 0.1, [0, 0, 0]);
+      } else {
+        this.burst({ x: event.at.x, y: event.at.y - 0.2, z: event.at.z }, m.dust, 4, 0.35, 2.5);
+      }
+    }
+    if (event.type === "smash") {
+      this.shake = Math.min(1.2, this.shake + 0.15);
+      this.puff(event.at, m.flash, 1.4, 0.12, [0, 0, 0]);
+      if (event.kind === "pot") {
+        this.burst(event.at, m.vermilion, 6, 0.3, 4);
+        this.burst(event.at, m.grassDark, 5, 0.3, 3);
+        this.burst({ x: event.at.x, y: event.at.y - 3, z: event.at.z }, m.dust, 5, 0.6, 3);
+      } else if (event.kind === "barrel") {
+        this.burst(event.at, m.oak, 8, 0.4, 6);
+        this.burst(event.at, m.vermilion, 10, 0.5, 5);
+        this.pulse({ x: event.at.x, y: event.at.y - 0.6, z: event.at.z }, m.vermilion, 0.8, 7, 0.5);
+      } else if (event.kind === "coop") {
+        this.burst(event.at, m.hen, 14, 0.3, 6);
+        this.burst(event.at, m.oak, 5, 0.3, 4);
+      } else {
+        this.burst(event.at, m.gold, 10, 0.3, 6);
       }
     }
     if (event.type === "wainOff") this.burst({ x: event.at.x, y: event.at.y - 0.4, z: event.at.z - 1.4 }, m.gold, 7, 0.35, 6);

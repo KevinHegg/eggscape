@@ -31,10 +31,18 @@ it back or change it in passing; it is kept as it was on purpose.
   cook he runs into). Hay takes every knock before the shell does, and the bales visibly go.
 - Three verbs, two thumbs. One finger drags like a stick: sideways and the cart goes that way
   and keeps going until the finger lifts or comes back (`leanAt`); pulling down puts the
-  brake on. A tap on a gold ring, a second finger, or the one Fire button shoots.
+  brake on. A tap on a gold ring or the one Fire button shoots the gun; a tap or a second finger
+  anywhere else slings a stone at what is under it (`View.pickAt`).
 - The brake slows her and never stops her (`BRAKE_FLOOR`). There is no accelerator.
 - One cart, three rounds, no build screen. The gun reaches only what is lit (`GUN_RANGE`);
   every target wears a ring, faint out of range and gold within it.
+- Two kinds of shot, and they must stay distinct. The three rounds are for the rings: they
+  work the machine. The sling's stones (`START_STONES`) are for everything else and are never
+  needed to get home: a tap on anything without a ring slings one at it. A stone knocks a
+  thrown pan out of the air, puts a cook's head down for a moment (`DUCK`), and sets off the
+  village's clutter (`clutter` in `course.ts`: baskets, barrels, hen coops, the Queen's
+  crown). Clutter is state plus spectacle props, like the mob; add more freely, but give each
+  piece an effect a player can see.
 - No cart may play itself, and no street may need a shot the player cannot see: `npm test`
   checks that an idle cart never gets home and that a sensible driver gets three stars.
 - The village is the Queen's and the story is on the street: her kitchen mob with pans,

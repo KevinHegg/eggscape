@@ -26,6 +26,9 @@ driver play the street.
 - **Brake:** pull the same finger down (or **↓**, **S**). She slows to a trot, never to a stand.
 - **Fire:** everything the gun could hit wears a ring. When a ring turns gold it is in range:
   tap it, or press **Fire** (or **Space**) for the next one. Three rounds, no more.
+- **Sling:** tap anything else and one of the men slings a stone at it: an egg beater in mid
+  air, a cook, a flower basket, a barrel, a hen coop, the Queen's crown. A dozen stones, for
+  whatever takes your fancy.
 - **R** restarts; **M** mutes the sound.
 
 ## Bell Tower Street
@@ -43,7 +46,11 @@ back by one rope to a capstan on the quay.
 4. **The cheese wain** on the far bank is only chocked. Knock the chock out and it runs down
    the other side of the street into the well, and clears that side too. Leave it, and the
    cooks still standing throw what they are holding.
-5. **Steer round what is left:** the bell where it stopped, the woolsacks, the well.
+5. **Or make your own trouble.** A stone knocks what they throw out of the air and puts a
+   cook's head down for a moment. A basket drops on whoever is under it, a burst barrel or a
+   loosed hen coop sends its neighbours diving, and with her crown knocked off the Queen's
+   whole kitchen forgets to throw.
+6. **Steer round what is left:** the bell where it stopped, the woolsacks, the well.
 
 - **Only a jolt hurts him.** His shell cracks when the cart's velocity changes sharply, when a
   pan lands, or when he runs into a cook. Hay takes each knock first, two bales' worth.

@@ -38,6 +38,8 @@ export interface Plan {
   brake?: "judge" | number;
   /** Keep the brake hard on beyond the canal too: a driver with no nerve. */
   dawdle?: boolean;
+  /** Sling a stone at everything the cooks throw, the moment it is in the air. */
+  sling?: boolean;
   /** Seconds of safety "judge" leaves between the tower landing and the cart reaching it. */
   margin?: number;
 }
@@ -84,7 +86,11 @@ export function driver(plan: Plan = {}): Pilot {
     } else if (plan.dawdle && d < far + 50) {
       brake = 1;
     }
-    return shoot ? { lean: leanToward(game, goal), brake, shoot } : { lean: leanToward(game, goal), brake };
+    const input: Input = { lean: leanToward(game, goal), brake };
+    if (shoot) input.shoot = shoot;
+    const thrown = plan.sling ? game.pans.find((pan) => !pan.doomed) : undefined;
+    if (thrown) input.sling = { pan: thrown.id };
+    return input;
   };
 }
 
@@ -98,6 +104,7 @@ export interface Outcome {
   shell: number;
   hay: number;
   knocks: number;
+  stones: number;
   distance: number;
   time: number;
 }
@@ -113,6 +120,7 @@ export async function play(pilot: Pilot, limit = 100): Promise<Outcome> {
     shell: Math.round(game.shell),
     hay: game.hay,
     knocks: game.knocks,
+    stones: game.stones,
     distance: Math.round(game.distance),
     time: Math.round(game.time * 10) / 10,
   };

@@ -38,6 +38,25 @@ export interface MobDef {
   x: number;
 }
 
+export type ClutterKind = "pot" | "barrel" | "coop" | "queen";
+
+/**
+ * Something in the village a slung stone can set off: a flower basket hung over the street, a
+ * barrel or a hen coop on the kerb, the Queen herself. None of it is needed to get home.
+ */
+export interface ClutterDef {
+  id: number;
+  kind: ClutterKind;
+  d: number;
+  x: number;
+  /** Height above the street. */
+  up: number;
+  /** Cooks this close are knocked flat when it goes. */
+  bowl: number;
+  /** Cooks this close dive for the gutter. */
+  fright: number;
+}
+
 export interface CourseDef {
   name: string;
   /** Drivable width between the kerbs. */
@@ -55,6 +74,7 @@ export interface CourseDef {
   sacks: { d: number; x: number };
   /** The Queen's kitchen mob, across the far street in ranks. */
   mob: MobDef[];
+  clutter: ClutterDef[];
   /** Crossing this line is home. */
   finish: number;
   /** Where the Empress Hen sits. */
@@ -88,9 +108,37 @@ function layStreet(): { pieces: Piece[]; yard: number } {
 const STREET = layStreet();
 const FAR = LIP + CANAL;
 
+const HALF = 5;
+const KERB = HALF + 0.3;
+const HUNG = HALF - 0.6;
+
+/** Baskets hang out over the edge of the street; barrels and coops stand on the kerb. */
+function layClutter(): ClutterDef[] {
+  const pot = (d: number, x: number): Omit<ClutterDef, "id"> => ({ kind: "pot", d, x, up: 3.4, bowl: 1.3, fright: 0 });
+  const barrel = (d: number, x: number): Omit<ClutterDef, "id"> => ({ kind: "barrel", d, x, up: 1.55, bowl: 0, fright: 5.5 });
+  const coop = (d: number, x: number): Omit<ClutterDef, "id"> => ({ kind: "coop", d, x, up: 1.4, bowl: 0, fright: 5.5 });
+  const all: Array<Omit<ClutterDef, "id">> = [
+    // Down to the water: nothing here is in his way, and all of it is fair game.
+    pot(20, HUNG),
+    barrel(28, -KERB),
+    pot(36, -HUNG),
+    coop(46, KERB),
+    pot(52, HUNG),
+    barrel(57, -KERB),
+    // The far street: each of these is over or beside somebody.
+    { kind: "queen", d: FAR + 10, x: HALF + 1.6, up: 4.6, bowl: 0, fright: 0 },
+    pot(FAR + 16, HUNG),
+    barrel(FAR + 20, KERB),
+    pot(FAR + 24, -HUNG),
+    coop(FAR + 28, -KERB),
+    pot(FAR + 32, HUNG),
+  ];
+  return all.map((one, id) => ({ id, ...one }));
+}
+
 export const COURSE: CourseDef = {
   name: "Bell Tower Street",
-  width: 10,
+  width: HALF * 2,
   pieces: STREET.pieces,
   tower: {
     d: LIP,
@@ -106,6 +154,7 @@ export const COURSE: CourseDef = {
   well: { d: FAR + 54, x: 3.3 },
   sacks: { d: FAR + 46, x: -2.6 },
   mob: [0, 1, 2].flatMap((rank) => [-4, -2, 0, 2, 4].map((x, index) => ({ id: rank * 5 + index, rank, d: FAR + 16 + rank * 8, x }))),
+  clutter: layClutter(),
   finish: STREET.yard + 6,
   roost: STREET.yard + 42,
 };

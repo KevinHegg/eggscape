@@ -231,6 +231,18 @@ export class Sound {
     for (const [note, at] of [[392, 0.5], [370, 0.72], [349, 0.94], [262, 1.16]] as const) this.tone("triangle", note, note * 0.98, 0.3, 0.3, at);
   }
 
+  /** The sling let go: a whip of air. */
+  sling(): void {
+    this.hiss("bandpass", 900, 3200, 0.09, 0.35);
+    this.tone("triangle", 320, 520, 0.06, 0.12);
+  }
+
+  /** Hens with opinions. */
+  cluck(): void {
+    for (const [at, pitch] of [[0, 480], [0.09, 520], [0.2, 460], [0.3, 560], [0.44, 500]] as const) this.tone("sawtooth", pitch, pitch * 0.7, 0.07, 0.16, at);
+    this.tone("sawtooth", 560, 900, 0.14, 0.2, 0.56);
+  }
+
   /** The great bell, struck: harder is louder and longer. */
   toll(hard: number): void {
     const loud = Math.max(0.25, Math.min(1, hard));

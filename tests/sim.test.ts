@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { driver, idle, leanAt, leanToward, play, steady, type Pilot } from "../src/sim/autoplay";
 import { COURSE } from "../src/sim/course";
-import { BRAKE_FLOOR, Game, type GameEvent } from "../src/sim/game";
+import { BRAKE_FLOOR, DUCK, Game, START_STONES, type GameEvent, type Input } from "../src/sim/game";
 
 /** Play a street to its end and hand back the game itself, with everything that happened. */
 async function run(pilot: Pilot, until: (game: Game) => boolean = () => false): Promise<{ game: Game; events: GameEvent[] }> {
@@ -146,4 +146,107 @@ test("a held drag keeps her crossing the street until it is let go, and never gr
   assert.ok(game.position.x - lifted < 0.8, `she steadied within ${(game.position.x - lifted).toFixed(2)} m of the finger lifting`);
   for (let step = 0; step < 120; step += 1) game.step({ lean: leanAt(game, 1) });
   assert.ok(game.position.x < COURSE.width / 2 - 0.6 && game.shell === 100, `held hard over she rides inside the kerb, unhurt (x ${game.position.x.toFixed(2)})`);
+});
+
+// ---------------------------------------------------------------- the sling
+
+const FAR_BANK = COURSE.tower.d + Math.sin(COURSE.tower.rest) * COURSE.tower.height;
+const noWain = driver({});
+const clutterAt = (kind: string, d: number): number => COURSE.clutter.find((one) => one.kind === kind && Math.abs(one.d - d) < 0.5)!.id;
+
+/** Drive with `pilot`, adding whatever `extra` asks for, and collect what happens. */
+async function drive(pilot: Pilot, extra: (game: Game) => Partial<Input>, until: (game: Game) => boolean = () => false): Promise<{ game: Game; events: GameEvent[] }> {
+  return run((game) => ({ ...pilot(game), ...extra(game) }), until);
+}
+
+test("a stone knocks what they throw out of the air", async () => {
+  const plain = await run(noWain);
+  const slung = await run(driver({ sling: true }));
+  const downed = slung.events.filter((event) => event.type === "ping" && event.what === "pan").length;
+  assert.ok(downed >= 4, `only ${downed} knocked down`);
+  assert.equal(slung.game.phase, "won");
+  assert.ok(slung.game.knocks < plain.game.knocks, `${slung.game.knocks} knocks with the sling, ${plain.game.knocks} without`);
+  assert.ok(slung.game.hay > plain.game.hay, `hay ${slung.game.hay} against ${plain.game.hay}`);
+});
+
+test("a stone puts a cook's head down, and not for long", async () => {
+  let hitAt = -1;
+  const { game, events } = await drive(
+    noWain,
+    (current) => (current.distance > FAR_BANK - 6 && current.stones === START_STONES ? { sling: { cook: 4 } } : {}),
+    (current) => {
+      const cook = current.mob.find((one) => one.def.id === 4)!;
+      if (hitAt < 0 && cook.state === "down") hitAt = current.time;
+      return hitAt >= 0 && current.time > hitAt + DUCK + 0.2;
+    },
+  );
+  assert.ok(hitAt > 0, "the stone never found him");
+  assert.ok(events.some((event) => event.type === "ping" && event.what === "cook" && event.kind === 4));
+  assert.equal(game.mob.find((one) => one.def.id === 4)!.state, "stand", "he should be up again");
+  assert.equal(game.stones, START_STONES - 1);
+});
+
+test("anything loose in the village can be set off, once, and only from in range", async () => {
+  const game = await Game.create();
+  const near = clutterAt("pot", 20);
+  const far = COURSE.clutter[COURSE.clutter.length - 1]!.id;
+  const events: GameEvent[] = [];
+  const step = (input: Input, steps = 1): void => {
+    for (let index = 0; index < steps; index += 1) {
+      game.step(index === 0 ? input : { lean: 0 });
+      events.push(...game.takeEvents());
+    }
+  };
+  step({ lean: 0, sling: { clutter: far } }, 30);
+  assert.ok(events.some((event) => event.type === "dry" && event.why === "far"));
+  assert.equal(game.stones, START_STONES, "a stone that cannot reach is not thrown");
+  step({ lean: 0, sling: { clutter: near } }, 40);
+  assert.ok(events.some((event) => event.type === "smash" && event.kind === "pot"));
+  assert.equal(game.stones, START_STONES - 1);
+  step({ lean: 0, sling: { clutter: near } }, 40);
+  assert.equal(game.stones, START_STONES - 1, "it is already in bits");
+  game.dispose();
+});
+
+test("a basket flattens the cook under it and a barrel sends its neighbours diving", async () => {
+  const pot = clutterAt("pot", FAR_BANK + 16);
+  const barrel = clutterAt("barrel", FAR_BANK + 20);
+  const { game, events } = await drive(
+    noWain,
+    (current) => (current.distance < FAR_BANK - 4 ? {} : current.clutter[pot]!.done ? { sling: { clutter: barrel } } : { sling: { clutter: pot } }),
+    (current) => current.clutter[barrel]!.done,
+  );
+  const flattened = events.filter((event) => event.type === "bowled" && event.by === "pot");
+  assert.deepEqual(flattened.map((event) => (event.type === "bowled" ? event.id : -1)), [4]);
+  const right = game.mob.filter((one) => one.def.x >= 2 && one.def.rank < 2);
+  assert.deepEqual(right.map((one) => one.state).sort(), ["down", "down", "down", "out"]);
+});
+
+test("knock the Queen's crown off and the kitchen forgets to throw", async () => {
+  const queen = COURSE.clutter.find((one) => one.kind === "queen")!.id;
+  let goneAt = -1;
+  const { events } = await drive(
+    noWain,
+    (current) => (current.distance > FAR_BANK - 12 && !current.clutter[queen]!.done ? { sling: { clutter: queen } } : {}),
+    (current) => {
+      if (goneAt < 0 && current.clutter[queen]!.done) goneAt = current.time;
+      return goneAt >= 0 && current.time > goneAt + 2.5;
+    },
+  );
+  assert.ok(goneAt > 0, "her crown is still on");
+  const at = events.findIndex((event) => event.type === "smash" && event.kind === "queen");
+  assert.equal(events.slice(at).filter((event) => event.type === "throw").length, 0);
+});
+
+test("the bag holds a dozen stones and no more", async () => {
+  const game = await Game.create();
+  const events: GameEvent[] = [];
+  for (let step = 0; step < 60 * 5; step += 1) {
+    game.step({ lean: 0, brake: 1, sling: { at: { x: 0, y: game.position.y, z: game.position.z - 12 } } });
+    events.push(...game.takeEvents());
+  }
+  assert.equal(events.filter((event) => event.type === "sling").length, START_STONES);
+  assert.equal(game.stones, 0);
+  assert.ok(events.some((event) => event.type === "dry" && event.why === "stones"));
+  game.dispose();
 });
