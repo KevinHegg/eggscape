@@ -1,5 +1,5 @@
 import * as pc from "playcanvas";
-import { chasms, courseEnd, heightAt, type CourseDef } from "../sim/course";
+import { chasms, courseEnd, heightAt, type CourseDef, spanAt } from "../sim/course";
 import { MAX_MEN, type Game, type GameEvent, type Prop, type Tower, type Vec3 } from "../sim/game";
 import type { PartId } from "../sim/parts";
 
@@ -434,14 +434,36 @@ export class View {
       const normal = { y: Math.cos(angle), z: Math.sin(angle) };
       const mid = { y: (piece.y0 + piece.y1) / 2, z: -(piece.d0 + piece.d1) / 2 };
       const tilt: Triple = [degrees, 0, 0];
-      this.shape("box", this.scene, [0, mid.y - normal.y * 0.3, mid.z - normal.z * 0.3], [course.width + 1.2, 0.6, length], m.road, tilt, true);
+      // A bridge that has lost a side is drawn only as wide as what is left, over open water.
+      const left = piece.x0 ?? -half;
+      const right = piece.x1 ?? half;
+      const low = left <= -half ? left - 0.6 : left;
+      const high = right >= half ? right + 0.6 : right;
+      const broken = left > -half || right < half;
+      this.shape("box", this.scene, [(low + high) / 2, mid.y - normal.y * 0.3, mid.z - normal.z * 0.3], [high - low, 0.6, length], broken ? m.oak : m.road, tilt, true);
       for (const side of [-1, 1]) {
-        this.shape("box", this.scene, [side * (half + 0.3), mid.y + normal.y * 0.3, mid.z + normal.z * 0.3], [0.6, 0.9, length], m.kerb, tilt, true);
+        const gone = side < 0 ? left > -half : right < half;
+        if (!gone) this.shape("box", this.scene, [side * (half + 0.3), mid.y + normal.y * 0.3, mid.z + normal.z * 0.3], [0.6, 0.9, length], m.kerb, tilt, true);
         this.shape("box", this.scene, [side * (half + 45.6), mid.y - normal.y * 0.5, mid.z - normal.z * 0.5], [90, 0.6, length + 0.4], m.grass, tilt, true);
+        if (!gone) continue;
+        const edge = side < 0 ? left : right;
+        const wide = half + 0.6 - Math.abs(edge);
+        const centre = side * (Math.abs(edge) + wide / 2);
+        this.shape("box", this.scene, [centre, mid.y - 9, mid.z], [wide, 0.3, run + 0.2], m.water, [0, 0, 0], true);
+        this.shape("box", this.scene, [side * (half + 0.9), mid.y - 8.6, mid.z], [0.6, 16, run + 0.2], m.kerb, [0, 0, 0], true);
+        this.shape("box", this.scene, [edge - side * 0.2, mid.y - 8.6, mid.z], [0.4, 16, run + 0.2], m.oakDark, [0, 0, 0], true);
+        // Splintered ends where the planks gave way.
+        for (let d = piece.d0 + 0.4; d < piece.d1; d += 1.1) {
+          this.shape("box", this.scene, [edge + side * 0.25, heightAt(course, d) - 0.1, -d], [0.9, 0.12, 0.34], m.oakDark, [degrees, side * (18 + ((d * 37) % 30)), side * -12], true);
+        }
+        const before = course.pieces[course.pieces.indexOf(piece) - 1];
+        if (before && before.x0 === undefined && before.x1 === undefined) {
+          this.shape("box", this.scene, [centre, piece.y0 - 8.3, -(piece.d0 - 0.4)], [wide, 16, 0.8], m.kerb, [0, 0, 0], true);
+        }
       }
       // Cobble bands, so speed can be seen.
       for (let d = Math.ceil(piece.d0 / 6) * 6; d < piece.d1; d += 6) {
-        this.shape("box", this.scene, [0, heightAt(course, d) + 0.012, -d], [course.width, 0.03, 0.5], m.roadDark, tilt, true);
+        this.shape("box", this.scene, [(left + right) / 2, heightAt(course, d) + 0.012, -d], [right - left, 0.03, 0.5], broken ? m.oakDark : m.roadDark, tilt, true);
       }
     }
     // Trees and standing stones down both verges.
@@ -474,13 +496,23 @@ export class View {
       const lip = heightAt(course, gap.d0 - 0.01);
       const far = heightAt(course, gap.d1 + 0.01);
       const wide = gap.d1 - gap.d0;
-      this.shape("box", this.scene, [0, lip - 8.3, -(gap.d0 - 0.4)], [190, 16, 0.8], m.kerb, [0, 0, 0], true);
+      // The near cliff stands only where there is ground behind it: not under a bridge's missing side.
+      const [x0, x1] = spanAt(course, gap.d0 - 0.01);
+      const low = x0 <= -half ? -95 : x0;
+      const high = x1 >= half ? 95 : x1;
+      this.shape("box", this.scene, [(low + high) / 2, lip - 8.3, -(gap.d0 - 0.4)], [high - low, 16, 0.8], m.kerb, [0, 0, 0], true);
+      for (const side of [-1, 1]) {
+        if (side < 0 ? x0 <= -half : x1 >= half) continue;
+        this.shape("box", this.scene, [side * (half + 0.6 + 47), lip - 8.3, -(gap.d0 - 0.4)], [94, 16, 0.8], m.kerb, [0, 0, 0], true);
+      }
       this.shape("box", this.scene, [0, far - 8.3, -(gap.d1 + 0.4)], [190, 16, 0.8], m.kerb, [0, 0, 0], true);
       this.shape("box", this.scene, [0, Math.min(lip, far) - 9, -(gap.d0 + gap.d1) / 2], [190, 0.3, wide + 1], m.water, [0, 0, 0], true);
       for (const side of [-1, 1]) {
         // Splintered planks over the drop, and leaning posts with the King's colours as a warning.
-        this.shape("box", this.scene, [side * 2.6, lip - 0.02, -(gap.d0 + 0.5)], [2.2, 0.14, 1.5], m.oak, [side * 4, side * 9, 0], true);
-        this.shape("box", this.scene, [side * 1.2, lip - 0.3, -(gap.d0 + 0.9)], [1.1, 0.14, 2], m.oakDark, [-24, side * -14, 0], true);
+        if (side * 2.6 > x0 && side * 2.6 < x1) {
+          this.shape("box", this.scene, [side * 2.6, lip - 0.02, -(gap.d0 + 0.5)], [2.2, 0.14, 1.5], m.oak, [side * 4, side * 9, 0], true);
+          this.shape("box", this.scene, [side * 3.6, lip - 0.3, -(gap.d0 + 0.9)], [1.1, 0.14, 2], m.oakDark, [-24, side * -14, 0], true);
+        }
         this.shape("box", this.scene, [side * (half + 0.3), lip + 1.5, -(gap.d0 - 0.6)], [0.3, 3.4, 0.3], m.oakDark, [-12, 0, side * 8], true);
         this.shape("box", this.scene, [side * (half + 0.3), far + 1.2, -(gap.d1 + 0.6)], [0.3, 3, 0.3], m.oakDark, [14, 0, side * -6], true);
         for (const back of [10, 22]) {
@@ -734,8 +766,17 @@ export class View {
 
     const posts: Triple[] = [[-0.52, 0.28, 0.9], [0.52, 0.28, 0.9], [-0.52, 0.28, -0.8]];
     for (const position of posts) this.men.push(this.figure(cart, position, m.vermilion));
-    for (const side of [-1, 1]) {
-      const bale = this.shape("box", cart, [side * 0.95, 0.2, 0.05], [0.4, 0.5, 0.9], m.hay);
+    // Hay packed round him: the first thing a knock has to get through. Each bale lost is one fewer.
+    const packed: Array<[Triple, Triple]> = [
+      [[-0.5, 0.52, 0.12], [0.36, 0.5, 0.74]],
+      [[0.5, 0.52, 0.12], [0.36, 0.5, 0.74]],
+      [[0, 0.5, 0.68], [0.96, 0.46, 0.34]],
+      [[0, 0.5, -0.34], [0.96, 0.46, 0.3]],
+    ];
+    for (const [position, scale] of packed) {
+      const bale = this.group("bale", cart, position);
+      this.shape("box", bale, [0, 0, 0], scale, m.hay);
+      this.shape("box", bale, [0, 0, 0], [scale[0] * 1.03, scale[1] * 1.03, 0.05], m.oakDark);
       this.bales.push(bale);
     }
 
@@ -771,34 +812,46 @@ export class View {
         this.shape("box", arm, [0, 0, 0.75], [0.1, 0.1, 1.7], m.oak);
         this.shape("box", arm, [0, 0, 1.6], [0.14, 0.5, 0.5], m.gold);
       } else if (part === "wedge") {
-        root.setLocalPosition(0, 0.05, -1.15);
+        root.setLocalPosition(0, -0.23, -1.15);
         const prow = this.group("swing", root);
         for (const side of [-1, 1]) this.shape("box", prow, [side * 0.38, 0, -0.42], [1.05, 0.6, 0.1], m.iron, [0, side * -38, 0]);
         this.shape("box", prow, [0, 0.28, -0.76], [0.12, 0.12, 0.2], m.gold);
       } else if (part === "plane") {
-        root.setLocalPosition(0, 0.28, -1.12);
-        const plate = this.group("swing", root);
-        this.shape("box", plate, [0, 0, 0.62], [1.6, 0.07, 1.24], m.lapis);
-        this.shape("box", plate, [0, 0.045, 0.62], [1.2, 0.02, 0.9], m.gold);
-      } else if (part === "pulley") {
+        // A sloped roof over his head, three planks wide. Each thing it turns aside takes a plank with it.
         root.setLocalPosition(0, 0.28, 0.15);
-        for (const side of [-1, 1]) this.shape("box", root, [side * 0.62, 1.05, 0], [0.1, 2.1, 0.1], m.oakDark);
-        this.shape("box", root, [0, 2.1, 0], [1.4, 0.12, 0.12], m.oakDark);
-        this.shape("cylinder", root, [0, 1.95, 0], [0.3, 0.1, 0.3], m.gold, [90, 0, 0]);
-        this.shape("box", root, [0, 1.62, 0], [0.03, 0.6, 0.03], m.vellum);
-      } else if (part === "screw") {
-        root.setLocalPosition(0, 0.28, -0.52);
-        this.shape("cylinder", root, [0, 0.75, 0], [0.08, 1.5, 0.08], m.oakDark);
-        const spin = this.group("swing", root, [0, 1.1, 0]);
-        for (const [y, wide, tilt] of [[0, 1.3, 14], [0.28, 0.95, -14], [0.54, 0.6, 14]] as const) {
-          this.shape("cylinder", spin, [0, y, 0], [wide, 0.03, wide], m.vellum, [tilt, 0, tilt / 2]);
+        for (const side of [-1, 1]) this.shape("box", root, [side * 0.66, 0.95, 0.5], [0.07, 1.9, 0.07], m.oakDark, [-6, 0, 0]);
+        for (const side of [-1, 1]) this.shape("box", root, [side * 0.66, 0.7, -0.62], [0.07, 1.4, 0.07], m.oakDark, [6, 0, 0]);
+        for (let plank = 0; plank < 3; plank += 1) {
+          const board = this.group(`plank${plank}`, root, [(plank - 1) * 0.48, 1.68, -0.06], [-22, 0, 0]);
+          this.shape("box", board, [0, 0, 0], [0.46, 0.06, 1.5], plank === 1 ? m.vermilion : m.lapis);
+          this.shape("box", board, [0, 0.04, 0], [0.3, 0.02, 1.2], m.gold);
         }
+      } else if (part === "pulley") {
+        root.setLocalPosition(0, 0.28, 0.95);
+        this.shape("box", root, [0, 1.1, 0], [0.1, 2.2, 0.1], m.oakDark);
+        const jib = this.group("swing", root, [0, 2.15, 0]);
+        this.shape("box", jib, [0, 0, -0.6], [0.09, 0.09, 1.5], m.oak, [-12, 0, 0]);
+        this.shape("cylinder", jib, [0, 0.14, -1.3], [0.26, 0.08, 0.26], m.gold, [0, 0, 90]);
+        this.shape("box", jib, [0, -0.3, -1.3], [0.03, 0.8, 0.03], m.vellum);
+        this.shape("box", jib, [0, -0.72, -1.3], [0.16, 0.1, 0.05], m.iron);
+      } else if (part === "screw") {
+        // A screw press, bolted on behind, squeezing a bale.
+        root.setLocalPosition(0, 0.1, 1.5);
+        this.shape("box", root, [0, 0.28, 0], [0.9, 0.4, 0.5], m.hay);
+        for (const side of [-1, 1]) this.shape("box", root, [side * 0.52, 0.55, 0], [0.08, 1.1, 0.08], m.oakDark);
+        this.shape("box", root, [0, 1.1, 0], [1.14, 0.1, 0.14], m.oakDark);
+        this.shape("box", root, [0, 0.52, 0], [0.92, 0.07, 0.52], m.oak);
+        const spin = this.group("swing", root, [0, 0.82, 0]);
+        this.shape("cylinder", spin, [0, 0, 0], [0.1, 0.6, 0.1], m.iron);
+        for (const y of [-0.2, -0.07, 0.06, 0.19]) this.shape("cylinder", spin, [0, y, 0], [0.2, 0.03, 0.2], m.gold, [10, 0, 0]);
+        this.shape("box", spin, [0, 0.4, 0], [0.7, 0.06, 0.06], m.iron);
       } else if (part === "wheel") {
-        root.setLocalPosition(0, 0.72, 1.22);
-        const spin = this.group("swing", root);
-        this.shape("cylinder", spin, [0, 0, 0], [1.05, 0.12, 1.05], m.iron, [0, 0, 90]);
-        this.shape("cylinder", spin, [0, 0, 0], [0.86, 0.14, 0.86], m.gold, [0, 0, 90]);
-        this.shape("box", spin, [0, 0, 0], [0.16, 0.96, 0.1], m.iron);
+        // Great broad wheels with iron tyres.
+        for (const wheel of this.wheels) {
+          wheel.hub.setLocalScale(1.9, 1.1, 1.1);
+          this.shape("cylinder", wheel.hub, [0, 0, 0], [0.9, 0.2, 0.9], m.iron, [0, 0, 90]);
+          this.shape("cylinder", wheel.hub, [0, 0, 0], [0.5, 0.22, 0.5], m.gold, [0, 0, 90]);
+        }
       }
     }
   }
@@ -828,14 +881,11 @@ export class View {
     this.wobbleSpeed.z += (Math.cos(this.clock * 27) * kick - game.lean * 520 - this.wobble.z * 90 - this.wobbleSpeed.z * 7) * dt;
     this.wobble.x += this.wobbleSpeed.x * dt;
     this.wobble.z += this.wobbleSpeed.z * dt;
-    const braced = game.isActive("pulley");
     const broken = game.phase === "broken";
     const leap = game.phase === "won" ? Math.min(1, Math.max(0, (game.after - 0.9) / 0.9)) : 0;
     if (this.king) {
       this.king.enabled = !broken;
-      const lift = braced ? 0.5 + Math.sin(this.clock * 9) * 0.04 : 0;
-      const at = this.king.getLocalPosition();
-      this.king.setLocalPosition(0, at.y + (0.28 + lift - at.y) * Math.min(1, dt * 14), 0.15);
+      this.king.setLocalPosition(0, 0.28, 0.15);
       this.king.setLocalEulerAngles(clampDeg(this.wobble.x, 24), 0, clampDeg(this.wobble.z, 26));
       const panic = 20 + Math.min(60, game.speed * 2.5) + Math.sin(this.clock * 18) * (10 + game.stage * 12);
       this.kingArms.forEach((arm, index) => arm.setLocalEulerAngles(0, 0, (index === 0 ? -1 : 1) * panic));
@@ -858,8 +908,16 @@ export class View {
     }
     this.men.forEach((man, index) => {
       man.enabled = index < Math.min(MAX_MEN, game.men);
-      man.setLocalEulerAngles(0, 0, -game.lean * 32);
+      // They lean to steer her, and haul back when the brake is on.
+      man.setLocalEulerAngles(game.braking * 22, 0, -game.lean * 32);
     });
+    if (game.braking > 0 && this.frame % 3 === 0) {
+      const back = rotate3(q, 0, -0.35, 1.05);
+      for (const side of [-1, 1]) {
+        const out = rotate3(q, side * 0.9, 0, 0);
+        this.puff({ x: p.x + back.x + out.x, y: p.y + back.y, z: p.z + back.z + out.z }, this.frame % 2 ? this.m.dust : this.m.flash, 0.45, 0.3, [side * 0.8, 1.2, 2.5]);
+      }
+    }
     this.bales.forEach((bale, index) => (bale.enabled = index < game.hay));
     this.syncParts(game, dt);
     this.syncProps(game);
@@ -880,9 +938,6 @@ export class View {
       look.enabled = !pickup.taken;
       look.setLocalEulerAngles(0, this.clock * 50, 0);
       look.setLocalPosition(pickup.pos.x, pickup.pos.y + 0.12 + Math.sin(this.clock * 4 + pickup.id) * 0.12, pickup.pos.z);
-    }
-    if (game.isActive("wheel") && this.frame % 2 === 0) {
-      this.puff({ x: p.x, y: p.y + 0.5, z: p.z + 1.5 }, this.frame % 4 ? this.m.blast : this.m.flash, 0.7, 0.35, [0, 1.5, 4]);
     }
     this.syncEffects(dt);
     if (this.hen) {
@@ -905,14 +960,22 @@ export class View {
   private syncParts(game: Game, dt: number): void {
     for (const [part, root] of this.parts) {
       const state = game.machine(part);
+      if (!state) continue;
+      if (part === "plane") {
+        for (let plank = 0; plank < 3; plank += 1) {
+          const board = root.findByName(`plank${plank}`) as pc.Entity | null;
+          if (board) board.enabled = plank < state.charges;
+        }
+        continue;
+      }
       const swing = root.findByName("swing") as pc.Entity | null;
-      if (!state || !swing) continue;
+      if (!swing) continue;
       const on = state.active > 0;
-      if (part === "lever") swing.setLocalEulerAngles(0, on ? 90 - (1 - state.active / 0.3) * 330 : 90, 0);
-      if (part === "wedge") ease(swing, on ? [0, -0.28, 0] : [0, 0.5, 0], on ? [0, 0, 0] : [-32, 0, 0], dt);
-      if (part === "plane") ease(swing, [0, on ? 0.9 : 0, 0], on ? [-28, 0, 0] : [-76, 0, 0], dt);
-      if (part === "screw") swing.rotateLocal(0, (on ? 1500 : 160) * dt, 0);
-      if (part === "wheel") swing.rotateLocal((on ? -2200 : -500) * dt, 0, 0);
+      // The batting arm swings right round when it strikes, and hangs slack until it is cocked again.
+      if (part === "lever") swing.setLocalEulerAngles(on ? 0 : state.cooldown > 0 ? 34 : 0, on ? 90 - (1 - state.active / 0.3) * 330 : 90, 0);
+      if (part === "wedge") ease(swing, [0, on ? 0.12 : 0, 0], [on ? -10 : 0, 0, 0], dt);
+      if (part === "pulley") ease(swing, [0, 2.15, 0], [0, on ? 70 : 0, 0], dt);
+      if (part === "screw") swing.rotateLocal(0, 90 * dt, 0);
     }
   }
 
@@ -1020,7 +1083,7 @@ export class View {
     if (this.mode === "run" && game.phase === "run" && game.distance > 18 && game.distance < course.finish - 30) {
       this.strayClock -= dt;
       if (this.strayClock <= 0) {
-        this.strayClock = 0.6 + this.chance() * 1.2;
+        this.strayClock = 2.2 + this.chance() * 3;
         const side = this.chance() < 0.5 ? -1 : 1;
         const d = game.distance + 10 + this.chance() * 42;
         const to = new pc.Vec3(side * (course.width / 2 + 3.5 + this.chance() * 14), heightAt(course, d) - 0.2, -d);
@@ -1044,7 +1107,6 @@ export class View {
         this.puff({ x: at.x, y: at.y + 0.6, z: at.z }, m.flash, 2.6, 0.22, [0, 1, 0]);
         this.pulse(at, m.dust, 1, 7, 0.4);
         const cart = game.position;
-        if (Math.hypot(at.x - cart.x, at.z - cart.z) < 14) this.shake = Math.min(1.4, this.shake + 0.3);
         this.onStray?.(Math.hypot(at.x - cart.x, at.z - cart.z));
         stray.entity.enabled = false;
         this.strayPool.push(stray.entity);
@@ -1118,14 +1180,15 @@ export class View {
       alive.add(marker.id);
       let look = this.markers.get(marker.id);
       if (!look) {
-        const ring = this.shape("cylinder", this.scene, [marker.at.x, marker.at.y, marker.at.z], [3.2, 0.02, 3.2], this.m.danger);
+        const wide = marker.radius * 2 + 0.7;
+        const ring = this.shape("cylinder", this.scene, [marker.at.x, marker.at.y, marker.at.z], [wide, 0.02, wide], this.m.danger);
         const core = this.shape("cylinder", this.scene, [marker.at.x, marker.at.y + 0.02, marker.at.z], [0.1, 0.02, 0.1], this.m.dangerCore);
         for (const entity of [ring, core]) if (entity.render) entity.render.castShadows = false;
         look = { ring, core };
         this.markers.set(marker.id, look);
       }
       const k = 1 - Math.max(0, marker.t) / marker.total;
-      const size = 0.2 + k * 3;
+      const size = (0.06 + k * 0.94) * (marker.radius * 2 + 0.7);
       look.core.setLocalScale(size, 0.02, size);
     }
     for (const [id, look] of this.markers) {
@@ -1274,7 +1337,10 @@ export class View {
   handle(event: GameEvent, game: Game): void {
     const m = this.m;
     const cart = game.position;
-    if (event.type === "jolt") this.shake = Math.min(1.4, this.shake + (event.amount + event.absorbed) / 14);
+    if (event.type === "jolt") this.shake = Math.min(1.2, this.shake + (event.amount + event.absorbed) / 18);
+    // Straw flies whenever the hay takes a knock for him.
+    if (event.type === "jolt" && event.absorbed > 1.5) this.burst({ x: cart.x, y: cart.y + 0.9, z: cart.z }, m.hay, Math.min(9, 3 + Math.round(event.absorbed / 4)), 0.22, 4);
+    if (event.type === "air" && game.hay > 0) this.burst({ x: cart.x, y: cart.y + 0.8, z: cart.z }, m.hay, 4, 0.18, 3);
     if (event.type === "jolt" && event.amount + event.absorbed > 4) this.burst({ x: cart.x, y: cart.y + 0.3, z: cart.z }, m.dust, 5, 0.6, 3);
     if (event.type === "crack") this.burst({ x: cart.x, y: cart.y + 1.2, z: cart.z }, m.egg, 6, 0.22, 4);
     if (event.type === "broken") {
@@ -1286,27 +1352,26 @@ export class View {
     if (event.type === "deflect") this.burst(event.at, m.gold, 6, 0.3, 5);
     if (event.type === "plough") this.burst(event.at, m.dust, 3, 0.5, 3);
     if (event.type === "swat") this.burst({ x: cart.x + 0.8, y: cart.y + 1.2, z: cart.z - 1 }, m.gold, 7, 0.3, 6);
-    if (event.type === "manLost" || event.type === "hayLost") this.burst({ x: cart.x, y: cart.y + 1, z: cart.z }, event.type === "hayLost" ? m.hay : m.vermilion, 5, 0.25, 4);
+    if (event.type === "manLost") this.burst({ x: cart.x, y: cart.y + 1, z: cart.z }, m.vermilion, 5, 0.25, 4);
+    if (event.type === "hayLost") this.burst({ x: cart.x, y: cart.y + 1, z: cart.z }, m.hay, 12, 0.3, 5);
     if (event.type === "pickup") {
       this.burst({ x: event.at.x, y: event.at.y + 0.6, z: event.at.z }, event.kind === "hay" ? m.hay : event.kind === "man" ? m.vermilion : m.gold, 8, 0.3, 4);
       this.pulse(event.at, m.aim, 1.5, 6, 0.35);
     }
     if (event.type === "machine" && this.cart) {
-      const colour = { lever: m.aim, wedge: m.flash, plane: m.aim, pulley: m.aim, screw: m.dust, wheel: m.flash }[event.part];
-      this.pulse({ x: 0, y: -0.3, z: 0 }, colour, 1.2, event.part === "plane" ? 4.4 : 5.5, 0.32, this.cart);
-      if (event.part === "screw" || event.part === "wheel") this.burst({ x: cart.x, y: cart.y - 0.3, z: cart.z + 0.8 }, m.dust, 7, 0.7, 4);
+      this.pulse({ x: 0, y: -0.3, z: 0 }, m.aim, 1.2, 4.4, 0.3, this.cart);
     }
     if (event.type === "shoot" && this.gun) {
       const mouth = this.gun.getPosition().clone().add(this.gun.forward.clone().mulScalar(1.1));
       const at = { x: mouth.x, y: mouth.y, z: mouth.z };
       this.gunKick = 1;
-      this.shake = Math.min(1.4, this.shake + 0.45);
+      this.shake = Math.min(1.2, this.shake + 0.3);
       this.puff(at, m.flash, 1.5, 0.14, [0, 0, 0]);
       this.burst(at, m.smoke, 5, 0.6, 2.5);
       this.burst(at, m.blast, 4, 0.25, 5);
     }
     if (event.type === "bang") {
-      this.shake = Math.min(1.4, this.shake + 0.9);
+      this.shake = Math.min(1.2, this.shake + 0.5);
       this.puff({ x: event.at.x, y: event.at.y + 0.4, z: event.at.z }, m.flash, event.hit === "tower" ? 6 : 3.4, 0.24, [0, 1, 0]);
       this.burst(event.at, m.blast, 10, 0.9, 8);
       this.burst(event.at, m.dust, 9, 1.4, 6);
@@ -1321,12 +1386,16 @@ export class View {
       this.pulse(event.at, m.flash, 2, 18, 0.55);
     }
     if (event.type === "towerDown") {
-      this.shake = Math.min(1.4, this.shake + 0.6);
+      this.shake = Math.min(1.2, this.shake + 0.3);
       this.burst({ x: event.at.x, y: event.at.y + 2.5, z: event.at.z }, m.dust, 14, 1.8, 6);
       this.burst({ x: event.at.x, y: event.at.y + 3.5, z: event.at.z }, m.gold, 6, 0.4, 7);
       this.puff({ x: event.at.x, y: event.at.y + 3, z: event.at.z }, m.smoke, 5, 1.6, [0, 3, 0]);
     }
-    if (event.type === "deflect") this.domeFlash = 0.25;
+    if (event.type === "deflect") {
+      this.domeFlash = 0.25;
+      // The plank it cost, spinning away.
+      this.burst({ x: cart.x, y: cart.y + 2, z: cart.z }, m.lapis, 4, 0.35, 6);
+    }
     if (event.type === "launch") {
       const look = this.towers.get(event.tower);
       if (look) look.swing = 1;
@@ -1340,13 +1409,16 @@ export class View {
         this.arrows.push({
           entity,
           from: new pc.Vec3(tower.pos.x - tower.def.side, tower.pos.y + 5.2, tower.pos.z + spread),
-          to: new pc.Vec3(cart.x + spread * 0.5, cart.y + 0.8 + (index % 3) * 0.2, cart.z + game.velocity.z * 0.22 + spread),
+          // They come down on the ring: on the cart if it is still there, into the road if not.
+          to: event.hit
+            ? new pc.Vec3(cart.x + spread * 0.5, cart.y + 0.8 + (index % 3) * 0.2, cart.z + game.velocity.z * 0.22 + spread)
+            : new pc.Vec3(event.at.x + Math.sin(index * 2.4) * 1.5, event.at.y + 0.3, event.at.z + Math.cos(index * 2.4) * 1.5),
           t: -index * 0.05,
           blocked: event.blocked,
         });
       }
       if (event.blocked) {
-        this.burst({ x: cart.x, y: cart.y + 1.6, z: cart.z - 2 }, m.gold, 6, 0.25, 5);
+        this.burst({ x: cart.x, y: cart.y + 2, z: cart.z }, m.lapis, 4, 0.35, 6);
         this.domeFlash = 0.35;
       }
     }
@@ -1355,6 +1427,12 @@ export class View {
       for (let index = 0; index < 4; index += 1) this.burst({ x: roost.x + (index - 1.5) * 2.5, y: roost.y, z: roost.z + 2 }, index % 2 ? m.gold : m.hen, 9, 0.45, 5);
     }
   }
+}
+
+/** A point in the cart's own frame, turned to the world's. */
+function rotate3(q: { x: number; y: number; z: number; w: number }, x: number, y: number, z: number): { x: number; y: number; z: number } {
+  const out = new pc.Quat(q.x, q.y, q.z, q.w).transformVector(new pc.Vec3(x, y, z));
+  return { x: out.x, y: out.y, z: out.z };
 }
 
 function clampDeg(value: number, limit: number): number {

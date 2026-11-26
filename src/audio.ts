@@ -191,6 +191,12 @@ export class Sound {
     this.hiss("bandpass", 900, 500, 0.2, 0.25);
   }
 
+  /** The brake shoe going on: wood on an iron tyre. */
+  brake(): void {
+    this.hiss("bandpass", 2400, 1500, 0.35, 0.3);
+    this.tone("sawtooth", 620, 540, 0.3, 0.08);
+  }
+
   splinter(): void {
     this.hiss("bandpass", 1300, 400, 0.12, 0.4);
   }

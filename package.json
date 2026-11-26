@@ -13,7 +13,7 @@
     "check": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
-    "@dimforge/rapier3d-compat": "^0.18.2",
+    "@dimforge/rapier3d-deterministic-compat": "^0.18.2",
     "playcanvas": "^2.21.3"
   },
   "devDependencies": {

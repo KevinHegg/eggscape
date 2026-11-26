@@ -163,6 +163,7 @@ body {
 }
 
 #hay i {
+  width: 20px;
   border-radius: 3px;
 }
 
@@ -211,7 +212,7 @@ body {
 
 #toast {
   position: absolute;
-  top: calc(84px + var(--safe-top));
+  top: calc(96px + var(--safe-top));
   left: 0;
   right: 0;
   display: flex;
@@ -272,7 +273,7 @@ body {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: calc(118px + var(--safe-bottom));
+  bottom: calc(150px + var(--safe-bottom));
   text-align: center;
   font-size: 16px;
   font-weight: 600;
@@ -286,134 +287,83 @@ body {
   opacity: 0;
 }
 
+/* The bottom of the screen belongs to the thumbs: drag anywhere to steer, and one button to fire. */
 #bar {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
   display: flex;
-  gap: 8px;
-  padding: 8px 10px calc(10px + var(--safe-bottom));
-  pointer-events: auto;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 8px 14px calc(16px + var(--safe-bottom));
+  pointer-events: none;
 }
 
-#bar button {
+#fire {
   position: relative;
-  flex: 1;
-  min-height: 82px;
-  padding: 6px 4px;
+  flex: none;
+  width: 116px;
+  height: 116px;
+  padding: 0;
   border: 3px solid var(--ink);
-  border-radius: 10px;
-  background: var(--vellum);
+  border-radius: 50%;
+  background: var(--vellum-dark);
   color: var(--ink);
   font-family: var(--ui);
-  box-shadow: 0 4px 0 var(--ink);
-  overflow: hidden;
+  box-shadow: 0 5px 0 var(--ink);
+  pointer-events: auto;
   touch-action: none;
 }
 
-#bar button strong {
-  position: relative;
+#fire:active {
+  box-shadow: 0 2px 0 var(--ink);
+  transform: translateY(3px);
+}
+
+#fire strong {
   display: block;
   font-family: var(--display);
-  font-size: clamp(20px, 6.2vw, 28px);
+  font-size: 32px;
   line-height: 1;
 }
 
-#bar button span {
-  position: relative;
+#fire kbd {
   display: block;
-  margin-top: 4px;
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  opacity: 0.7;
-}
-
-#bar button kbd {
-  position: absolute;
-  top: 4px;
-  right: 6px;
+  margin-bottom: 2px;
   font: 600 12px var(--ui);
   opacity: 0.45;
 }
 
-#bar button::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  transform-origin: bottom;
-  transform: scaleY(var(--cool, 0));
-  background: rgb(29 21 18 / 0.32);
-}
-
-#bar button.cooling {
-  box-shadow: 0 2px 0 var(--ink);
-  transform: translateY(2px);
-}
-
-#bar button.active {
-  background: var(--gold);
-  box-shadow: 0 4px 0 var(--ink), 0 0 0 3px var(--gold), 0 0 18px 4px rgb(233 172 34 / 0.8);
-}
-
-/* While a machine is working, a bar across the top of its button runs down. */
-#bar button::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0;
-  height: 7px;
-  width: 100%;
-  transform-origin: left;
-  transform: scaleX(var(--live, 0));
-  background: var(--vermilion);
-}
-
-#bar #fire {
-  flex: 0.9;
-  border-radius: 50px 50px 14px 14px;
-  background: var(--vellum-dark);
-}
-
-#bar #fire::before,
-#bar #fire::after {
-  display: none;
-}
-
-#bar #fire.ready {
+#fire.ready {
   background: var(--vermilion);
   color: #fff6e6;
   animation: ready 0.5s infinite alternate;
 }
 
-@media (max-width: 600px) {
-  #bar button kbd {
-    display: none;
-  }
-}
-
-#bar #fire.empty strong {
+#fire.empty strong {
   opacity: 0.4;
 }
 
 @keyframes ready {
   to {
-    box-shadow: 0 4px 0 var(--ink), 0 0 0 3px var(--gold), 0 0 16px 3px rgb(233 172 34 / 0.9);
+    box-shadow: 0 5px 0 var(--ink), 0 0 0 3px var(--gold), 0 0 16px 3px rgb(233 172 34 / 0.9);
   }
 }
 
-#bar #rounds {
+#rounds {
   display: flex;
   justify-content: center;
   gap: 3px;
   min-height: 15px;
   margin-top: 6px;
-  opacity: 1;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
-#bar #rounds i {
+#rounds i {
   flex: none;
   width: 12px;
   height: 12px;
@@ -422,12 +372,87 @@ body {
   background: var(--ink);
 }
 
-#bar #rounds i.keg {
-  width: 12px;
+#rounds i.keg {
   height: 15px;
   margin-top: -2px;
   border-radius: 3px;
   background: var(--gold);
+}
+
+/* Shown only while the brake is on. */
+#brake {
+  margin-bottom: 30px;
+  padding: 6px 14px;
+  border: 3px solid var(--ink);
+  border-radius: 8px;
+  background: var(--vermilion);
+  color: #fff6e6;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  box-shadow: 0 3px 0 var(--ink);
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.1s, transform 0.1s;
+}
+
+#brake.on {
+  opacity: 1;
+  transform: none;
+}
+
+/* The machines work by themselves; these only say what state each is in. */
+#chips {
+  position: absolute;
+  top: calc(60px + var(--safe-top));
+  left: 12px;
+  display: flex;
+  gap: 6px;
+}
+
+#chips span {
+  position: relative;
+  padding: 2px 8px 3px;
+  border: 2px solid var(--ink);
+  border-radius: 4px;
+  background: var(--vellum);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  overflow: hidden;
+  transition: background 0.15s;
+}
+
+#chips span b {
+  position: relative;
+  margin-left: 4px;
+  color: var(--vermilion);
+}
+
+#chips span::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform-origin: left;
+  transform: scaleX(var(--cool, 0));
+  background: rgb(29 21 18 / 0.3);
+}
+
+#chips span.active {
+  background: var(--gold);
+}
+
+#chips span.spent {
+  opacity: 0.4;
+  text-decoration: line-through;
+}
+
+@media (max-width: 600px) {
+  #fire kbd {
+    display: none;
+  }
 }
 
 #sound {
@@ -661,8 +686,12 @@ button {
   #bar {
     left: 50%;
     right: auto;
-    width: 520px;
+    width: 640px;
     transform: translateX(-50%);
+  }
+
+  #chips {
+    left: calc(50% - 260px);
   }
 
   #hud-top,

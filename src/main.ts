@@ -1,9 +1,8 @@
 import "./style.css";
 import { Sound } from "./audio";
 import { View } from "./render/view";
-import { steady } from "./sim/autoplay";
-import { chasms } from "./sim/course";
-import { Game, MAX_MEN, STEP, initPhysics, type GameEvent } from "./sim/game";
+import { leanToward, steady } from "./sim/autoplay";
+import { Game, MAX_HAY, MAX_MEN, STEP, initPhysics, type GameEvent } from "./sim/game";
 import { PARTS, PART_IDS, SLOTS, type PartId } from "./sim/parts";
 
 const STORAGE_KEY = "eggscape:v1";
@@ -44,10 +43,20 @@ let game: Game | null = null;
 let running = false;
 let resultShown = false;
 let accumulator = 0;
-const held = new Map<number, number>();
+/** The finger that is steering: where it went down, where it is, and where the cart was then. */
+interface Drag {
+  id: number;
+  x0: number;
+  y0: number;
+  x: number;
+  y: number;
+  cartX: number;
+  since: number;
+  moved: boolean;
+}
+let drag: Drag | null = null;
 const keys = new Set<string>();
-let queue: PartId[] = [];
-/** The Fire button was pressed and the sim has not yet heard. */
+/** A shot was asked for and the sim has not yet heard. */
 let trigger = false;
 /** Seconds the world holds its breath after a big hit. */
 let freeze = 0;
@@ -55,7 +64,8 @@ let felled = 0;
 let flying = false;
 let rounds = "";
 const hinted = new Map<string, number>();
-let leaned = false;
+let steered = false;
+let cushioned = 0;
 
 // ---------------------------------------------------------------- screens
 
@@ -73,13 +83,13 @@ async function stage(run: boolean): Promise<void> {
   running = run;
   resultShown = false;
   accumulator = 0;
-  queue = [];
   trigger = false;
   freeze = 0;
   felled = 0;
   flying = false;
   rounds = "?";
-  held.clear();
+  drag = null;
+  cushioned = 0;
   if (run) drawBar();
 }
 
@@ -89,7 +99,7 @@ function drawBuild(): void {
     ...Array.from({ length: SLOTS }, (_, index) => {
       const slot = document.createElement("div");
       const part = saved.build[index];
-      slot.textContent = part ? PARTS[part].verb : "·";
+      slot.textContent = part ? PARTS[part].name : "·";
       slot.className = part ? "full" : "";
       return slot;
     }),
@@ -101,7 +111,7 @@ function drawBuild(): void {
       button.type = "button";
       button.className = saved.build.includes(id) ? "chosen" : "";
       button.setAttribute("aria-pressed", String(saved.build.includes(id)));
-      button.innerHTML = `<small>${def.machine}</small><strong>${def.verb}</strong><span>${def.blurb}</span>`;
+      button.innerHTML = `<small>${def.machine}</small><strong>${def.name}</strong><span>${def.blurb}</span>`;
       button.addEventListener("click", () => {
         if (saved.build.includes(id)) saved.build = saved.build.filter((part) => part !== id);
         else saved.build = [...saved.build, id].slice(-SLOTS);
@@ -116,37 +126,18 @@ function drawBuild(): void {
 }
 
 function drawBar(): void {
-  $("bar").replaceChildren(
-    ...saved.build.map((id, index) => {
-      const def = PARTS[id];
-      const button = document.createElement("button");
-      button.type = "button";
-      button.dataset.part = id;
-      button.innerHTML = `<kbd>${index + 1}</kbd><strong>${def.verb}</strong><span>${def.machine}</span>`;
-      button.addEventListener("pointerdown", (event) => {
-        event.preventDefault();
-        queue.push(id);
-      });
-      return button;
+  $("chips").replaceChildren(
+    ...saved.build.map((id) => {
+      const chip = document.createElement("span");
+      chip.dataset.part = id;
+      chip.textContent = PARTS[id].verb;
+      return chip;
     }),
-    fireButton(),
   );
   const pips = (host: HTMLElement, count: number): void => host.replaceChildren(...Array.from({ length: count }, () => document.createElement("i")));
   pips($("crew"), MAX_MEN);
-  pips($("hay"), 2);
-  $("lean-hint").classList.toggle("gone", leaned);
-}
-
-function fireButton(): HTMLButtonElement {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.id = "fire";
-  button.innerHTML = `<kbd>space</kbd><strong>Fire</strong><span id="rounds"></span>`;
-  button.addEventListener("pointerdown", (event) => {
-    event.preventDefault();
-    trigger = true;
-  });
-  return button;
+  pips($("hay"), MAX_HAY);
+  $("lean-hint").classList.toggle("gone", steered);
 }
 
 function drawHud(current: Game): void {
@@ -156,15 +147,22 @@ function drawHud(current: Game): void {
   [...$("hay").children].forEach((pip, index) => pip.classList.toggle("on", index < current.hay));
   $("track-fill").style.width = `${current.progress * 100}%`;
   $("track-egg").style.left = `${current.progress * 100}%`;
-  for (const button of $("bar").children as HTMLCollectionOf<HTMLButtonElement>) {
-    const state = current.machine(button.dataset.part as PartId);
+  for (const chip of $("chips").children as HTMLCollectionOf<HTMLElement>) {
+    const state = current.machine(chip.dataset.part as PartId);
     if (!state) continue;
     const def = PARTS[state.part];
-    button.style.setProperty("--cool", String(state.cooldown / def.cooldown));
-    button.style.setProperty("--live", String(state.active / def.active));
-    button.classList.toggle("cooling", state.cooldown > 0 && state.active <= 0);
-    button.classList.toggle("active", state.active > 0);
+    chip.style.setProperty("--cool", String(def.cooldown > 0 ? state.cooldown / def.cooldown : 0));
+    chip.classList.toggle("active", state.active > 0);
+    chip.classList.toggle("spent", state.charges <= 0);
+    if (def.charges !== undefined) {
+      const left = String(Math.max(0, state.charges));
+      if (chip.dataset.left !== left) {
+        chip.dataset.left = left;
+        chip.innerHTML = `${def.verb}<b>${left}</b>`;
+      }
+    }
   }
+  $("brake").classList.toggle("on", current.braking > 0);
   // The gun: what is in the rack, next round first, and whether it has anything to shoot at.
   const rack = current.ammo.join(",");
   if (rack !== rounds) {
@@ -181,8 +179,8 @@ function toast(text: string, kind: "" | "hint" | "bad" = ""): void {
   const line = document.createElement("p");
   line.textContent = text;
   line.className = kind;
-  host.append(line);
-  while (host.children.length > 2) host.firstElementChild?.remove();
+  // One thing said at a time: a new line pushes the old one off.
+  host.replaceChildren(line);
   line.addEventListener("animationend", () => line.remove());
 }
 
@@ -195,14 +193,12 @@ function hint(key: string, text: string): void {
 }
 
 function narrate(event: GameEvent, current: Game): void {
-  const has = (part: PartId): boolean => current.build.includes(part);
   switch (event.type) {
     case "machine":
-      if (event.part === "plane") sound.shield();
-      else if (event.part === "wheel") sound.whoosh();
-      else if (event.part === "screw") sound.hop();
-      else if (event.part === "wedge") sound.smash();
-      else if (event.part === "pulley") sound.brace();
+      if (event.part === "pulley") sound.brace();
+      break;
+    case "brake":
+      sound.brake();
       break;
     case "shoot":
       sound.cannon();
@@ -210,17 +206,15 @@ function narrate(event: GameEvent, current: Game): void {
     case "bang":
       sound.bang(false);
       freeze = 0.05;
-      if (event.hit === "wall") toast("Breach!");
       break;
     case "blast":
       sound.bang(true);
       freeze = 0.08;
-      toast("Boom!");
       break;
     case "dry":
       sound.click();
       if (event.why === "empty") hint("dry", "No shot left: your people leave more by the road");
-      else hint("aimless", "Nothing in range: Fire when a gold ring marks a target");
+      else hint("aimless", "Nothing in range: fire when a gold ring marks a target");
       break;
     case "air":
       if (event.time > 1) toast(`${event.distance.toFixed(0)} metres of air!`);
@@ -245,48 +239,41 @@ function narrate(event: GameEvent, current: Game): void {
       break;
     case "windup":
       sound.windup();
-      if (has("lever")) hint("stone", "Stone coming: Swat as the ring fills");
-      else if (has("plane")) hint("stone", "Stone coming: Shield as the ring fills");
-      else hint("stone", "Stone coming: lean out of the red ring");
+      hint("stone", "Stone coming: get out of the red ring, or brake and let it land ahead");
       break;
     case "aim":
       sound.windup();
-      hint("archers", has("plane") ? "Archers: raise the Shield" : "Archers: they pick off your men");
+      hint("archers", "Archers: get out of the wide ring before it fills");
       break;
     case "swat":
       sound.swat(true);
-      toast("Swat!");
-      break;
-    case "whiff":
-      sound.swat(false);
-      toast("Whiff");
+      toast("Batted back!");
       break;
     case "towerDown":
       felled += 1;
       sound.rubble(8, 0.05);
-      toast("Tower down!");
       break;
     case "deflect":
       sound.clang();
-      toast("Glanced off!");
+      toast("Off the roof!");
       break;
     case "volley":
       sound.twang();
       if (event.blocked) {
         sound.clang();
-        toast("Arrows turned!");
-      } else toast(event.lostMan ? "Man overboard!" : "Arrows!", "bad");
+        toast("Off the roof!");
+      } else if (event.hit) toast(event.lostMan ? "Man overboard!" : "Arrows!", "bad");
       break;
     case "pickup":
       sound.pickup(event.kind === "shot" || event.kind === "keg");
       toast({ hay: "Hay from the farmers!", man: "A volunteer!", shot: "Shot from the smith!", keg: "The Queen's own powder!" }[event.kind]);
-      if (event.kind === "hay") hint("hay", "Hay takes the next knock for him");
+      if (event.kind === "hay") hint("hay", "Hay takes the knocks before his shell does");
       else if (event.kind === "man") hint("man", "More men, harder lean");
-      else if (event.kind === "shot") hint("shot", "Two more rounds: Fire at the gold ring");
+      else if (event.kind === "shot") hint("shot", "Two more rounds for the gun");
       else hint("keg", "A powder keg goes next, and goes big");
       break;
     case "hayLost":
-      toast("Lost a bale");
+      toast("A bale gone", "bad");
       break;
     case "crack":
       sound.crack(true);
@@ -294,6 +281,10 @@ function narrate(event: GameEvent, current: Game): void {
       break;
     case "jolt":
       if (event.amount + event.absorbed > 2) sound.bump(event.amount + event.absorbed);
+      if (event.absorbed > 3 && event.amount < 1 && current.time - cushioned > 2) {
+        cushioned = current.time;
+        hint("cushion", "The hay took that one");
+      }
       if (event.amount > 1) {
         sound.crack(false);
         $("shell").classList.remove("hit");
@@ -338,37 +329,73 @@ function showResult(current: Game): void {
 
 // ---------------------------------------------------------------- input
 
-function lean(): number {
-  let value = 0;
-  for (const side of held.values()) value += side;
-  if (keys.has("ArrowLeft") || keys.has("a")) value -= 1;
-  if (keys.has("ArrowRight") || keys.has("d")) value += 1;
-  return Math.max(-1, Math.min(1, value));
+/** Metres the cart should move across the road for each pixel the finger does. */
+function reach(): number {
+  return 12 / Math.min(stageHost.clientWidth, 560);
+}
+
+/**
+ * The cart goes where the finger goes: drag sideways and it follows across the road, pull down
+ * and the brake comes on. Arrow keys do the same from a keyboard.
+ */
+function steer(current: Game): { lean: number; brake: number } {
+  let lean = 0;
+  let brake = 0;
+  if (drag) {
+    const edge = current.course.width / 2 - 0.9;
+    const goal = Math.max(-edge, Math.min(edge, drag.cartX + (drag.x - drag.x0) * reach()));
+    lean = leanToward(current, goal);
+    brake = Math.max(0, Math.min(1, (drag.y - drag.y0 - 26) / 60));
+  }
+  if (keys.has("ArrowLeft") || keys.has("a")) lean -= 1;
+  if (keys.has("ArrowRight") || keys.has("d")) lean += 1;
+  if (keys.has("ArrowDown") || keys.has("s")) brake = 1;
+  return { lean: Math.max(-1, Math.min(1, lean)), brake };
 }
 
 const stageHost = $("stage");
 stageHost.addEventListener("pointerdown", (event) => {
-  if (!running) return;
-  held.set(event.pointerId, event.clientX < window.innerWidth / 2 ? -1 : 1);
-  if (!leaned) {
-    leaned = true;
-    $("lean-hint").classList.add("gone");
+  if (!running || !game) return;
+  // A second finger anywhere is the gun.
+  if (drag) {
+    trigger = true;
+    return;
+  }
+  drag = { id: event.pointerId, x0: event.clientX, y0: event.clientY, x: event.clientX, y: event.clientY, cartX: game.position.x, since: performance.now(), moved: false };
+});
+window.addEventListener("pointermove", (event) => {
+  if (!drag || event.pointerId !== drag.id) return;
+  drag.x = event.clientX;
+  drag.y = event.clientY;
+  // The brake is measured from the highest the finger has been, so it can be let off again.
+  drag.y0 = Math.min(drag.y0, drag.y);
+  if (!drag.moved && Math.hypot(drag.x - drag.x0, drag.y - drag.y0) > 12) {
+    drag.moved = true;
+    if (!steered) {
+      steered = true;
+      $("lean-hint").classList.add("gone");
+    }
   }
 });
-for (const type of ["pointerup", "pointercancel", "pointerleave"] as const) {
-  window.addEventListener(type, (event) => held.delete(event.pointerId));
+for (const type of ["pointerup", "pointercancel"] as const) {
+  window.addEventListener(type, (event) => {
+    if (!drag || event.pointerId !== drag.id) return;
+    // A quick touch that went nowhere is a shot.
+    if (type === "pointerup" && !drag.moved && performance.now() - drag.since < 280) trigger = true;
+    drag = null;
+  });
 }
 stageHost.addEventListener("contextmenu", (event) => event.preventDefault());
+$("fire").addEventListener("pointerdown", (event) => {
+  event.preventDefault();
+  if (running) trigger = true;
+});
 
 window.addEventListener("keydown", (event) => {
   if (event.repeat) return;
   const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
   keys.add(key);
-  if (running && ["1", "2", "3"].includes(key)) {
-    const part = saved.build[Number(key) - 1];
-    if (part) queue.push(part);
-  }
-  if (running && (key === " " || key === "f" || key === "4")) {
+  if (running && (key === " " || key === "f" || key === "ArrowUp" || key === "w")) {
     event.preventDefault();
     trigger = true;
   }
@@ -378,7 +405,7 @@ window.addEventListener("keydown", (event) => {
 window.addEventListener("keyup", (event) => keys.delete(event.key.length === 1 ? event.key.toLowerCase() : event.key));
 window.addEventListener("blur", () => {
   keys.clear();
-  held.clear();
+  drag = null;
 });
 
 function toggleSound(): void {
@@ -406,6 +433,7 @@ async function start(): Promise<void> {
   await stage(true);
   show("run");
   hint("start", "Friends leave gifts by the road: steer into them");
+  if (auto) $("lean-hint").classList.add("gone");
 }
 
 $("to-build").addEventListener("click", () => {
@@ -425,11 +453,9 @@ $("change").addEventListener("click", () => {
 
 function advance(current: Game, steps: number): void {
   for (let index = 0; index < steps; index += 1) {
-    const fire = queue;
-    queue = [];
     const shoot = trigger;
     trigger = false;
-    const input = auto ? steady(current) : { lean: lean(), fire, shoot };
+    const input = auto ? steady(current) : { ...steer(current), shoot };
     current.step(input);
     for (const event of current.takeEvents()) {
       view.handle(event, current);
@@ -453,9 +479,12 @@ view.app.on("update", (dt: number) => {
     if (airborne && !flying) sound.air();
     flying = airborne;
     sound.roll(current.speed, current.grounded, current.phase === "run");
-    if (current.target && current.ammo.length > 0 && current.phase === "run") hint("fire", "Gold ring on a target: tap Fire");
-    if (chasms(current.course).some((gap) => gap.d0 > current.distance && gap.d0 - current.distance < 42)) {
-      hint("gap", current.build.includes("wheel") ? "Gap ahead: no Surge, or he overshoots the hill" : "Gap ahead: hold him straight");
+    if (current.target && current.ammo.length > 0 && current.phase === "run") hint("fire", "Gold ring on a target: tap, or press Fire");
+    // A bridge with a side gone: say which side is left, in time to get onto it.
+    const bridge = current.course.pieces.find((piece) => (piece.x0 !== undefined || piece.x1 !== undefined) && piece.d0 > current.distance && piece.d0 - current.distance < 48);
+    if (bridge && current.phase === "run") {
+      const left = (bridge.x1 ?? 9) < current.course.width / 2;
+      hint(left ? "bridge-left" : "bridge-right", left ? "Bridge half gone: keep LEFT, and let her run" : "Bridge half gone: keep RIGHT, and let her run");
     }
     if (current.over && !resultShown && current.after > (current.phase === "won" ? 3.4 : 2.4)) showResult(current);
   }
@@ -472,11 +501,16 @@ Object.assign(window, {
     },
     view,
     start,
-    step(seconds: number, input: { lean?: number; fire?: PartId[]; shoot?: boolean } = {}) {
+    step(seconds: number, input: { lean?: number; goal?: number; brake?: number; shoot?: boolean } = {}) {
       if (!game) return null;
       const steps = Math.round(seconds / STEP);
       for (let index = 0; index < steps; index += 1) {
-        game.step(auto ? steady(game) : { lean: input.lean ?? 0, fire: index === 0 ? (input.fire ?? []) : [], shoot: input.shoot ?? false });
+        // With nothing said, whatever finger or key is down steers, as it would in a live frame.
+        const hands = steer(game);
+        const lean = input.goal !== undefined ? leanToward(game, input.goal) : (input.lean ?? hands.lean);
+        const shoot = ((input.shoot ?? false) || trigger) && index === 0;
+        trigger = false;
+        game.step(auto ? steady(game) : { lean, brake: input.brake ?? hands.brake, shoot });
         for (const event of game.takeEvents()) {
           view.handle(event, game);
           narrate(event, game);

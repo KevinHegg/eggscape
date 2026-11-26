@@ -11,8 +11,8 @@ const flush = (): void => {
   if (hurt > 0.5) console.log(`   hurt ${hurt.toFixed(0)} by d=${since.toFixed(0)} (shell ${game.shell.toFixed(0)})`);
   hurt = 0;
 };
-while (!game.over && game.time < 80) {
-  game.step(process.argv[3] === "idle" ? { lean: 0, fire: [] } : steady(game));
+while (!game.over && game.time < 120) {
+  game.step(process.argv[3] === "idle" ? { lean: 0 } : steady(game));
   for (const event of game.takeEvents()) {
     if (event.type === "jolt") {
       hurt += event.amount;

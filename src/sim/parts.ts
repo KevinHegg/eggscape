@@ -1,4 +1,4 @@
-/** The six simple machines. A cart carries three; each is one button during the run. */
+/** The six simple machines. A cart carries three, and each works on its own: nothing to press. */
 export type PartId = "lever" | "wedge" | "plane" | "pulley" | "screw" | "wheel";
 
 export interface PartDef {
@@ -7,14 +7,16 @@ export interface PartDef {
   machine: string;
   /** What it's called on the cart. */
   name: string;
-  /** The one-word button. */
+  /** One word, for the small badge shown during the run. */
   verb: string;
   /** One line for the build card. */
   blurb: string;
-  /** Seconds the effect lasts once fired. */
+  /** Seconds its motion shows once it has acted. */
   active: number;
-  /** Seconds before it can fire again. */
+  /** Seconds before it can act again. */
   cooldown: number;
+  /** How many times it can act at all; unlimited when absent. */
+  charges?: number;
 }
 
 export const PARTS: Record<PartId, PartDef> = {
@@ -22,55 +24,56 @@ export const PARTS: Record<PartId, PartDef> = {
     id: "lever",
     machine: "Lever",
     name: "Batting Arm",
-    verb: "Swat",
-    blurb: "Bats a stone back at the tower that threw it.",
+    verb: "Bat",
+    blurb: "Bats a stone back at the tower that threw it, then takes a while to cock again.",
     active: 0.3,
-    cooldown: 2.2,
+    cooldown: 6,
   },
   wedge: {
     id: "wedge",
     machine: "Wedge",
     name: "Plough",
-    verb: "Smash",
-    blurb: "Drops the prow and flings a barricade aside.",
-    active: 1.6,
-    cooldown: 3.4,
+    verb: "Plough",
+    blurb: "Shoulders crates and rubble out of the road.",
+    active: 0.4,
+    cooldown: 0,
   },
   plane: {
     id: "plane",
     machine: "Inclined plane",
-    name: "Sloped Shield",
-    verb: "Shield",
-    blurb: "Arrows and stones glance off for a moment.",
-    active: 1.5,
-    cooldown: 3.4,
+    name: "Sloped Roof",
+    verb: "Roof",
+    blurb: "Turns aside three stones or volleys. Each one costs it a plank.",
+    active: 0.5,
+    cooldown: 0,
+    charges: 3,
   },
   pulley: {
     id: "pulley",
     machine: "Pulley",
-    name: "Hoisted Cradle",
-    verb: "Brace",
-    blurb: "Hangs the King clear so a jolt passes under him.",
-    active: 1.6,
-    cooldown: 3.0,
+    name: "Hoist",
+    verb: "Hoist",
+    blurb: "Swings gifts aboard from half the road away.",
+    active: 0.5,
+    cooldown: 0,
   },
   screw: {
     id: "screw",
     machine: "Screw",
-    name: "Aerial Screw",
-    verb: "Hop",
-    blurb: "A short lift over oil or a low obstacle.",
-    active: 0.6,
-    cooldown: 3.0,
+    name: "Hay Press",
+    verb: "Press",
+    blurb: "Packs the hay tight, so every bale takes a harder knock.",
+    active: 0,
+    cooldown: 0,
   },
   wheel: {
     id: "wheel",
     machine: "Wheel and axle",
-    name: "Flywheel",
-    verb: "Surge",
-    blurb: "A burst of speed that leaves a stone behind you.",
-    active: 1.0,
-    cooldown: 4.0,
+    name: "Great Wheels",
+    verb: "Wheels",
+    blurb: "Grip through oil, and a quicker lean.",
+    active: 0,
+    cooldown: 0,
   },
 };
 

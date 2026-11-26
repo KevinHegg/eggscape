@@ -1,35 +1,19 @@
-/** Headless look at a run: `npm run probe -- [idle|right|left|hop] [parts,comma,separated]`. */
-import { Game, STEP } from "../src/sim/game";
-import type { PartId } from "../src/sim/parts";
+/** Speed down the bare road, every 20 m: `npx tsx scripts/probe.ts [brake]`. */
+import { COURSE } from "../src/sim/course";
+import { Game } from "../src/sim/game";
 
-const mode = process.argv[2] ?? "idle";
-const build = (process.argv[3]?.split(",") ?? ["lever", "plane", "wedge"]) as PartId[];
-const game = await Game.create(build);
-const surgeAt = Number(process.argv[4] ?? 130);
-let last = -1;
-let peak = 0;
-for (let tick = 0; tick < 60 * 60 && game.after < 2; tick += 1) {
-  const t = tick * STEP;
-  let lean = 0;
-  const fire: PartId[] = [];
-  if (mode === "right" && t > 1 && t < 2) lean = 1;
-  if (mode === "left" && t > 1 && t < 2) lean = -1;
-  if (mode === "hop" && tick === 120) fire.push("screw");
-  if (mode === "surge" && Math.abs(game.distance - surgeAt) < 0.3) fire.push("wheel");
-  game.step({ lean, fire });
-  peak = Math.max(peak, game.jolt);
-  for (const event of game.takeEvents()) {
-    if (event.type === "plough" || event.type === "land") continue;
-    console.log(`${t.toFixed(2)}s d=${game.distance.toFixed(0)}`, JSON.stringify(event));
-  }
-  const bucket = Math.floor(t * 2);
-  if (bucket !== last) {
-    last = bucket;
-    const p = game.position;
-    console.log(
-      `${t.toFixed(1)}s d=${game.distance.toFixed(1)} x=${p.x.toFixed(2)} y=${p.y.toFixed(2)} v=${game.speed.toFixed(1)} shell=${game.shell.toFixed(0)} men=${game.men} peakJolt=${peak.toFixed(2)} ${game.grounded ? "" : "AIR"} ${game.slick ? "OIL" : ""}`,
-    );
-    peak = 0;
+const brake = Number(process.argv[2] ?? 0);
+const bare = { ...COURSE, walls: [], towers: [], oil: [], pickups: [] };
+const game = await Game.create(["wedge", "lever", "pulley"], bare);
+let next = 0;
+const row: string[] = [];
+while (!game.over && game.time < 100) {
+  game.step({ lean: 0, brake });
+  game.takeEvents();
+  if (game.distance >= next) {
+    row.push(`${next}:${game.speed.toFixed(0)}`);
+    next += 20;
   }
 }
-console.log(`END phase=${game.phase} cause=${game.cause} t=${game.time.toFixed(1)} shell=${game.shell.toFixed(0)} men=${game.men} stars=${game.stars}`);
+console.log(row.join("  "));
+console.log(`afterBridge ${COURSE.towers.find((tower) => tower.id === "a2")!.d - 16} finish ${COURSE.finish} time ${game.time.toFixed(1)}`);

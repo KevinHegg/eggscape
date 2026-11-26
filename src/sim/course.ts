@@ -7,6 +7,9 @@ export interface Piece {
   d1: number;
   y0: number;
   y1: number;
+  /** Where the road is missing part of its width, the stretch across it that is still there. */
+  x0?: number;
+  x1?: number;
 }
 
 /** Hay and men are supplies; shot and kegs load the cart's gun. */
@@ -59,8 +62,8 @@ function layRoad(): Road {
   const pieces: Piece[] = [];
   let d = -14;
   let y = 0;
-  const run = (length: number, slope: number): void => {
-    pieces.push({ d0: d, d1: d + length, y0: y, y1: y - length * slope });
+  const run = (length: number, slope: number, span?: readonly [number, number]): void => {
+    pieces.push({ d0: d, d1: d + length, y0: y, y1: y - length * slope, ...(span ? { x0: span[0], x1: span[1] } : {}) });
     d += length;
     y -= length * slope;
   };
@@ -104,18 +107,20 @@ function layRoad(): Road {
   run(14, 0.3);
   run(66, 0.14);
 
-  run(3, 0.02); // the broken bridge
-  run(3, -0.1);
-  run(3, -0.2);
-  leap(12.7, 7, 2.3, 16, 12, 0.8);
+  run(3, 0.02); // the broken bridge: only its left half still stands
+  run(3, -0.1, [-5, -0.4]);
+  run(3, -0.2, [-5, -0.4]);
+  leap(8.4, 4, 3, 20, 8, 0.95);
+  run(24, 0.03); // a level stretch, to take the heat out of her after the hill
   const afterBridge = d;
-  run(72, 0.14);
+  run(56, 0.14);
+  run(20, 0.3); // the run-in: she gathers herself for the big one
 
   run(3, 0.02); // the great leap
   run(3, -0.1);
-  run(3, -0.21);
-  run(3, -0.32);
-  leap(14.5, 9, 3.6, 16, 12, 0.85);
+  run(3, -0.21, [0.4, 5]); // and of this one, only the right
+  run(3, -0.32, [0.4, 5]);
+  leap(9.6, 5, 4.6, 24, 10, 1.1);
   run(6, 0.07);
   const yard = d;
   run(56, 0); // the roost yard
@@ -131,18 +136,17 @@ export const COURSE: CourseDef = {
   walls: [
     { id: "w1", d: 30, x0: -4.4, x1: 0.4, rows: 2 },
     { id: "w2", d: 118, x0: -0.6, x1: 4.4, rows: 2 },
-    { id: "w3", d: C + 36, x0: -4.4, x1: 4.4, rows: 2 },
+    { id: "w3", d: C + 36, x0: -4.4, x1: 1.4, rows: 2 },
   ],
   towers: [
-    { id: "m1", kind: "mangonel", d: 64, side: 1, from: 24, to: 48 },
-    { id: "a1", kind: "archers", d: 92, side: -1, from: 72, to: 92 },
-    { id: "m2", kind: "mangonel", d: 112, side: 1, from: 82, to: 106 },
-    { id: "m3", kind: "mangonel", d: 136, side: -1, from: 100, to: 128 },
-    { id: "a2", kind: "archers", d: C + 16, side: 1, from: C - 6, to: C + 16 },
-    { id: "m4", kind: "mangonel", d: C + 28, side: -1, from: C - 2, to: C + 22 },
-    { id: "a3", kind: "archers", d: C + 50, side: -1, from: C + 32, to: C + 50 },
-    { id: "m5", kind: "mangonel", d: C + 58, side: 1, from: C + 28, to: C + 52 },
-    { id: "m6", kind: "mangonel", d: C + 66, side: -1, from: C + 36, to: C + 60 },
+    { id: "m1", kind: "mangonel", d: 64, side: 1, from: 14, to: 50 },
+    { id: "a1", kind: "archers", d: 92, side: -1, from: 66, to: 92 },
+    { id: "m2", kind: "mangonel", d: 112, side: 1, from: 72, to: 104 },
+    { id: "m3", kind: "mangonel", d: 136, side: -1, from: 96, to: 126 },
+    { id: "a2", kind: "archers", d: C + 16, side: 1, from: C - 14, to: C + 16 },
+    { id: "m4", kind: "mangonel", d: C + 30, side: -1, from: C - 8, to: C + 22 },
+    { id: "a3", kind: "archers", d: C + 52, side: -1, from: C + 24, to: C + 52 },
+    { id: "m5", kind: "mangonel", d: C + 62, side: 1, from: C + 26, to: C + 54 },
   ],
   oil: [
     { d0: 82, d1: 94, x0: 0.2, x1: 4.8 },
@@ -175,6 +179,12 @@ export function heightAt(course: CourseDef, d: number): number {
   const piece = pieceAt(course, d);
   const k = Math.min(1, Math.max(0, (d - piece.d0) / (piece.d1 - piece.d0)));
   return piece.y0 + (piece.y1 - piece.y0) * k;
+}
+
+/** The stretch across the road that exists at `d`: all of it, except where a bridge has lost a side. */
+export function spanAt(course: CourseDef, d: number): [number, number] {
+  const piece = pieceAt(course, d);
+  return [piece.x0 ?? -course.width / 2, piece.x1 ?? course.width / 2];
 }
 
 /** Slope (drop per metre forward) at `d`. */

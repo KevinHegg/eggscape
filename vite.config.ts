@@ -10,7 +10,7 @@ export default defineConfig({
       output: {
         manualChunks: {
           playcanvas: ["playcanvas"],
-          rapier: ["@dimforge/rapier3d-compat"],
+          rapier: ["@dimforge/rapier3d-deterministic-compat"],
         },
       },
     },
