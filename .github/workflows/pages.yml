@@ -16,10 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+  build:
     runs-on: ubuntu-latest
     steps:
       - name: Check out the game
@@ -47,6 +44,15 @@ jobs:
         uses: actions/upload-pages-artifact@v3
         with:
           path: ./dist
+
+  # Its own job, after the build: deploying in the same breath as the upload has failed to find the artifact.
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - name: Deploy Pages
         id: deployment
         uses: actions/deploy-pages@v4
