@@ -1,5 +1,5 @@
 import RAPIER from "@dimforge/rapier3d-deterministic-compat";
-import { COURSE, courseEnd, heightAt, slopeAt, type ClutterDef, type ClutterKind, type CourseDef, type KegDef, type MobDef, type PickupDef, type WallDef } from "./course";
+import { COURSE, chasms, courseEnd, heightAt, pieceAt, slopeAt, spanOf, type ClutterDef, type ClutterKind, type CourseDef, type KegDef, type MobDef, type PickupDef, type WallDef } from "./course";
 
 /** Fixed simulation step. Slow motion changes how many steps run, never the step. */
 export const STEP = 1 / 60;
@@ -106,6 +106,17 @@ const BELL_MASS = 240;
 /** A bell is no ball: it rolls badly and soon lies still. */
 const BELL_ROLL = 0.3;
 
+// The millstone.
+export const STONE_RADIUS = 1.15;
+const STONE_MASS = 900;
+/** The pace it holds down the hill: a little more than the cart can make, so it leads. */
+export const STONE_PACE = 9.6;
+/** How hard the hill takes hold of it, in m/s². */
+const STONE_PULL = 3;
+const STONE_FRIGHT = 3.8;
+/** With straw under her the cart's springs have this much more to give. */
+const STRAW_TRAVEL = 9;
+
 // The mob.
 /** Seconds a townsman stays in the gutter after diving out of the way. */
 export const PANIC = 5.5;
@@ -140,7 +151,7 @@ export interface Quat {
 /** "through" is a street finished with another to come; "won" is home. */
 export type Phase = "run" | "won" | "through" | "broken";
 export type BreakCause = "jolt" | "spilled" | "fell" | "mob" | "caught" | "blast";
-export type TargetKind = "windlass" | "wain" | "rank" | "wall";
+export type TargetKind = "windlass" | "wain" | "rank" | "wall" | "hoist";
 
 /** What the cart takes with it from one street into the next. */
 export interface Carry {
@@ -199,6 +210,9 @@ export type GameEvent =
   | { type: "pan"; at: Vec3; hit: boolean; kind: number }
   | { type: "wainOff"; at: Vec3 }
   | { type: "wainCrash"; at: Vec3 }
+  | { type: "stoneLoose"; at: Vec3 }
+  | { type: "thud"; at: Vec3 }
+  | { type: "plunge"; at: Vec3 }
   | { type: "jolt"; amount: number; absorbed: number }
   | { type: "crack"; stage: number }
   | { type: "broken"; cause: BreakCause }
@@ -207,7 +221,15 @@ export type GameEvent =
   | { type: "finish" };
 
 export type PropKind = "hay" | "beam" | "shell" | "block" | "folk" | "shard" | "hen" | "crown";
-export type Bowler = "bell" | "wain" | "shot" | "cart" | "pot" | "blast";
+export type Bowler = "bell" | "wain" | "shot" | "cart" | "pot" | "blast" | "stone";
+
+/** The miller's stone: hung on the hoist, let fall, rolling down its lane, and then gone into the gorge. */
+export interface Stone {
+  state: "hung" | "falling" | "rolling" | "gone";
+  body: RAPIER.RigidBody | null;
+  /** Where it hangs. */
+  at: Vec3;
+}
 
 /** A loose physical thing the view draws by id. */
 export interface Prop {
@@ -411,6 +433,7 @@ export class Game {
   readonly tower: BellTower | null;
   readonly bell: Bell = { state: "hung", body: null, landed: false, quiet: 0 };
   readonly wain: Wain | null;
+  readonly stone: Stone | null;
   readonly mob: Mobster[] = [];
   readonly pans: Pan[] = [];
   readonly eggFlights: EggShot[] = [];
@@ -509,6 +532,9 @@ export class Game {
       const wain = this.wain.body.translation();
       this.targets.push({ id: "wain", kind: "wain", at: { x: wain.x, y: wain.y - 0.3, z: wain.z - 1.5 }, lit: false, done: false, doomed: false });
     }
+    const mill = course.mill;
+    this.stone = mill ? { state: "hung", body: null, at: { x: mill.x, y: heightAt(course, mill.d) + mill.drop, z: -mill.d } } : null;
+    if (this.stone) this.targets.push({ id: "hoist", kind: "hoist", at: { ...this.stone.at, y: this.stone.at.y + STONE_RADIUS + 0.5 }, lit: false, done: false, doomed: false });
     this.raiseWalls();
     for (const rank of new Set(course.mob.map((def) => def.rank))) {
       this.targets.push({ id: `rank${rank}`, kind: "rank", at: { x: 0, y: 0, z: 0 }, lit: false, done: false, doomed: false });
@@ -620,6 +646,7 @@ export class Game {
 
     this.stepBell();
     this.stepWain();
+    this.stepStone();
     this.stepKegs();
     this.stepMob();
     this.stepPans();
@@ -752,6 +779,9 @@ export class Game {
       } else if (target.kind === "wain") {
         target.done = true;
         this.unchock();
+      } else if (target.kind === "hoist") {
+        target.done = true;
+        this.dropStone();
       } else if (target.kind === "wall") {
         const wall = this.walls.find((one) => `wall${one.def.id}` === target.id);
         if (wall) this.breach(wall);
@@ -1216,9 +1246,80 @@ export class Game {
 
   // ---------------------------------------------------------------- the mob
 
-  /** The bell and the wain, while they are moving fast enough to frighten anyone. */
-  private rollers(): Array<{ x: number; d: number; by: "bell" | "wain"; fright: number; v: Vec3 }> {
-    const out: Array<{ x: number; d: number; by: "bell" | "wain"; fright: number; v: Vec3 }> = [];
+  /** The hoist's rope is shot through, and the stone comes down in the road. */
+  private dropStone(): void {
+    const stone = this.stone;
+    if (!stone || stone.state !== "hung") return;
+    stone.state = "falling";
+    const body = this.world.createRigidBody(
+      RAPIER.RigidBodyDesc.dynamic()
+        .setTranslation(stone.at.x, stone.at.y, stone.at.z)
+        .setLinvel(0, 0, -2)
+        // It keeps its lane, like a thing on rails: what it will hit can be seen from the top of the hill.
+        .enabledTranslations(false, true, true)
+        .setAngularDamping(0.2)
+        .setCcdEnabled(true)
+        .setCanSleep(false),
+    );
+    this.world.createCollider(RAPIER.ColliderDesc.ball(STONE_RADIUS).setMass(STONE_MASS).setFriction(0.9).setRestitution(0.05).setCollisionGroups(ROLLER_GROUPS), body);
+    stone.body = body;
+    for (let piece = 0; piece < 6; piece += 1) {
+      this.spawn("beam", { x: 0.1, y: 0.1, z: 0.8 }, 4, { x: stone.at.x, y: stone.at.y + STONE_RADIUS + 0.6, z: stone.at.z }, { x: this.random() * 6 - 3, y: 2 + this.random() * 4, z: this.random() * 4 - 2 });
+    }
+    this.events.push({ type: "stoneLoose", at: { ...stone.at } });
+  }
+
+  /**
+   * The stone is driven: once it is down, the hill holds it to a pace the cart cannot quite
+   * make, for as long as there is street under its lane. Where its lane ends, it goes over.
+   */
+  private stepStone(): void {
+    const stone = this.stone;
+    if (!stone?.body || stone.state === "gone") return;
+    const p = stone.body.translation();
+    const v = stone.body.linvel();
+    const d = -p.z;
+    const piece = pieceAt(this.course, d);
+    const span = spanOf(this.course, piece);
+    const under = d <= piece.d1 && p.x >= span.x0 && p.x <= span.x1;
+    const road = heightAt(this.course, d);
+    if (!under || p.y < road - 1) {
+      // Nothing under it but the gorge.
+      const water = chasms(this.course).find((gap) => d < gap.d1 + 1);
+      if (p.y < (water ? water.y : road) - 8) {
+        this.events.push({ type: "plunge", at: { ...p } });
+        this.world.removeRigidBody(stone.body);
+        stone.body = null;
+        stone.state = "gone";
+      }
+      return;
+    }
+    const down = p.y <= road + STONE_RADIUS + 0.25;
+    if (stone.state === "falling" && down) {
+      stone.state = "rolling";
+      this.events.push({ type: "thud", at: { ...p } });
+    }
+    if (stone.state !== "rolling" || !down) return;
+    if (-v.z < STONE_PACE) {
+      const slope = slopeAt(this.course, d);
+      const norm = Math.hypot(1, slope);
+      const kick = Math.min(STONE_PULL * STEP, STONE_PACE + v.z) * stone.body.mass();
+      stone.body.applyImpulse({ x: 0, y: (-slope / norm) * kick, z: (-1 / norm) * kick }, true);
+    }
+    // A barricade is firewood to it.
+    for (const wall of this.walls) {
+      if (wall.state === "up" && Math.abs(wall.def.d - d) < STONE_RADIUS + 1.1) this.breach(wall);
+    }
+  }
+
+  /** The bell, the wain and the stone, while they are moving fast enough to frighten anyone. */
+  private rollers(): Array<{ x: number; d: number; by: "bell" | "wain" | "stone"; fright: number; v: Vec3 }> {
+    const out: Array<{ x: number; d: number; by: "bell" | "wain" | "stone"; fright: number; v: Vec3 }> = [];
+    if (this.stone?.state === "rolling" && this.stone.body) {
+      const p = this.stone.body.translation();
+      const v = this.stone.body.linvel();
+      if (-v.z > 1.5) out.push({ x: p.x, d: -p.z, by: "stone", fright: STONE_FRIGHT, v });
+    }
     if (this.bell.state === "loose" && this.bell.body && this.bell.landed) {
       const p = this.bell.body.translation();
       const v = this.bell.body.linvel();
@@ -1356,7 +1457,9 @@ export class Game {
     let dz = v.z - this.prevVel.z;
     this.prevVel = { x: v.x, y: v.y, z: v.z };
     // The cart is sprung: coming down wheels first, the springs take the blow until they bottom out.
-    this.spring = Math.min(SPRING_TRAVEL, this.spring + SPRING_RETURN * STEP);
+    const straw = this.course.straw;
+    const soft = straw !== null && this.distance >= straw.d0 && this.distance <= straw.d1;
+    this.spring = Math.min(soft ? STRAW_TRAVEL : SPRING_TRAVEL, this.spring + (soft ? STRAW_TRAVEL / STEP : SPRING_RETURN * STEP));
     const up = rotate(this.chassis.rotation(), { x: 0, y: 1, z: 0 });
     const lift = dx * up.x + dy * up.y + dz * up.z;
     if (lift > 0 && up.y > 0.6) {
@@ -1446,14 +1549,20 @@ export class Game {
       const rotation = { x: Math.sin(angle / 2), y: 0, z: 0, w: Math.cos(angle / 2) };
       const normal = { y: Math.cos(angle), z: Math.sin(angle) };
       const mid = { y: (piece.y0 + piece.y1) / 2, z: -(piece.d0 + piece.d1) / 2 };
+      // The street runs under its kerbs, except where a piece is broken off short of one.
+      const span = spanOf(this.course, piece);
+      const left = span.x0 <= -half ? -half - 0.6 : span.x0;
+      const right = span.x1 >= half ? half + 0.6 : span.x1;
       this.world.createCollider(
-        RAPIER.ColliderDesc.cuboid(half + 0.6, 0.3, length / 2)
-          .setTranslation(0, mid.y - normal.y * 0.3, mid.z - normal.z * 0.3)
+        RAPIER.ColliderDesc.cuboid((right - left) / 2, 0.3, length / 2)
+          .setTranslation((left + right) / 2, mid.y - normal.y * 0.3, mid.z - normal.z * 0.3)
           .setRotation(rotation)
           .setFriction(1),
         street,
       );
       for (const side of [-1, 1]) {
+        // No kerb along a broken edge: there is nothing there to hold one.
+        if ((side < 0 ? span.x0 : span.x1) * side < half) continue;
         this.world.createCollider(
           RAPIER.ColliderDesc.cuboid(0.3, 0.45, length / 2)
             .setTranslation(side * (half + 0.3), mid.y + normal.y * 0.3, mid.z + normal.z * 0.3)

@@ -6,8 +6,8 @@ A mobile-first physics game. The Queen's village is built down a hill, and the w
 one push from falling over. Set it off, then ride the Egg King's cart through what follows,
 down to the Empress Hen, with his shell in one piece.
 
-This is an early prototype: two streets, **Bell Tower Street** and then **Powder Row**,
-joined by a town gate. What is left of the cart at the bottom of one is what you have at the
+This is an early prototype: three streets, **Bell Tower Street**, **Powder Row** and
+**Miller's Leap**, joined by town gates. What is left of the cart at the bottom of one is what you have at the
 top of the next.
 
 The first version, a gauntlet of towers ridden on a cart built from three simple machines, is
@@ -21,7 +21,8 @@ npm run dev
 ```
 
 Open [http://127.0.0.1:5180](http://127.0.0.1:5180). Add `?auto` to watch the built-in
-driver play both streets, or `?street=2` to start on Powder Row with a fresh cart.
+driver play every street, or `?street=2` or `?street=3` to start on a later one with a fresh
+cart.
 
 - **Steer:** put a finger down anywhere and drag sideways. The cart goes that way and keeps
   going until you lift the finger or bring it back (or **←/→**, **A/D**).
@@ -69,6 +70,21 @@ barricade, and she has left a few kegs in the road with slow matches in them.
    way down to the wagon.
 4. **Brake.** Be well back when the wagon goes.
 
+## Miller's Leap
+
+A windmill at the top of the hill with its millstone swung out over the road, the Queen's
+kitchen and a barricade below, and at the bottom a gorge with half of one arch of its bridge
+left standing.
+
+1. **Shoot the hoist.** The stone comes down in the road and goes on down the left of the
+   street by itself: through the cooks in its way, over the kegs, through the barricade and
+   off the quay into the gorge.
+2. **Keep up, and keep clear.** Follow in its wake and the hill costs one round. The cooks it
+   only frightened get up again.
+3. **Keep right for the bridge, and stay off the brake.** What is left of the bridge is a
+   ramp. Fast enough, she clears the gorge and comes down in the straw the Hen's people have
+   laid. Too slow, she does not.
+
 - **Only a jolt hurts him.** His shell cracks when the cart's velocity changes sharply, when a
   pan lands, when he runs into a cook, or when powder goes off beside him. Hay takes each knock first, two bales' worth.
 - **Stars:** get him home; arrive with the shell uncracked; arrive without a pan landed.
@@ -83,6 +99,7 @@ npx tsx scripts/trace.ts         # one run, event by event (steady, idle, nowain
                                  # on Powder Row: wagon, train, rush, blind)
 npx tsx scripts/window.ts        # outcome for every shot delay and brake setting (add: wain)
 npx tsx scripts/lip.ts           # the jolt of crossing the fallen tower
+npx tsx scripts/leap.ts          # Miller's Leap: speed off the bridge, air and cost, every way
 npm run build
 npm run check                    # typecheck, tests and build
 ```
@@ -91,7 +108,7 @@ npm run check                    # typecheck, tests and build
 src/sim/      rules and physics, headless (Rapier 3D, fixed 60 Hz, no DOM, no Math.random)
   course.ts     the streets: the hill, the canal, the tower, the mob, the wain, the powder
   game.ts       the cart, the jolt rule, the gun, the eggs, the tower, the bell, the wain,
-                the mob, the kegs, the barricade, what is carried through a gate
+                the mob, the kegs, the barricade, the millstone, what is carried through a gate
   autoplay.ts   pilots for tests and ?auto
 src/render/   PlayCanvas view; reads the sim, never writes it
 src/audio.ts  every sound, synthesised; presentation only

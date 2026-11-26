@@ -1,9 +1,28 @@
 import * as pc from "playcanvas";
-import { chasms, courseEnd, heightAt, type CourseDef } from "../sim/course";
-import { EGG_RANGE, KEG_TRIP, MEN, panAt, type EggAim, type Game, type GameEvent, type Prop, type Vec3 } from "../sim/game";
+import { chasms, courseEnd, heightAt, spanOf, type CourseDef } from "../sim/course";
+import { EGG_RANGE, KEG_TRIP, MEN, STONE_RADIUS, panAt, type EggAim, type Game, type GameEvent, type Prop, type Vec3 } from "../sim/game";
 
 /** What a touch on the street means: a round from the gun at a ringed target, or an egg at anything else. */
 export type Pick = { shoot: string } | { egg: EggAim };
+
+/**
+ * The water as it is seen: a gap in the street, and with it whatever broken length of bridge
+ * still stands out over it on the near side.
+ */
+function gorges(course: CourseDef): Array<{ d0: number; d1: number; stump: boolean }> {
+  return chasms(course).map((gap) => {
+    let d0 = gap.d0;
+    let stump = false;
+    for (let index = course.pieces.length - 1; index >= 0; index -= 1) {
+      const piece = course.pieces[index]!;
+      if (piece.x0 !== undefined && Math.abs(piece.d1 - d0) < 0.01) {
+        d0 = piece.d0;
+        stump = true;
+      }
+    }
+    return { d0, d1: gap.d1, stump };
+  });
+}
 
 /** How many splashes of yolk lie about before the oldest is mopped up. */
 const MESS = 28;
@@ -109,6 +128,12 @@ export class View {
   private capstan: pc.Entity | null = null;
   private bell: pc.Entity | null = null;
   private wain: pc.Entity | null = null;
+  private stone: pc.Entity | null = null;
+  private stoneRope: pc.Entity | null = null;
+  private sails: pc.Entity | null = null;
+  private stoneRoll = 0;
+  /** Where the gorge's water lies, for the splash. */
+  private waterY = 0;
   private chock: pc.Entity | null = null;
   private queen: pc.Entity | null = null;
   private readonly mob = new Map<number, MobLook>();
@@ -387,6 +412,10 @@ export class View {
     this.rope = null;
     this.capstan = null;
     this.wain = null;
+    this.stone = null;
+    this.stoneRope = null;
+    this.sails = null;
+    this.stoneRoll = 0;
     this.chock = null;
     this.queen = null;
     this.hen = null;
@@ -420,6 +449,8 @@ export class View {
     this.buildYard(game.course);
     this.buildTower(game.course);
     this.buildWorks(game);
+    this.buildMill(game);
+    this.buildStraw(game.course);
     this.buildMob(game);
     this.buildPowder(game);
     this.buildPickups(game);
@@ -440,6 +471,10 @@ export class View {
       const normal = { y: Math.cos(angle), z: Math.sin(angle) };
       const mid = { y: (piece.y0 + piece.y1) / 2, z: -(piece.d0 + piece.d1) / 2 };
       const tilt: Triple = [degrees, 0, 0];
+      if (piece.x0 !== undefined) {
+        this.buildStump(course, piece, tilt);
+        continue;
+      }
       this.shape("box", this.scene, [0, mid.y - normal.y * 0.3, mid.z - normal.z * 0.3], [course.width + 1.2, 0.6, length], m.road, tilt, true);
       for (const side of [-1, 1]) {
         this.shape("box", this.scene, [side * (half + 0.3), mid.y + normal.y * 0.3, mid.z + normal.z * 0.3], [0.6, 0.9, length], m.kerb, tilt, true);
@@ -477,6 +512,58 @@ export class View {
     }
   }
 
+  /** What is left of a bridge: part of its first arch, standing out over the water with nothing beyond it. */
+  private buildStump(course: CourseDef, piece: CourseDef["pieces"][number], tilt: Triple): void {
+    const m = this.m;
+    const half = course.width / 2;
+    const span = spanOf(course, piece);
+    const run = piece.d1 - piece.d0;
+    const length = Math.hypot(run, piece.y1 - piece.y0);
+    const angle = Math.asin((piece.y1 - piece.y0) / length);
+    const normal = { y: Math.cos(angle), z: Math.sin(angle) };
+    const mid = { y: (piece.y0 + piece.y1) / 2, z: -(piece.d0 + piece.d1) / 2 };
+    const whole = (side: number): boolean => (side < 0 ? span.x0 <= -half : span.x1 >= half);
+    const left = whole(-1) ? -half - 0.6 : span.x0;
+    const right = whole(1) ? half + 0.6 : span.x1;
+    const wide = right - left;
+    const cx = (left + right) / 2;
+    this.shape("box", this.scene, [cx, mid.y - normal.y * 0.3, mid.z - normal.z * 0.3], [wide, 0.6, length], m.road, tilt, true);
+    // The arch under it, and the pier it stands on.
+    this.shape("box", this.scene, [cx, mid.y - normal.y * 1.1, mid.z - normal.z * 1.1], [wide - 0.2, 1, length], m.stone, tilt, true);
+    this.shape("box", this.scene, [cx, piece.y1 - 8, -(piece.d1 - 1.1)], [wide + 0.4, 15, 2.2], m.stone, [0, 0, 0], true);
+    this.shape("box", this.scene, [cx, piece.y1 - 1.9, -(piece.d1 - 1.1)], [wide + 0.9, 0.5, 2.7], m.kerb, [0, 0, 0], true);
+    for (let d = Math.ceil(piece.d0 / 3) * 3; d < piece.d1; d += 3) {
+      this.shape("box", this.scene, [cx, heightAt(course, d) + 0.012, -d], [wide - 0.6, 0.03, 0.4], m.roadDark, tilt, true);
+    }
+    for (const side of [-1, 1]) {
+      if (whole(side)) {
+        // The parapet on the side that still has one.
+        this.shape("box", this.scene, [side * (half + 0.3), mid.y + normal.y * 0.55, mid.z + normal.z * 0.55], [0.6, 1.4, length], m.kerb, tilt, true);
+        continue;
+      }
+      // The broken edge: stones hanging out over nothing.
+      const edge = side < 0 ? span.x0 : span.x1;
+      for (let stone = 0; stone < 6; stone += 1) {
+        const d = piece.d0 + 0.4 + (stone / 6) * run;
+        const out = 0.15 + ((stone * 7) % 4) * 0.16;
+        this.shape("box", this.scene, [edge + side * out, heightAt(course, d) - 0.2 - ((stone * 3) % 3) * 0.12, -d], [0.9, 0.5, 0.9], stone % 2 ? m.stone : m.kerb, [(stone * 11) % 16, (stone * 37) % 40, side * (8 + ((stone * 5) % 14))], true);
+      }
+    }
+    // The King's people have been out with paint: this way, and do not stop.
+    for (let arrow = 0; arrow < 3; arrow += 1) {
+      const d = piece.d0 + 1.1 + arrow * 2.1;
+      for (const lean of [-1, 1]) {
+        this.shape("box", this.scene, [cx + lean * 0.62, heightAt(course, d) + 0.02, -d], [1.5, 0.03, 0.34], m.gold, [tilt[0], lean * 40, 0], true);
+      }
+    }
+    for (const x of [left + 0.3, right - 0.9]) {
+      this.shape("box", this.scene, [x, piece.y1 + 1.5, -(piece.d1 - 0.4)], [0.16, 3.2, 0.16], m.oakDark, [0, 0, 0], true);
+      this.shape("cone", this.scene, [x + 0.5, piece.y1 + 2.7, -(piece.d1 - 0.4)], [0.6, 1.1, 0.06], m.gold, [0, 0, -90], true);
+    }
+    // The near bank beside it, where the rest of the bridge used to start.
+    void left;
+  }
+
   /** A gate across the street with room for a cart under it: where one street ends and the next begins. */
   private townGate(course: CourseDef, d: number): void {
     const m = this.m;
@@ -506,7 +593,8 @@ export class View {
     const plasters = [m.plaster, m.plasterWarm, m.plasterCool];
     const roofs = [m.vermilion, m.lapis, m.verdigris, m.oakDark];
     // Where no house stands: over the water, and where the town gate does.
-    const gaps = chasms(course).map((gap) => ({ d0: gap.d0 - 0.6, d1: gap.d1 + 0.6 }));
+    const gaps = gorges(course).map((gap) => ({ d0: gap.d0 - 0.6, d1: gap.d1 + 0.6 }));
+    if (course.mill) gaps.push({ d0: course.mill.d - 6, d1: course.mill.d + 6 });
     if (course.roost === null) gaps.push({ d0: course.finish - 2.2, d1: course.finish + 2.2 });
     const yard = course.roost === null ? courseEnd(course) - 2 : course.finish - 8;
     for (const side of [-1, 1]) {
@@ -574,11 +662,12 @@ export class View {
   private buildCanal(course: CourseDef): void {
     const m = this.m;
     const half = course.width / 2;
-    for (const gap of chasms(course)) {
+    for (const gap of gorges(course)) {
       const lip = heightAt(course, gap.d0 - 0.01);
       const far = heightAt(course, gap.d1 + 0.01);
       const wide = gap.d1 - gap.d0;
       const water = Math.min(lip, far) - 9;
+      this.waterY = water;
       this.shape("box", this.scene, [0, lip - 8.3, -(gap.d0 - 0.4)], [190, 16, 0.8], m.kerb, [0, 0, 0], true);
       this.shape("box", this.scene, [0, far - 8.3, -(gap.d1 + 0.4)], [190, 16, 0.8], m.kerb, [0, 0, 0], true);
       this.shape("box", this.scene, [0, water, -(gap.d0 + gap.d1) / 2], [190, 0.3, wide + 1], m.water, [0, 0, 0], true);
@@ -591,9 +680,15 @@ export class View {
         this.shape("cone", this.scene, [side * (half + 0.3) - side * 0.5, lip + 2.6, -(gap.d0 - 0.5)], [0.6, 1.1, 0.08], m.vermilion, [0, 0, side * 90], true);
         this.shape("box", this.scene, [side * (half + 0.3), far + 1.2, -(gap.d1 + 0.6)], [0.3, 3, 0.3], m.oakDark, [10, 0, side * -6], true);
       }
-      // What is left of the old bridge: splintered planks on the right, where nothing stands now.
-      this.shape("box", this.scene, [2.9, lip - 0.02, -(gap.d0 + 0.5)], [2.4, 0.14, 1.6], m.oak, [5, 8, 0], true);
-      this.shape("box", this.scene, [4.2, lip - 0.3, -(gap.d0 + 1)], [1.1, 0.14, 2.1], m.oakDark, [-24, -14, 0], true);
+      if (gap.stump) {
+        // The far pier of the fallen arch, standing in the water by itself.
+        this.shape("box", this.scene, [2, water + 3.4, -(gap.d1 - 2.2)], [6.4, 7, 2], m.stone, [0, 0, 3], true);
+        this.shape("box", this.scene, [-3.2, water + 1.2, -(gap.d0 + wide * 0.5)], [3, 2.4, 2.4], m.stone, [14, 30, 20], true);
+      } else {
+        // What is left of the old bridge: splintered planks on the right, where nothing stands now.
+        this.shape("box", this.scene, [2.9, lip - 0.02, -(gap.d0 + 0.5)], [2.4, 0.14, 1.6], m.oak, [5, 8, 0], true);
+        this.shape("box", this.scene, [4.2, lip - 0.3, -(gap.d0 + 1)], [1.1, 0.14, 2.1], m.oakDark, [-24, -14, 0], true);
+      }
       // A barge and a couple of rocks down on the water.
       const barge = this.group("barge", this.scene, [16, water + 0.5, -(gap.d0 + wide * 0.5)], [0, 12, 0]);
       this.shape("box", barge, [0, 0, 0], [7, 0.9, 2.6], m.oakDark, [0, 0, 0], true);
@@ -793,6 +888,122 @@ export class View {
   }
 
   /** What a stone can set off: baskets hung over the street, barrels and hen coops on the kerb. */
+  private stoneShape(root: pc.Entity): void {
+    const m = this.m;
+    const size = STONE_RADIUS * 2;
+    // A wheel on its edge, facing down the street, with the eye cut square through it.
+    this.shape("cylinder", root, [0, 0, 0], [size, 0.8, size], m.stone, [0, 0, 90]);
+    this.shape("cylinder", root, [0, 0, 0], [size * 0.86, 0.84, size * 0.86], m.kerb, [0, 0, 90]);
+    this.shape("box", root, [0, 0, 0], [0.9, 0.44, 0.44], m.ink);
+    for (let groove = 0; groove < 8; groove += 1) {
+      const turn = (groove / 8) * 360;
+      for (const side of [-1, 1]) this.shape("box", this.group("groove", root, [0, 0, 0], [turn, 0, 0]), [side * 0.425, STONE_RADIUS * 0.56, 0], [0.02, STONE_RADIUS * 0.62, 0.1], m.roadDark);
+    }
+  }
+
+  /** The windmill at the top of the street, with the miller's stone swung out over the road on its hoist. */
+  private buildMill(game: Game): void {
+    const m = this.m;
+    const course = game.course;
+    const def = course.mill;
+    const stone = game.stone;
+    if (!def || !stone) return;
+    const half = course.width / 2;
+    const side = def.x <= 0 ? -1 : 1;
+    const ground = heightAt(course, def.d);
+    const mill = this.group("mill", this.scene, [side * (half + 5.4), ground, -def.d]);
+    // A tower mill: a tapering stone drum, a turning cap, and four sails facing up the street.
+    this.shape("cylinder", mill, [0, 1.2, 0], [7.8, 2.4, 7.8], m.stone, [0, 0, 0], true);
+    this.shape("cylinder", mill, [0, 4.4, 0], [7, 4, 7], m.plaster, [0, 0, 0], true);
+    this.shape("cylinder", mill, [0, 8.4, 0], [6.2, 4, 6.2], m.plasterWarm, [0, 0, 0], true);
+    this.shape("cylinder", mill, [0, 12.2, 0], [5.4, 3.6, 5.4], m.plaster, [0, 0, 0], true);
+    this.shape("cylinder", mill, [0, 6.4, 0], [8.4, 0.3, 8.4], m.oakDark, [0, 0, 0], true);
+    this.shape("cone", mill, [0, 15.8, 0], [6.4, 3.6, 6.4], m.vermilion, [0, 0, 0], true);
+    this.shape("box", mill, [-side * 3.1, 2.6, 0.4], [0.2, 2.6, 1.3], m.oakDark, [0, 0, 0], true);
+    for (const y of [5, 8.6]) this.shape("box", mill, [-side * (2.9 - y * 0.12), y, 0], [0.2, 1, 0.7], m.ink, [0, 0, 0], true);
+    const sails = this.group("sails", mill, [0, 13, 3.2]);
+    this.shape("cylinder", sails, [0, 0, -0.6], [0.5, 1.6, 0.5], m.oakDark, [90, 0, 0]);
+    for (let sail = 0; sail < 4; sail += 1) {
+      const arm = this.group("arm", sails, [0, 0, 0], [0, 0, sail * 90]);
+      this.shape("box", arm, [0, 3.1, 0], [0.2, 6.2, 0.2], m.oakDark);
+      this.shape("box", arm, [0.75, 3.7, 0.05], [1.4, 4.6, 0.06], m.canvas, [0, 8, 0]);
+      for (let bar = 0; bar < 5; bar += 1) this.shape("box", arm, [0.75, 1.6 + bar * 1, 0.1], [1.4, 0.08, 0.08], m.oakDark);
+    }
+    this.sails = sails;
+    // The hoist: a beam out of the loading door, a brace under it, and the stone on a rope.
+    const beamY = stone.at.y + STONE_RADIUS + 1.6 - ground;
+    const reach = Math.abs(stone.at.x - side * (half + 5.4)) + 0.8;
+    this.shape("box", mill, [-side * (reach / 2 + 0.6), beamY, 0], [reach + 1.2, 0.34, 0.34], m.oakDark, [0, 0, 0], true);
+    this.shape("box", mill, [-side * (reach * 0.42), beamY - 1.5, 0], [reach * 0.72, 0.22, 0.22], m.oak, [0, 0, side * 28], true);
+    this.shape("box", mill, [-side * 2.6, beamY - 0.6, 0], [1.6, 2.4, 1.8], m.oakDark, [0, 0, 0], true);
+    this.shape("cylinder", mill, [-side * (reach - 0.2), beamY + 0.1, 0], [0.7, 0.4, 0.7], m.iron, [90, 0, 0], true);
+    this.stoneRope = this.shape("box", this.scene, [stone.at.x, stone.at.y + STONE_RADIUS + 0.8, stone.at.z], [0.14, 1.7, 0.14], m.rope);
+    const look = this.group("millstone", this.scene, [stone.at.x, stone.at.y, stone.at.z]);
+    this.stoneShape(look);
+    this.stone = look;
+    // The miller, at his door, who has not been asked.
+    this.townsfolk(mill, [-side * 4.4, 0, 2.6], m.plasterCool, "cap").root.setLocalEulerAngles(0, side * -70, 0);
+    for (const [x, z] of [[-side * 4.6, -2.2], [-side * 4.1, -3.1], [-side * 4.9, -3.4]] as const) this.shape("sphere", mill, [x, 0.45, z], [1.1, 0.9, 0.8], m.canvas, [0, x * 40, 0], true);
+  }
+
+  private syncMill(game: Game, dt: number): void {
+    if (this.sails) this.sails.rotateLocal(0, 0, dt * 24);
+    const stone = game.stone;
+    const look = this.stone;
+    if (!stone || !look) return;
+    look.enabled = stone.state !== "gone";
+    if (this.stoneRope) this.stoneRope.enabled = stone.state === "hung";
+    if (!stone.body) {
+      // Hung out over the road, it turns a little on its rope.
+      look.setPosition(stone.at.x, stone.at.y, stone.at.z);
+      look.setEulerAngles(0, Math.sin(this.clock * 0.9) * 9, 0);
+      return;
+    }
+    const p = stone.body.translation();
+    const v = stone.body.linvel();
+    this.stoneRoll += (-v.z * dt * 180) / (Math.PI * STONE_RADIUS);
+    look.setPosition(p.x, p.y, p.z);
+    look.setEulerAngles(-this.stoneRoll, 0, 0);
+    // It tears the cobbles up as it goes.
+    if (stone.state === "rolling" && this.frame % 3 === 0 && -v.z > 3) {
+      this.puff({ x: p.x + this.chance() * 1.4 - 0.7, y: p.y - STONE_RADIUS + 0.2, z: p.z + 0.8 }, this.m.dust, 0.9, 0.5, [this.chance() * 2 - 1, 1.5, 2]);
+    }
+  }
+
+  /** Straw laid deep where he is meant to come down, and the carts it came in. */
+  private buildStraw(course: CourseDef): void {
+    const m = this.m;
+    const straw = course.straw;
+    if (!straw) return;
+    const half = course.width / 2;
+    for (const piece of course.pieces) {
+      const d0 = Math.max(piece.d0, straw.d0);
+      const d1 = Math.min(piece.d1, straw.d1);
+      if (d1 - d0 < 0.5) continue;
+      const slope = (piece.y1 - piece.y0) / (piece.d1 - piece.d0);
+      const degrees = (Math.atan(slope) * 180) / Math.PI;
+      const length = Math.hypot(d1 - d0, (d1 - d0) * slope);
+      const mid = (d0 + d1) / 2;
+      const bed = this.shape("box", this.scene, [0, heightAt(course, mid) + 0.07, -mid], [course.width, 0.16, length], m.hay, [degrees, 0, 0], true);
+      if (bed.render) bed.render.castShadows = false;
+    }
+    for (let heap = 0; heap < 26; heap += 1) {
+      const d = straw.d0 + 0.8 + this.chance() * (straw.d1 - straw.d0 - 1.6);
+      const x = (this.chance() * 2 - 1) * (half - 0.4);
+      const size = 1 + this.chance() * 1.6;
+      const lump = this.shape("sphere", this.scene, [x, heightAt(course, d) + 0.05, -d], [size, 0.34 + this.chance() * 0.3, size * 0.8], m.hay, [0, this.chance() * 180, 0], true);
+      if (lump.render) lump.render.castShadows = false;
+    }
+    // Ricks along both kerbs, and a hay cart tipped up empty.
+    for (const side of [-1, 1]) {
+      for (const along of [0.12, 0.45, 0.8]) {
+        const d = straw.d0 + (straw.d1 - straw.d0) * along + side;
+        this.shape("sphere", this.scene, [side * (half + 1.7), heightAt(course, d) + 0.9, -d], [3, 3.2, 3.4], m.hay, [0, along * 200, 0], true);
+        this.shape("cone", this.scene, [side * (half + 1.7), heightAt(course, d) + 2.6, -d], [2.2, 1.4, 2.4], m.hay, [0, 0, 0], true);
+      }
+    }
+  }
+
   private buildClutter(game: Game): void {
     const m = this.m;
     const course = game.course;
@@ -1004,6 +1215,7 @@ export class View {
     this.bales.forEach((bale, index) => (bale.enabled = index < game.hay));
     this.syncTower(game);
     this.syncWorks(game);
+    this.syncMill(game, dt);
     this.syncMob(game, dt);
     this.syncPans(game);
     this.syncEggs(game);
@@ -1596,6 +1808,11 @@ export class View {
       if (target && game.phase === "run") gaze.x += (target.at.x - p.x) * 0.22;
       // Never let the hill behind come between the camera and the cart.
       eye.y = Math.max(eye.y, heightAt(course, -eye.z) + 3.4);
+      if (game.cause === "fell") {
+        // He has gone in: the camera stays on the bank and does not follow him under.
+        eye = this.eye.clone();
+        gaze = this.gaze.clone();
+      }
     }
     const k = this.snap ? 1 : Math.min(1, dt * (game.phase === "won" ? 2.2 : this.mode === "title" ? 2 : 7));
     this.snap = false;
@@ -1741,6 +1958,33 @@ export class View {
       this.burst({ x: event.at.x, y: event.at.y + 1, z: event.at.z }, m.smoke, Math.round(7 * size), 1.6 * size, 3 * size);
       this.puff({ x: event.at.x, y: event.at.y + 1.5, z: event.at.z }, m.smoke, 3.5 * size, 1.1, [0, 4, 0]);
       this.pulse({ x: event.at.x, y: heightAt(game.course, -event.at.z), z: event.at.z }, m.blast, 1.5, event.big ? 22 : 10, event.big ? 0.7 : 0.45);
+    }
+    if (event.type === "stoneLoose") {
+      this.shake = Math.max(this.shake, 0.5);
+      this.burst({ x: event.at.x, y: event.at.y + STONE_RADIUS + 1.2, z: event.at.z }, m.dust, 6, 0.6, 4);
+    }
+    if (event.type === "thud") {
+      this.shake = Math.max(this.shake, 1.3);
+      const at = { x: event.at.x, y: event.at.y - STONE_RADIUS + 0.2, z: event.at.z };
+      this.burst(at, m.dust, 12, 1.4, 7);
+      this.burst(at, m.stone, 8, 0.4, 9);
+      this.pulse(at, m.dust, 1.5, 9, 0.5);
+    }
+    if (event.type === "plunge") {
+      const at = { x: event.at.x, y: this.waterY + 0.3, z: event.at.z };
+      this.shake = Math.max(this.shake, 0.9);
+      this.burst(at, m.albumen, 16, 1.2, 14);
+      this.burst(at, m.water, 12, 1, 10);
+      this.puff({ x: at.x, y: at.y + 2, z: at.z }, m.albumen, 5, 0.6, [0, 14, 0]);
+      this.puff({ x: at.x, y: at.y + 1, z: at.z }, m.water, 6, 0.9, [0, 6, 0]);
+      this.pulse(at, m.albumen, 2, 16, 0.9);
+    }
+    if (event.type === "air" && game.course.straw && game.distance >= game.course.straw.d0 && game.distance <= game.course.straw.d1 + 4) {
+      // Down in the straw, and most of it goes up.
+      const cart = game.position;
+      this.burst({ x: cart.x, y: cart.y, z: cart.z }, m.hay, 22, 0.5, 9);
+      this.burst({ x: cart.x, y: cart.y + 0.4, z: cart.z - 1 }, m.hay, 12, 0.9, 5);
+      this.shake = Math.max(this.shake, 0.6);
     }
     if (event.type === "breach") {
       this.shake = 1.6;

@@ -286,13 +286,27 @@ function narrate(event: GameEvent, current: Game): void {
       sound.pickup(true);
       toast("Cheese away!");
       break;
+    case "stoneLoose":
+      sound.groan();
+      toast("Stone away!");
+      hint("stone", "It keeps to the left. Follow it down");
+      break;
+    case "thud":
+      sound.bang(true);
+      freeze = Math.max(freeze, 0.07);
+      break;
+    case "plunge":
+      sound.splash();
+      toast("Into the gorge!");
+      break;
     case "wainCrash":
       sound.smash();
       sound.splash();
       toast("Into the well!");
       break;
     case "air":
-      if (event.time > 1) toast(`${event.distance.toFixed(0)} metres of air!`);
+      if (event.time > 0.7) toast(`${event.distance.toFixed(0)} metres of air!`);
+      if (current.course.straw && current.distance >= current.course.straw.d0 && current.distance <= current.course.straw.d1 + 4) sound.thud(4);
       break;
     case "broken":
       towerAtEnd = current.tower?.state ?? "down";
@@ -339,6 +353,28 @@ function verdict(current: Game): { title: string; line: string } {
     // A street with no tower in it: the trouble is powder, a barricade, and the kitchen.
     const wall = current.walls.find((one) => one.state === "up");
     const held = wall !== undefined && wall.def.d - current.distance < 9;
+    const stump = course.pieces.find((piece) => piece.x0 !== undefined);
+    if (course.mill && stump) {
+      // The hill with the mill on it: a stone, a barricade, and a bridge with most of it missing.
+      const hung = current.stone?.state === "hung";
+      if (current.cause === "fell") {
+        return current.position.x < (stump.x0 ?? 0) - 0.1
+          ? { title: "Poached", line: "Only the right-hand half of the bridge is standing. Keep right for the leap." }
+          : { title: "Poached", line: "Too slow off the end of the bridge. Stay off the brake down the last of the hill." };
+      }
+      if (held && (current.cause === "caught" || current.cause === "jolt")) {
+        return hung
+          ? { title: current.cause === "caught" ? "Omelette" : "Scrambled", line: "The Queen's barricade. The miller's stone would go through it like a pie crust: shoot the hoist at the top of the hill." }
+          : { title: current.cause === "caught" ? "Omelette" : "Scrambled", line: "The Queen's barricade. A round at its ring would have shifted it." };
+      }
+      if (current.cause === "jolt" && current.stone?.body) {
+        const at = current.stone.body.translation();
+        if (Math.hypot(at.x - current.position.x, at.z - current.position.z) < 5) return { title: "Milled", line: "The stone has the left of the road and means to keep it. Give it room." };
+      }
+      if (current.cause === "jolt" && current.distance > stump.d1) {
+        return { title: "Scrambled", line: "He cleared the gorge and missed the straw. Faster off the bridge carries him further in." };
+      }
+    }
     switch (current.cause) {
       case "mob":
         return { title: "Beaten", line: "The kitchen had him. An egg makes them duck; a round from the gun flattens a rank." };
@@ -541,7 +577,11 @@ $("sound").addEventListener("pointerdown", (event) => {
 drawSound();
 
 /** What is said at the top of each street. */
-const OPENING = ["The bridge is out. That tower would reach.", "The Queen's powder. Red rings are traps: egg them from well back."];
+const OPENING = [
+  "The bridge is out. That tower would reach.",
+  "The Queen's powder. Red rings are traps: egg them from well back.",
+  "The miller's stone hangs over the road. Shoot the hoist.",
+];
 
 async function start(index = firstStreet, carry?: Carry): Promise<void> {
   sound.unlock();
@@ -610,13 +650,21 @@ function coach(current: Game): void {
   if (wall) {
     const gap = wall.def.d - current.distance;
     const lit = current.kegs.some((keg) => keg.state === "lit" && !keg.def.trap);
-    if (gap < 34 && gap > 12 && lit) hint("wait", "It's lit! Pull down to brake and let it go up");
+    const wagon = current.kegs.some((keg) => keg.def.big && keg.state !== "gone");
+    if (!wagon) {
+      // No powder against this one: the stone, or a round.
+      if (gap < 30 && gap > 8 && current.stone?.state === "hung") hint("wall", "The barricade! Tap its gold ring");
+    } else if (gap < 34 && gap > 12 && lit) hint("wait", "It's lit! Pull down to brake and let it go up");
     else if (gap < 60 && gap > 30 && !lit) hint("train", "One egg on a kerb keg sets the whole row off");
     else if (gap < 28 && gap > 10 && !lit) hint("wagon", "The barricade! Egg the powder wagon, and brake");
   }
+  // The leap: said in good time, on the last of the hill.
+  const stump = current.course.pieces.find((piece) => piece.x0 !== undefined);
+  if (stump && current.distance > stump.d0 - 46 && current.distance < stump.d0 - 12 && !wall) hint("leap", "Keep right for the bridge, and off the brake!");
   if (current.ammo === 0) return;
   const lit = current.target;
   if (!lit) return;
+  if (lit.id === "hoist") hint("hoist", "Gold ring on the mill's hoist: tap it, or press Fire");
   const tower = current.tower?.state;
   if (lit.id === "windlass") hint("fire", "Gold ring on the capstan: tap it, or press Fire");
   else if (lit.id === "wain" && tower !== "held") hint("wain", "The cheese wain is only chocked: tap its ring");

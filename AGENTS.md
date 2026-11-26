@@ -2,7 +2,9 @@
 
 A mobile-first physics game. A hill village is one Rube Goldberg machine: the player sets it
 off, then has to ride the Egg King's cart through what follows, down to the Empress Hen.
-Prototype stage: two streets ridden one after the other, Bell Tower Street and Powder Row.
+Prototype stage: three streets ridden one after the other: Bell Tower Street, Powder Row and
+Miller's Leap. Each asks something different of the brake: wait for the tower, keep back from
+the powder, and on the last keep up with the stone and stay off it for the leap.
 
 The first game (pick three machines, ride the Queen's gauntlet) is frozen on branch
 `gauntlet` (tag `gauntlet-v1`) and published beside this one at `/gauntlet/`. Do not merge
@@ -61,6 +63,19 @@ it back or change it in passing; it is kept as it was on purpose.
   cart only inside `hurt`; kerb kegs are out of reach of a cart that keeps to the road. The
   powder wagon is the big one, and the only thing besides a round that shifts a barricade
   (`walls`). Kegs are state, not bodies.
+- The millstone (`mill` in `course.ts`) is driven, not left to roll: one ball, locked to its
+  lane, held by the hill to `STONE_PACE`, which is a little more than the cart can make, so it
+  always leads and what it will hit can be read from the top of the street. It bowls whoever
+  is in its lane, bursts the kegs it passes, goes through a barricade, and falls where its
+  lane runs out. Following in its wake costs one round for the whole hill.
+- A piece of street may be broken off short of a kerb (`x0`/`x1` on a `Piece`): the collider,
+  the kerbs and the drawing all stop where it does, and a cart that leaves it falls. The
+  leap at the bottom of Miller's Leap is plain ballistics off such a stump: it wants speed
+  (about 8 m/s off the end; a cart that brakes down to the bridge drops short) and the right
+  lane. `straw` marks where the landing is soft (`STRAW_TRAVEL`): there the springs take a
+  drop that would crack him on cobbles. `npx tsx scripts/leap.ts` prints speed off the
+  bridge, air and cost for every way of driving it; keep the window wide enough that an
+  unbraked cart clears it with a metre a second to spare.
 - No cart may play itself, and no street may need a shot the player cannot see: `npm test`
   checks that an idle cart never gets home and that a sensible driver gets three stars.
 - The village is the Queen's and the story is on the street: her kitchen mob with pans,
@@ -77,7 +92,7 @@ it back or change it in passing; it is kept as it was on purpose.
   (`@dimforge/rapier3d-deterministic-compat`).
 - After changing physics constants or a street, run `npm test`, `npx tsx scripts/window.ts`
   and `npx tsx scripts/window.ts wain`; for Powder Row, `npx tsx scripts/trace.ts wagon`
-  (also `train`, `rush`, `blind`).
+  (also `train`, `rush`, `blind`); for Miller's Leap, `npx tsx scripts/leap.ts`.
 
 ## Commands
 

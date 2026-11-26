@@ -147,9 +147,69 @@ export function sapper(plan: Blasting = {}): Pilot {
   };
 }
 
+export interface Milling {
+  /** Shoot the hoist and let the stone go. Without it the barricade has to be shot down instead. */
+  stone?: boolean;
+  /** A round at the barricade if it is still standing when it comes into reach. */
+  wall?: boolean;
+  /** Brake from this far short of the bridge until `off` short of it: for showing what a slow leap costs. */
+  brake?: number;
+  off?: number;
+  /** A round into any rank with somebody still standing in his road. */
+  ranks?: boolean;
+  /** Burst the traps in his own road from a safe distance. */
+  traps?: boolean;
+  /** Throw an egg at everything the cooks throw. */
+  eggs?: boolean;
+  /** Where he keeps on the hill, and where he takes the bridge. */
+  lane?: number;
+  ramp?: number;
+}
+
+/** A driver for Miller's Leap, reading only what a player can see. */
+export function miller(plan: Milling = {}): Pilot {
+  const asked = new Map<number, number>();
+  return (game) => {
+    const cart = game.position;
+    const d = game.distance;
+    const course = game.course;
+    const stump = course.pieces.find((piece) => piece.x0 !== undefined);
+    const quay = stump?.d0 ?? Infinity;
+    // Keep clear of the stone's lane on the hill, and square on what is left of the bridge.
+    const lane = d > quay - 30 ? (plan.ramp ?? 2.2) : (plan.lane ?? 2.2);
+    const input: Input = { lean: leanToward(game, lane) };
+    if (plan.brake !== undefined && d > quay - plan.brake && d < quay - (plan.off ?? -8)) input.brake = 1;
+    const hoist = game.targets.find((target) => target.id === "hoist");
+    const wall = game.targets.find((target) => target.kind === "wall");
+    if ((plan.stone ?? true) && hoist?.lit) input.shoot = "hoist";
+    else if ((plan.wall ?? true) && wall?.lit && game.stone?.state !== "rolling") input.shoot = wall.id;
+    else if (plan.ranks ?? true) {
+      // Whoever the stone has left standing where he means to go.
+      const rank = game.targets.find((target) => target.kind === "rank" && target.lit && Math.abs(target.at.x - lane) < 1.6 && -target.at.z - d < 18);
+      if (rank) input.shoot = rank.id;
+    }
+    const reach = (at: { x: number; y: number; z: number }): number => Math.hypot(at.x - cart.x, at.y - cart.y, at.z - cart.z);
+    const want = (id: number): boolean => {
+      if (game.time - (asked.get(id) ?? -9) < 1) return false;
+      asked.set(id, game.time);
+      return true;
+    };
+    if (plan.traps ?? true) {
+      const trap = game.kegs.find((keg) => keg.def.trap && keg.state === "set" && keg.def.d > d + 7 && Math.abs(keg.def.x - lane) < 3.4 && reach(keg.at) < 26);
+      if (trap && want(trap.def.id)) input.egg = { keg: trap.def.id };
+    }
+    if (!input.egg && plan.eggs) {
+      const thrown = game.pans.find((pan) => !pan.doomed);
+      if (thrown) input.egg = { pan: thrown.id };
+    }
+    return input;
+  };
+}
+
 /** A fresh, sensible driver for whichever street this is. */
 export function pilotFor(course: CourseDef): Pilot {
-  return course.tower ? driver({ wain: true, eggs: true }) : sapper({ eggs: true });
+  if (course.tower) return driver({ wain: true, eggs: true });
+  return course.mill ? miller({ eggs: true }) : sapper({ eggs: true });
 }
 
 

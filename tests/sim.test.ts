@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { driver, idle, leanAt, leanToward, pilotFor, play, sapper, steady, type Pilot } from "../src/sim/autoplay";
+import { driver, idle, leanAt, leanToward, miller, pilotFor, play, sapper, steady, type Pilot } from "../src/sim/autoplay";
 import { COURSE, STREETS, type CourseDef } from "../src/sim/course";
-import { BRAKE_FLOOR, DUCK, EGG_BASKET, Game, MAX_AMMO, START_EGGS, type Carry, type GameEvent, type Input } from "../src/sim/game";
+import { BRAKE_FLOOR, DUCK, EGG_BASKET, Game, MAX_AMMO, START_EGGS, STONE_PACE, type Carry, type GameEvent, type Input } from "../src/sim/game";
 
 /** Play a street to its end and hand back the game itself, with everything that happened. */
 async function run(pilot: Pilot, until: (game: Game) => boolean = () => false, course: CourseDef = COURSE, carry?: Carry): Promise<{ game: Game; events: GameEvent[] }> {
@@ -17,6 +17,7 @@ async function run(pilot: Pilot, until: (game: Game) => boolean = () => false, c
 
 const TOWER = COURSE.tower!;
 const POWDER_ROW = STREETS[1]!;
+const MILLERS_LEAP = STREETS[2]!;
 const lane = (TOWER.x0 + TOWER.x1) / 2;
 
 test("a cart nobody drives does not get home", async () => {
@@ -285,7 +286,7 @@ test("one egg sets the whole powder train going, keg by keg, and the wagon takes
   assert.deepEqual(went, train, "down the kerb in order, the wagon last");
   assert.ok(events.some((event) => event.type === "breach"));
   assert.ok(events.some((event) => event.type === "bowled" && event.by === "blast"), "somebody was minding the powder");
-  assert.equal(game.phase, "won");
+  assert.equal(game.phase, "through");
   assert.equal(game.shell, 100);
 });
 
@@ -306,7 +307,7 @@ test("a round at the barricade brings it down, and the wagon beside it goes up",
   const { game, events } = await drive(pilot, (current) => (current.targets.find((target) => target.id === "wall0")?.lit ? { shoot: "wall0" } : {}), () => false, POWDER_ROW);
   assert.ok(events.some((event) => event.type === "breach"));
   assert.ok(events.some((event) => event.type === "boom" && event.big));
-  assert.equal(game.phase, "won");
+  assert.equal(game.phase, "through");
 });
 
 // ---------------------------------------------------------------- one street into the next
@@ -326,7 +327,7 @@ test("what she has left goes through the gate with her", async () => {
   second.dispose();
 });
 
-test("a sensible driver rides both streets home without a mark", async () => {
+test("a sensible driver rides every street home without a mark", async () => {
   let carry: Carry | undefined;
   let last: Game | null = null;
   let time = 0;
@@ -339,7 +340,90 @@ test("a sensible driver rides both streets home without a mark", async () => {
   }
   assert.equal(last!.phase, "won");
   assert.equal(last!.stars, 3, `shell ${last!.shell} knocks ${last!.knocks}`);
-  assert.ok(time < 50, `two streets in ${time.toFixed(1)} s`);
+  assert.ok(time < 75, `${STREETS.length} streets in ${time.toFixed(1)} s`);
+});
+
+// ---------------------------------------------------------------- Miller's Leap
+
+const STUMP = MILLERS_LEAP.pieces.find((piece) => piece.x0 !== undefined)!;
+
+test("the millstone keeps its lane, leads the cart all the way down, and goes into the gorge", async () => {
+  const { game, events } = await run(miller({ eggs: true }), () => false, MILLERS_LEAP);
+  const order = events.map((event) => event.type).filter((type) => type === "stoneLoose" || type === "thud" || type === "breach" || type === "plunge" || type === "finish");
+  assert.deepEqual(order, ["stoneLoose", "thud", "breach", "plunge", "finish"]);
+  const bowled = events.filter((event) => event.type === "bowled" && event.by === "stone").map((event) => (event.type === "bowled" ? event.id : -1));
+  const inItsWay = MILLERS_LEAP.mob.filter((one) => Math.abs(one.x - MILLERS_LEAP.mill!.x) < 1.7).map((one) => one.id);
+  assert.deepEqual(bowled, inItsWay, "everyone in its lane, and nobody else");
+  const itsKegs = MILLERS_LEAP.kegs.filter((keg) => Math.abs(keg.x - MILLERS_LEAP.mill!.x) < 1).map((keg) => keg.id);
+  for (const id of itsKegs) assert.equal(game.kegs.find((keg) => keg.def.id === id)!.state, "gone", `keg ${id}`);
+  assert.equal(game.stone!.state, "gone");
+  assert.equal(game.phase, "won");
+  assert.equal(game.stars, 3, `shell ${game.shell} knocks ${game.knocks}`);
+});
+
+test("the stone is never caught up by a cart in its own lane", async () => {
+  const game = await Game.create(MILLERS_LEAP);
+  const pilot = miller({ lane: MILLERS_LEAP.mill!.x, traps: false, ranks: false });
+  let nearest = Infinity;
+  let fastest = 0;
+  while (!game.over && game.time < 60) {
+    game.step(pilot(game));
+    if (game.stone?.body && game.stone.state === "rolling") {
+      nearest = Math.min(nearest, -game.stone.body.translation().z - game.distance);
+      fastest = Math.max(fastest, -game.stone.body.linvel().z);
+    }
+  }
+  assert.ok(nearest > 6, `it led by as little as ${nearest.toFixed(1)} m`);
+  assert.ok(fastest < STONE_PACE + 3.5, `it reached ${fastest.toFixed(1)} m/s`);
+  assert.equal(game.phase, "won", `${game.cause} at ${Math.round(game.distance)} m`);
+  game.dispose();
+});
+
+test("the leap wants speed: brake down to the bridge and she drops short", async () => {
+  for (const [brake, off] of [[20, 0], [40, 10], [60, 20]] as const) {
+    const slow = await play(miller({ brake, off, eggs: true }), 100, MILLERS_LEAP);
+    assert.equal(slow.phase, "broken", `brake ${brake}-${off}: ${JSON.stringify(slow)}`);
+    assert.equal(slow.cause, "fell");
+  }
+  // Let off in good time, she makes it, and the straw takes the landing.
+  const early = await play(miller({ brake: 90, off: 45, eggs: true }), 100, MILLERS_LEAP);
+  assert.equal(early.phase, "won", JSON.stringify(early));
+});
+
+test("only the right-hand half of the bridge is left", async () => {
+  const left = await play(miller({ ramp: MILLERS_LEAP.mill!.x, eggs: true }), 100, MILLERS_LEAP);
+  assert.equal(left.phase, "broken", JSON.stringify(left));
+  assert.equal(left.cause, "fell");
+  assert.ok(left.distance < STUMP.d1 + 4, `she went in at ${left.distance} m`);
+  for (const ramp of [0, 1, 4]) assert.equal((await play(miller({ ramp, eggs: true }), 100, MILLERS_LEAP)).phase, "won", `taking it at x=${ramp}`);
+});
+
+test("a clean leap lands in the straw without a mark", async () => {
+  const { game, events } = await run(miller({ eggs: true }), () => false, MILLERS_LEAP);
+  const air = events.find((event) => event.type === "air" && event.distance > 5);
+  assert.ok(air && air.type === "air" && air.time > 0.7, "a good long way through the air");
+  assert.equal(game.shell, 100);
+  assert.equal(game.hay, 2);
+});
+
+test("nobody gets down Miller's Leap by sitting still, and the stone is the cheap way through", async () => {
+  assert.equal((await play(idle, 100, MILLERS_LEAP)).phase, "broken");
+  const stubborn = await play(miller({ stone: false, wall: false }), 100, MILLERS_LEAP);
+  assert.equal(stubborn.phase, "broken", JSON.stringify(stubborn));
+  // Follow the stone down its own lane and one round does for the whole hill.
+  const { game } = await run(miller({ lane: MILLERS_LEAP.mill!.x, ranks: false, eggs: true }), () => false, MILLERS_LEAP);
+  assert.equal(game.phase, "won");
+  assert.equal(game.stars, 3);
+  assert.ok(game.ammo >= 2, `${game.ammo} rounds left`);
+});
+
+test("Miller's Leap replays exactly", async () => {
+  const sign = async (): Promise<string> => {
+    const { game, events } = await run(miller({ eggs: true }), () => false, MILLERS_LEAP);
+    const p = game.position;
+    return JSON.stringify([game.tick, p.x, p.y, p.z, game.shell, events.length, game.props.map((prop) => prop.body.translation().x)]);
+  };
+  assert.equal(await sign(), await sign());
 });
 
 test("Powder Row replays exactly", async () => {

@@ -11,6 +11,9 @@ export interface Piece {
   d1: number;
   y0: number;
   y1: number;
+  /** Where the street does not run from kerb to kerb: what is left of it, from x0 to x1. */
+  x0?: number;
+  x1?: number;
 }
 
 /**
@@ -83,7 +86,20 @@ export interface KegDef {
   big: boolean;
 }
 
-/** A barricade across the whole street. Only the powder wagon going up beside it will move it. */
+/**
+ * The windmill at the top of a street, with a millstone swung out on its hoist. Shoot the hoist
+ * and the stone comes down in the road and goes on down the hill by itself, in one lane, as far
+ * as there is street under it.
+ */
+export interface MillDef {
+  d: number;
+  /** The lane the stone runs in. */
+  x: number;
+  /** How high the stone hangs over the street. */
+  drop: number;
+}
+
+/** A barricade across the whole street. A round, the powder wagon or a millstone will move it. */
 export interface WallDef {
   id: number;
   d: number;
@@ -111,6 +127,9 @@ export interface CourseDef {
   pickups: PickupDef[];
   kegs: KegDef[];
   walls: WallDef[];
+  mill: MillDef | null;
+  /** Straw laid deep on the far side of a leap: a cart that comes down in it comes down soft. */
+  straw: { d0: number; d1: number } | null;
   /** Crossing this line ends the street: the town gate, or on the last street the roost yard. */
   finish: number;
   /** Where the Empress Hen sits. Null when a gate leads on to the next street. */
@@ -146,16 +165,16 @@ interface Laid {
  * Lay a street as runs of [length, slope], with a stretch of open water where one is named.
  * The last run is the ground at the bottom.
  */
-function lay(runs: Array<[number, number] | { water: number; fall: number }>): Laid {
+function lay(runs: Array<[number, number] | [number, number, number, number] | { water: number; fall: number }>): Laid {
   const pieces: Piece[] = [];
   let d = -14;
   let y = 0;
   let foot = 0;
   for (const run of runs) {
     if (Array.isArray(run)) {
-      const [length, slope] = run;
+      const [length, slope, x0, x1] = run;
       foot = d;
-      pieces.push({ d0: d, d1: d + length, y0: y, y1: y - length * slope });
+      pieces.push({ d0: d, d1: d + length, y0: y, y1: y - length * slope, ...(x0 !== undefined && x1 !== undefined ? { x0, x1 } : {}) });
       d += length;
       y -= length * slope;
     } else {
@@ -223,6 +242,8 @@ const BELL_TOWER_STREET: CourseDef = {
   // One of the Queen's little surprises, at the bottom of the wain's side of the street.
   kegs: numbered<KegDef>([trap(FAR + 40, 3.6)]),
   walls: [],
+  mill: null,
+  straw: null,
   finish: BELL.foot + 12,
   roost: null,
 };
@@ -235,7 +256,7 @@ const POWDER = lay([
   [22, 0.03], // in under the gate, and the Queen's powder store laid out below
   [128 + 14 - 22, 0.13],
   [8, 0.07],
-  [56, 0], // the roost yard
+  [40, 0], // out through the town gate
 ]);
 
 /**
@@ -275,13 +296,83 @@ const POWDER_ROW: CourseDef = {
     trap(116, 2.5),
   ]),
   walls: [{ id: 0, d: WAGON + 3.2, height: 2.8 }],
-  finish: POWDER.foot + 6,
-  roost: POWDER.foot + 42,
+  mill: null,
+  straw: null,
+  finish: POWDER.foot + 12,
+  roost: null,
+};
+
+// ---------------------------------------------------------------- Miller's Leap
+
+const QUAY = 118;
+const STUMP = 7;
+const GORGE = 8;
+const STONE_LANE = -3;
+
+const LEAP = lay([
+  [22, 0.03], // in under the gate, with the windmill on the left and its stone hung out over the road
+  [QUAY + 14 - 22 - 8 - 28, 0.13],
+  [28, 0.2], // the plunge to the water
+  [8, 0.04], // the quay
+  [STUMP, -0.09, -1, HALF], // what is left of the bridge: the right-hand half of its first arch, and it climbs
+  { water: GORGE, fall: 0.55 }, // the gorge, and the far bank well below
+  [14, 0.22], // the far bank falls away under him, deep in straw
+  [8, 0.08],
+  [44, 0], // the roost yard
+]);
+
+/**
+ * The bridge over the gorge is down, all but the right-hand half of its first arch, which makes
+ * a ramp for anything going fast enough. The Queen has a barricade across the hill and her
+ * kitchen in front of it. The miller's stone, let go, runs down the left of the street through
+ * all of it and off the quay into the gorge. The cart has to keep up, keep right, and jump.
+ */
+const MILLERS_LEAP: CourseDef = {
+  name: "Miller's Leap",
+  width: HALF * 2,
+  pieces: LEAP.pieces,
+  tower: null,
+  windlass: null,
+  wain: null,
+  well: null,
+  sacks: null,
+  mob: ranks([
+    { d: 52, xs: [-4, -2, 0, 2, 4] },
+    { d: 68, xs: [-4, -2, 2, 4] },
+    { d: 84, xs: [-4, -2, 0, 2, 4] },
+  ]),
+  clutter: numbered<ClutterDef>([pot(30, HUNG), barrel(38, KERB), coop(47, KERB), pot(52, HUNG), barrel(63, KERB), pot(68, HUNG), coop(79, KERB), pot(84, HUNG), barrel(100, KERB)]),
+  pickups: numbered<PickupDef>([
+    { kind: "eggs", d: 34, x: 2.4 },
+    // In the stone's wake, for whoever follows it down.
+    { kind: "shot", d: 58, x: STONE_LANE },
+    { kind: "eggs", d: 86, x: STONE_LANE + 0.4 },
+  ]),
+  kegs: numbered<KegDef>([
+    // In the stone's road: it will see to these.
+    trap(44, STONE_LANE),
+    trap(60, STONE_LANE + 0.4),
+    trap(76, STONE_LANE - 0.4),
+    // And in his.
+    trap(46, 2.6),
+    trap(74, 1.2),
+    trap(101, 2.4),
+  ]),
+  walls: [{ id: 0, d: 92, height: 2.8 }],
+  mill: { d: 20, x: STONE_LANE, drop: 5.5 },
+  straw: { d0: QUAY + STUMP + GORGE, d1: QUAY + STUMP + GORGE + 22 },
+  finish: LEAP.foot + 6,
+  roost: LEAP.foot + 32,
 };
 
 /** The streets of a run, in the order they are ridden. */
-export const STREETS: CourseDef[] = [BELL_TOWER_STREET, POWDER_ROW];
+export const STREETS: CourseDef[] = [BELL_TOWER_STREET, POWDER_ROW, MILLERS_LEAP];
 export const COURSE: CourseDef = BELL_TOWER_STREET;
+
+/** How much of the street a piece carries, from x0 to x1. */
+export function spanOf(course: CourseDef, piece: Piece): { x0: number; x1: number } {
+  return { x0: piece.x0 ?? -course.width / 2, x1: piece.x1 ?? course.width / 2 };
+}
 
 /** The piece under `d`; over the water, the piece just left. */
 export function pieceAt(course: CourseDef, d: number): Piece {
