@@ -1,8 +1,9 @@
 import "./style.css";
 import { Sound } from "./audio";
 import { View } from "./render/view";
-import { leanAt, leanToward, steady } from "./sim/autoplay";
-import { Game, START_AMMO, START_HAY, STEP, initPhysics, type GameEvent, type Input, type SlingAim } from "./sim/game";
+import { leanAt, leanToward, pilotFor, type Pilot } from "./sim/autoplay";
+import { STREETS } from "./sim/course";
+import { EGG_BASKET, Game, KEG_TRIP, MAX_AMMO, SHOT_PILE, START_HAY, STEP, initPhysics, type Carry, type EggAim, type GameEvent, type Input } from "./sim/game";
 
 const STORAGE_KEY = "eggscape:v2";
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -31,11 +32,22 @@ function save(): void {
 }
 
 const saved = load();
-const auto = new URLSearchParams(location.search).has("auto");
+const query = new URLSearchParams(location.search);
+const auto = query.has("auto");
+/** `?street=2` starts on the second street with a fresh cart: for trying one street on its own. */
+const firstStreet = Math.max(0, Math.min(STREETS.length - 1, (Number(query.get("street")) || 1) - 1));
 const view = new View($("stage"));
 const sound = new Sound();
 sound.muted = saved.muted;
 let game: Game | null = null;
+/** Which street of the run he is on, and what he came into it with. */
+let street = 0;
+let entry: Carry | undefined;
+/** What the streets behind him add to the telling: cooks bowled, cooks met, seconds spent. */
+let before = { bowled: 0, cooks: 0, time: 0 };
+/** The curtain is across between two streets, and the clock is stopped behind it. */
+let handing = false;
+let pilot: Pilot | null = null;
 let running = false;
 let resultShown = false;
 let accumulator = 0;
@@ -53,22 +65,24 @@ let drag: Drag | null = null;
 const keys = new Set<string>();
 /** A shot was asked for and the sim has not yet heard: at a named target, or at whatever is next. */
 let trigger: string | true | null = null;
-/** A stone was asked for, and at what. */
-let slung: SlingAim | null = null;
+/** An egg was asked for, and at what. */
+let lobbed: EggAim | null = null;
 /** What the cooks throw, by which of them threw it. */
 const THROWN = ["Pan", "Rolling pin", "Egg beater", "Cabbage"] as const;
 /** Seconds the world holds its breath after a big hit. */
 let freeze = 0;
 let flying = false;
 let rounds = -1;
-let stones = -1;
+let eggs = -1;
 const hinted = new Map<string, number>();
 let steered = false;
 let cushioned = 0;
 /** What this run has to show for itself. */
 let bowled = 0;
 /** How the tower stood when he broke, for the telling of it. */
-let towerAtEnd: Game["tower"]["state"] = "held";
+let towerAtEnd: NonNullable<Game["tower"]>["state"] = "held";
+/** The last thing to go bang, in case it is the last thing he hears. */
+let lastBoom = { big: false, time: -1 };
 
 // ---------------------------------------------------------------- screens
 
@@ -77,21 +91,31 @@ function show(id: "title" | "result" | "run"): void {
   $("hud").hidden = id === "title";
 }
 
-async function stage(run: boolean): Promise<void> {
+async function stage(run: boolean, index = 0, carry?: Carry): Promise<void> {
   await initPhysics();
+  enter(run, index, carry);
+}
+
+/** Put the cart at the top of a street with what it brought. Physics must be up already. */
+function enter(run: boolean, index: number, carry?: Carry): void {
   game?.dispose();
-  game = new Game();
+  street = index;
+  entry = carry;
+  if (index === 0 || !carry) before = { bowled: 0, cooks: 0, time: 0 };
+  game = new Game(STREETS[index], carry);
+  pilot = auto ? pilotFor(game.course) : null;
   view.mode = run ? "run" : "title";
-  view.load(game);
+  view.load(game, index);
   running = run;
   resultShown = false;
   accumulator = 0;
   trigger = null;
-  slung = null;
+  lobbed = null;
+  lastBoom = { big: false, time: -1 };
   freeze = 0;
   flying = false;
   rounds = -1;
-  stones = -1;
+  eggs = -1;
   drag = null;
   cushioned = 0;
   bowled = 0;
@@ -101,25 +125,32 @@ async function stage(run: boolean): Promise<void> {
 
 function drawBar(): void {
   $("hay").replaceChildren(...Array.from({ length: START_HAY }, () => document.createElement("i")));
-  $("lean-hint").classList.toggle("gone", steered);
+  $("lean-hint").classList.toggle("gone", steered || auto);
 }
 
 function drawHud(current: Game): void {
   $("shell-fill").style.width = `${current.shell}%`;
   $("shell").className = `meter stage-${current.stage}`;
   [...$("hay").children].forEach((pip, index) => pip.classList.toggle("on", index < current.hay));
-  $("track-fill").style.width = `${current.progress * 100}%`;
-  $("track-egg").style.left = `${current.progress * 100}%`;
+  const along = ((street + current.progress) / STREETS.length) * 100;
+  $("track-fill").style.width = `${along}%`;
+  $("track-egg").style.left = `${along}%`;
   $("brake").classList.toggle("on", current.braking > 0);
   // The gun: what is in the rack, and whether it has anything to shoot at.
   if (current.ammo !== rounds) {
     rounds = current.ammo;
-    $("rounds").innerHTML = rounds > 0 ? Array.from({ length: START_AMMO }, (_, index) => `<i class="${index < rounds ? "" : "spent"}"></i>`).join("") : "empty";
+    $("rounds").innerHTML = rounds > 0 ? Array.from({ length: MAX_AMMO }, (_, index) => `<i class="${index < rounds ? "" : "spent"}"></i>`).join("") : "empty";
   }
-  if (current.stones !== stones) {
-    stones = current.stones;
-    $("stones").textContent = String(stones);
-    $("sling").classList.toggle("empty", stones === 0);
+  if (current.eggs !== eggs) {
+    const badge = $("basket");
+    if (eggs >= 0 && current.eggs > eggs) {
+      badge.classList.remove("more");
+      void badge.offsetWidth;
+      badge.classList.add("more");
+    }
+    eggs = current.eggs;
+    $("eggs").textContent = String(eggs);
+    badge.classList.toggle("empty", eggs === 0);
   }
   const fire = $("fire");
   fire.classList.toggle("empty", current.ammo === 0);
@@ -158,22 +189,46 @@ function narrate(event: GameEvent, current: Game): void {
       break;
     case "dry":
       sound.click();
-      if (event.why === "empty") hint("dry", "Three rounds were all he had");
-      else if (event.why === "stones") hint("stones", "The bag is empty");
-      else if (event.why === "far") hint("far", "Too far for a stone");
+      if (event.why === "empty") hint("dry", "The rack is empty: look for a pile of shot");
+      else if (event.why === "eggs") hint("eggs", "Out of eggs: look for a basket");
+      else if (event.why === "far") hint("far", "Too far to throw an egg");
       else hint("aimless", "Out of range: wait for a ring to turn gold");
       break;
-    case "sling":
+    case "lob":
       sound.sling();
       break;
-    case "ping":
-      if (event.what === "pan") {
+    case "splat":
+      sound.egg();
+      if (event.hit === "pan") {
         sound.clang();
         toast(`${THROWN[event.kind % 4]} down!`);
-      } else if (event.what === "cook") {
+      } else if (event.hit === "cook") {
         sound.swat(false);
-        toast("Ow!");
-      } else sound.splinter();
+        toast("Egg on his face!");
+      }
+      break;
+    case "fuse": {
+      sound.fuse();
+      const cart = current.position;
+      if (Math.hypot(event.at.x - cart.x, event.at.z - cart.z) < KEG_TRIP + 0.6) toast("A slow match!", "bad");
+      break;
+    }
+    case "boom":
+      sound.boom(event.big);
+      freeze = Math.max(freeze, event.big ? 0.1 : 0.04);
+      if (event.big || lastBoom.time !== current.time || !lastBoom.big) lastBoom = { big: event.big, time: current.time };
+      if (event.big) toast("There goes the powder!");
+      break;
+    case "breach":
+      sound.rubble(9, 0.1);
+      toast("The barricade's down!");
+      break;
+    case "pickup":
+      sound.pickup(event.kind === "shot");
+      toast(event.kind === "eggs" ? `${EGG_BASKET} more eggs` : `${SHOT_PILE} more rounds`);
+      break;
+    case "through":
+      sound.gate();
       break;
     case "smash":
       if (event.kind === "coop") {
@@ -219,7 +274,7 @@ function narrate(event: GameEvent, current: Game): void {
       break;
     case "throw":
       sound.whoosh();
-      hint("sling", "Tap what they throw to knock it down");
+      hint("sling", "Tap what they throw to egg it out of the air");
       break;
     case "pan":
       if (event.hit) {
@@ -240,7 +295,7 @@ function narrate(event: GameEvent, current: Game): void {
       if (event.time > 1) toast(`${event.distance.toFixed(0)} metres of air!`);
       break;
     case "broken":
-      towerAtEnd = current.tower.state;
+      towerAtEnd = current.tower?.state ?? "down";
       sound.splat();
       if (event.cause === "fell") sound.splash();
       break;
@@ -274,7 +329,32 @@ function narrate(event: GameEvent, current: Game): void {
 
 /** How it ended, and the one thing worth knowing for the next go. */
 function verdict(current: Game): { title: string; line: string } {
-  const lip = current.course.tower.d;
+  const course = current.course;
+  if (current.cause === "blast") {
+    return lastBoom.big
+      ? { title: "Devilled", line: "He was at the barricade when the powder wagon went up. Set it off from well back, and brake until it has gone." }
+      : { title: "Devilled", line: "A keg in the road with a slow match in it. The red rings mark them: steer wide, or burst them with an egg from a distance." };
+  }
+  if (!course.tower || !current.tower) {
+    // A street with no tower in it: the trouble is powder, a barricade, and the kitchen.
+    const wall = current.walls.find((one) => one.state === "up");
+    const held = wall !== undefined && wall.def.d - current.distance < 9;
+    switch (current.cause) {
+      case "mob":
+        return { title: "Beaten", line: "The kitchen had him. An egg makes them duck; a round from the gun flattens a rank." };
+      case "caught":
+        return held
+          ? { title: "Omelette", line: "The barricade held, and they came down for him. The powder wagon against it would shift it: an egg from well back, or a round at its ring." }
+          : { title: "Omelette", line: "He stopped, and the Queen's cooks do not. Keep her rolling." };
+      case "spilled":
+        return { title: "Spilled", line: "The cart went over, and he went with it." };
+      default:
+        return held
+          ? { title: "Scrambled", line: "Straight into the Queen's barricade. Her powder wagon is parked against it: set that off first." }
+          : { title: "Scrambled", line: `He got ${Math.round(current.distance)} of ${course.finish} metres down ${course.name}.` };
+    }
+  }
+  const lip = course.tower.d;
   const shot = current.tower.state !== "held";
   const atCanal = current.distance > lip - 6 && current.distance < lip + 16;
   switch (current.cause) {
@@ -298,7 +378,7 @@ function verdict(current: Game): { title: string; line: string } {
     default:
       return atCanal && towerAtEnd !== "down"
         ? { title: "Rang the bell", line: "He met the tower before it was down. Brake after the shot, and arrive as it lands." }
-        : { title: "Scrambled", line: `He got ${Math.round(current.distance)} of ${current.course.finish} metres.` };
+        : { title: "Scrambled", line: `He got ${Math.round(current.distance)} of ${course.finish} metres.` };
   }
 }
 
@@ -317,19 +397,22 @@ function showResult(current: Game): void {
   $("result-line").textContent = won
     ? stars === 3
       ? "The Empress Hen counts his cracks, finds none, and sits on him."
-      : current.knocks > 0 && current.targets.find((target) => target.id === "wain")?.done !== true
-        ? "The Empress Hen picks a cabbage leaf off him. That cheese wain on the far bank was only chocked."
-        : stars === 2
+      : stars === 2
           ? "The Empress Hen tucks him in and glares up the hill."
           : "The Empress Hen takes one look at him and sends for glue."
     : told.line;
   const rows: Array<[string, string]> = [
     ["Shell", `${Math.round(current.shell)}%`],
-    ["Cooks bowled over", `${bowled} of ${current.mob.length}`],
+    ["Cooks bowled over", `${before.bowled + bowled} of ${before.cooks + current.mob.length}`],
     ["Knocks taken", String(current.knocks)],
-    ["Time", `${(current.time - current.after).toFixed(1)} s`],
+    ["Time", `${(before.time + current.time - current.after).toFixed(1)} s`],
   ];
+  if (!won) rows.unshift(["Street", `${current.course.name} (${street + 1} of ${STREETS.length})`]);
   $("result-stats").innerHTML = rows.map(([label, value]) => `<li><span>${label}</span><span>${value}</span></li>`).join("");
+  // Broken on a later street, he may have that street again as he came into it, or the whole hill.
+  const midway = !won && street > 0 && entry !== undefined;
+  $("again").textContent = midway ? `${current.course.name} again` : "Go again";
+  $("top").hidden = !midway;
   show("result");
 }
 
@@ -361,28 +444,28 @@ function steer(current: Game): { lean: number; brake: number } {
   return { lean: leanAt(current, Math.max(-1, Math.min(1, rate))), brake };
 }
 
-/** A touch on the street: a round at the gold ring under it, or a stone at whatever else is there. */
+/** A touch on the street: a round at the gold ring under it, or an egg at whatever else is there. */
 function tap(x: number, y: number): void {
   if (!game) return;
   const pick = view.pickAt(x, y, game);
   if ("shoot" in pick) trigger = pick.shoot;
-  else slung = pick.sling;
+  else lobbed = pick.egg;
 }
 
 /** What the hands are asking for this step, and nothing held over to the next. */
 function hands(current: Game): Input {
   const input: Input = steer(current);
   if (trigger !== null) input.shoot = trigger;
-  if (slung) input.sling = slung;
+  if (lobbed) input.egg = lobbed;
   trigger = null;
-  slung = null;
+  lobbed = null;
   return input;
 }
 
 const stageHost = $("stage");
 stageHost.addEventListener("pointerdown", (event) => {
-  if (!running || !game) return;
-  // A second finger anywhere is the gun.
+  if (!running || !game || handing) return;
+  // A second finger anywhere is a shot.
   if (drag) {
     tap(event.clientX, event.clientY);
     return;
@@ -429,7 +512,7 @@ window.addEventListener("keydown", (event) => {
     trigger = true;
   }
   if (key === "m") toggleSound();
-  if (key === "r" && (running || resultShown)) void start();
+  if (key === "r" && (running || resultShown) && !handing) void start(street, entry);
 });
 window.addEventListener("keyup", (event) => keys.delete(event.key.length === 1 ? event.key.toLowerCase() : event.key));
 window.addEventListener("blur", () => {
@@ -457,23 +540,61 @@ $("sound").addEventListener("pointerdown", (event) => {
 });
 drawSound();
 
-async function start(): Promise<void> {
+/** What is said at the top of each street. */
+const OPENING = ["The bridge is out. That tower would reach.", "The Queen's powder. Red rings are traps: egg them from well back."];
+
+async function start(index = firstStreet, carry?: Carry): Promise<void> {
   sound.unlock();
-  await stage(true);
+  await stage(true, index, carry);
   show("run");
-  hint("start", "The bridge is out. That tower would reach.");
+  hint(`start${index}`, OPENING[index] ?? "");
   if (auto) $("lean-hint").classList.add("gone");
 }
 
+const wait = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms));
+
+/** Through the gate: tally the street behind, and come out at the top of the next with what is left. */
+function next(current: Game): void {
+  const carry = current.carry;
+  const kept = { bowled: before.bowled + bowled, cooks: before.cooks + current.mob.length, time: before.time + current.time - current.after };
+  enter(true, street + 1, carry);
+  before = kept;
+  show("run");
+}
+
+/** The same, with a curtain drawn across while the scenery is changed. */
+async function handOver(current: Game): Promise<void> {
+  if (handing) return;
+  handing = true;
+  const coming = STREETS[street + 1];
+  const carry = current.carry;
+  $("curtain-eyebrow").textContent = `Through the gate · street ${street + 2} of ${STREETS.length}`;
+  $("curtain-title").textContent = coming?.name ?? "";
+  $("curtain-line").textContent = `Shell ${Math.round(carry.shell)}% · ${carry.ammo} ${carry.ammo === 1 ? "round" : "rounds"} · ${carry.eggs} eggs`;
+  $("curtain").classList.add("across");
+  await wait(420);
+  drag = null;
+  next(current);
+  if (game) {
+    drawHud(game);
+    view.sync(game, 0);
+  }
+  await wait(1100);
+  $("curtain").classList.remove("across");
+  handing = false;
+  hint(`start${street}`, OPENING[street] ?? "");
+}
+
 $("roll-out").addEventListener("click", () => void start());
-$("again").addEventListener("click", () => void start());
+$("again").addEventListener("click", () => void (game?.phase === "won" ? start() : start(street, entry)));
+$("top").addEventListener("click", () => void start(0));
 
 // ---------------------------------------------------------------- the frame loop
 
 function advance(current: Game, steps: number): void {
   for (let index = 0; index < steps; index += 1) {
     const asked = hands(current);
-    current.step(auto ? steady(current) : asked);
+    current.step(pilot ? pilot(current) : asked);
     for (const event of current.takeEvents()) {
       view.handle(event, current);
       narrate(event, current);
@@ -483,18 +604,29 @@ function advance(current: Game, steps: number): void {
 
 /** The teaching lines that wait on the street rather than on an event. */
 function coach(current: Game): void {
-  if (current.phase !== "run" || current.ammo === 0) return;
+  if (current.phase !== "run") return;
+  // The powder: said once the train is in sight, and again when the barricade is close.
+  const wall = current.walls.find((one) => one.state === "up");
+  if (wall) {
+    const gap = wall.def.d - current.distance;
+    const lit = current.kegs.some((keg) => keg.state === "lit" && !keg.def.trap);
+    if (gap < 34 && gap > 12 && lit) hint("wait", "It's lit! Pull down to brake and let it go up");
+    else if (gap < 60 && gap > 30 && !lit) hint("train", "One egg on a kerb keg sets the whole row off");
+    else if (gap < 28 && gap > 10 && !lit) hint("wagon", "The barricade! Egg the powder wagon, and brake");
+  }
+  if (current.ammo === 0) return;
   const lit = current.target;
   if (!lit) return;
+  const tower = current.tower?.state;
   if (lit.id === "windlass") hint("fire", "Gold ring on the capstan: tap it, or press Fire");
-  else if (lit.id === "wain" && current.tower.state !== "held") hint("wain", "The cheese wain is only chocked: tap its ring");
-  else if (current.tower.state === "down") hint("rank", "A round into the cooks will scatter them");
+  else if (lit.id === "wain" && tower !== "held") hint("wain", "The cheese wain is only chocked: tap its ring");
+  else if (lit.kind === "rank" && tower !== "held" && tower !== "falling") hint("rank", "A round into the cooks will scatter them");
 }
 
 view.app.on("update", (dt: number) => {
   const current = game;
   if (!current) return;
-  if (running) {
+  if (running && !(handing && current.phase === "run")) {
     // A big hit stops the clock for a few frames, so it lands.
     freeze = Math.max(0, freeze - dt);
     if (freeze <= 0) accumulator += Math.min(dt, 0.1);
@@ -507,12 +639,14 @@ view.app.on("update", (dt: number) => {
     flying = airborne;
     sound.roll(current.speed, current.grounded, current.phase === "run");
     coach(current);
-    if (current.over && !resultShown && current.after > (current.phase === "won" ? 3.4 : 2.4)) showResult(current);
+    if (current.phase === "through") {
+      if (current.after > 0.9) void handOver(current);
+    } else if (current.over && !resultShown && current.after > (current.phase === "won" ? 3.4 : 2.4)) showResult(current);
   }
   view.sync(current, dt);
 });
 
-void stage(false);
+void stage(false, firstStreet);
 
 // For driving the game from a console or a hidden tab, where frames don't tick.
 Object.assign(window, {
@@ -522,7 +656,8 @@ Object.assign(window, {
     },
     view,
     start,
-    step(seconds: number, input: { lean?: number; goal?: number; brake?: number; shoot?: string | boolean; sling?: SlingAim } = {}) {
+    /** Simulate some seconds. Between streets it steps straight through the gate, without the curtain. */
+    step(seconds: number, input: { lean?: number; goal?: number; brake?: number; shoot?: string | boolean; egg?: EggAim } = {}) {
       if (!game) return null;
       const steps = Math.round(seconds / STEP);
       for (let index = 0; index < steps; index += 1) {
@@ -532,18 +667,20 @@ Object.assign(window, {
         else if (input.lean !== undefined) asked.lean = input.lean;
         if (input.brake !== undefined) asked.brake = input.brake;
         if (index === 0 && input.shoot) asked.shoot = input.shoot;
-        if (index === 0 && input.sling) asked.sling = input.sling;
-        game.step(auto ? steady(game) : asked);
+        if (index === 0 && input.egg) asked.egg = input.egg;
+        game.step(pilot ? pilot(game) : asked);
         for (const event of game.takeEvents()) {
           view.handle(event, game);
           narrate(event, game);
         }
         view.sync(game, STEP);
+        if (game.phase === "through" && game.after > 0.9 && !handing) next(game);
       }
       drawHud(game);
       coach(game);
-      if (game.over && !resultShown && game.after > (game.phase === "won" ? 3.4 : 2.4)) showResult(game);
-      return { d: Math.round(game.distance), v: Math.round(game.speed * 10) / 10, shell: Math.round(game.shell), hay: game.hay, ammo: game.ammo, stones: game.stones, phase: game.phase, cause: game.cause, tower: game.tower.state };
+      if (game.over && game.phase !== "through" && !resultShown && game.after > (game.phase === "won" ? 3.4 : 2.4)) showResult(game);
+      return { street, d: Math.round(game.distance), v: Math.round(game.speed * 10) / 10, shell: Math.round(game.shell), hay: game.hay, ammo: game.ammo, eggs: game.eggs, phase: game.phase, cause: game.cause, tower: game.tower?.state ?? null };
     },
+    handOver: () => (game ? handOver(game) : undefined),
   },
 });

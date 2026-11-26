@@ -6,7 +6,9 @@ A mobile-first physics game. The Queen's village is built down a hill, and the w
 one push from falling over. Set it off, then ride the Egg King's cart through what follows,
 down to the Empress Hen, with his shell in one piece.
 
-This is an early prototype: one street, **Bell Tower Street**.
+This is an early prototype: two streets, **Bell Tower Street** and then **Powder Row**,
+joined by a town gate. What is left of the cart at the bottom of one is what you have at the
+top of the next.
 
 The first version, a gauntlet of towers ridden on a cart built from three simple machines, is
 kept as its own game on branch `gauntlet` and is published at `/gauntlet/` beside this one.
@@ -19,16 +21,18 @@ npm run dev
 ```
 
 Open [http://127.0.0.1:5180](http://127.0.0.1:5180). Add `?auto` to watch the built-in
-driver play the street.
+driver play both streets, or `?street=2` to start on Powder Row with a fresh cart.
 
 - **Steer:** put a finger down anywhere and drag sideways. The cart goes that way and keeps
   going until you lift the finger or bring it back (or **←/→**, **A/D**).
 - **Brake:** pull the same finger down (or **↓**, **S**). She slows to a trot, never to a stand.
 - **Fire:** everything the gun could hit wears a ring. When a ring turns gold it is in range:
-  tap it, or press **Fire** (or **Space**) for the next one. Three rounds, no more.
-- **Sling:** tap anything else and one of the men slings a stone at it: an egg beater in mid
-  air, a cook, a flower basket, a barrel, a hen coop, the Queen's crown. A dozen stones, for
-  whatever takes your fancy.
+  tap it, or press **Fire** (or **Space**) for the next one. Three rounds to start with.
+- **Eggs:** tap anything else and one of the men throws an egg at it: an egg beater in mid
+  air, a cook, a flower basket, a barrel, a hen coop, a powder keg, the Queen's crown. It
+  bursts over whatever is near, and leaves the yolk on the cobbles. A dozen to start with.
+- **More of both:** a basket of eggs or a pyramid of shot in a gold ring is yours for driving
+  over it.
 - **R** restarts; **M** mutes the sound.
 
 ## Bell Tower Street
@@ -46,14 +50,27 @@ back by one rope to a capstan on the quay.
 4. **The cheese wain** on the far bank is only chocked. Knock the chock out and it runs down
    the other side of the street into the well, and clears that side too. Leave it, and the
    cooks still standing throw what they are holding.
-5. **Or make your own trouble.** A stone knocks what they throw out of the air and puts a
-   cook's head down for a moment. A basket drops on whoever is under it, a burst barrel or a
+5. **Or make your own trouble.** An egg knocks what they throw out of the air and puts the
+   cooks' heads down for a moment. A basket drops on whoever is under it, a burst barrel or a
    loosed hen coop sends its neighbours diving, and with her crown knocked off the Queen's
    whole kitchen forgets to throw.
 6. **Steer round what is left:** the bell where it stopped, the woolsacks, the well.
 
+## Powder Row
+
+The Queen's powder is stacked all down one kerb as far as the wagon drawn up against her
+barricade, and she has left a few kegs in the road with slow matches in them.
+
+1. **Red rings are traps.** Come inside one and the keg goes off under the cart. Steer wide,
+   or burst it with an egg from a distance.
+2. **The barricade** will not move for a cart. The powder wagon parked against it will move
+   it: an egg at the wagon, or a round at the barricade's ring.
+3. **Or light the train.** One egg on any kerb keg sets off the next, and the next, all the
+   way down to the wagon.
+4. **Brake.** Be well back when the wagon goes.
+
 - **Only a jolt hurts him.** His shell cracks when the cart's velocity changes sharply, when a
-  pan lands, or when he runs into a cook. Hay takes each knock first, two bales' worth.
+  pan lands, when he runs into a cook, or when powder goes off beside him. Hay takes each knock first, two bales' worth.
 - **Stars:** get him home; arrive with the shell uncracked; arrive without a pan landed.
 - A cart that stops is caught.
 
@@ -62,7 +79,8 @@ back by one rope to a capstan on the quay.
 ```bash
 npm run typecheck
 npm test                         # headless: winnable, not by an idle cart, replays exact
-npx tsx scripts/trace.ts         # one run, event by event (steady, idle, nowain, late, dawdle)
+npx tsx scripts/trace.ts         # one run, event by event (steady, idle, nowain, late, dawdle;
+                                 # on Powder Row: wagon, train, rush, blind)
 npx tsx scripts/window.ts        # outcome for every shot delay and brake setting (add: wain)
 npx tsx scripts/lip.ts           # the jolt of crossing the fallen tower
 npm run build
@@ -71,8 +89,9 @@ npm run check                    # typecheck, tests and build
 
 ```
 src/sim/      rules and physics, headless (Rapier 3D, fixed 60 Hz, no DOM, no Math.random)
-  course.ts     the street: the hill, the canal, the tower, the mob, the wain
-  game.ts       the cart, the jolt rule, the gun, the falling tower, the bell, the wain, the mob
+  course.ts     the streets: the hill, the canal, the tower, the mob, the wain, the powder
+  game.ts       the cart, the jolt rule, the gun, the eggs, the tower, the bell, the wain,
+                the mob, the kegs, the barricade, what is carried through a gate
   autoplay.ts   pilots for tests and ?auto
 src/render/   PlayCanvas view; reads the sim, never writes it
 src/audio.ts  every sound, synthesised; presentation only

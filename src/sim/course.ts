@@ -1,9 +1,10 @@
 /**
- * A street of the hill village, running downhill along -Z. `d` is horizontal distance from the
- * crest, `x` is across the street (positive is the player's right).
+ * The hill village, street by street. A street runs downhill along -Z: `d` is horizontal
+ * distance from its crest, `x` is across it (positive is the player's right).
  *
  * A street is one contraption: something to set off, a chain that follows, and a moment to
- * arrive. This one is Bell Tower Street.
+ * arrive. Streets are ridden one after another: the gate at the bottom of one is the gate at
+ * the top of the next, and the cart goes through with whatever it has left.
  */
 export interface Piece {
   d0: number;
@@ -41,7 +42,7 @@ export interface MobDef {
 export type ClutterKind = "pot" | "barrel" | "coop" | "queen";
 
 /**
- * Something in the village a slung stone can set off: a flower basket hung over the street, a
+ * Something in the village a thrown egg can set off: a flower basket hung over the street, a
  * barrel or a hen coop on the kerb, the Queen herself. None of it is needed to get home.
  */
 export interface ClutterDef {
@@ -57,67 +58,148 @@ export interface ClutterDef {
   fright: number;
 }
 
+/** Something his own people have left in the road: a basket of eggs, or a pyramid of shot. */
+export interface PickupDef {
+  id: number;
+  kind: "eggs" | "shot";
+  d: number;
+  x: number;
+}
+
+/**
+ * A powder keg. In the road it is a trap, and goes off when the cart comes near; on the kerb it
+ * is one link of a powder train. Any keg goes off when something bursts beside it, and takes
+ * its neighbours with it a moment later.
+ */
+export interface KegDef {
+  id: number;
+  d: number;
+  x: number;
+  /** Height of its foot above the street: 0 in the road, the kerb's height on the kerb. */
+  up: number;
+  /** In the road, with a slow match in it: it goes off when the cart comes near. */
+  trap: boolean;
+  /** The powder wagon: a much bigger bang, and the only thing that will shift a barricade. */
+  big: boolean;
+}
+
+/** A barricade across the whole street. Only the powder wagon going up beside it will move it. */
+export interface WallDef {
+  id: number;
+  d: number;
+  height: number;
+}
+
 export interface CourseDef {
   name: string;
   /** Drivable width between the kerbs. */
   width: number;
   /** Street pieces in order. A space between one piece and the next is open water. */
   pieces: Piece[];
-  tower: BellTowerDef;
+  tower: BellTowerDef | null;
   /** The capstan on the quay that holds the tower's rope. Shoot it and the tower goes. */
-  windlass: { d: number; x: number };
+  windlass: { d: number; x: number } | null;
   /** The cheesemonger's wain, chocked on the far bank. Knock the chock out and it runs away down its side of the street. */
-  wain: { d: number; x: number };
+  wain: { d: number; x: number } | null;
   /** The well the runaway wain ends against. */
-  well: { d: number; x: number };
+  well: { d: number; x: number } | null;
   /** The dyer's woolsacks, piled at the bottom of the bell's side of the street: where it stops. */
-  sacks: { d: number; x: number };
-  /** The Queen's kitchen mob, across the far street in ranks. */
+  sacks: { d: number; x: number } | null;
+  /** The Queen's kitchen mob, across the street in ranks. */
   mob: MobDef[];
   clutter: ClutterDef[];
-  /** Crossing this line is home. */
+  pickups: PickupDef[];
+  kegs: KegDef[];
+  walls: WallDef[];
+  /** Crossing this line ends the street: the town gate, or on the last street the roost yard. */
   finish: number;
-  /** Where the Empress Hen sits. */
-  roost: number;
+  /** Where the Empress Hen sits. Null when a gate leads on to the next street. */
+  roost: number | null;
 }
 
 const SLOPE = 0.14;
-const LIP = 66;
-const CANAL = 12;
+const HALF = 5;
+const KERB = HALF + 0.3;
+const KERB_TOP = 0.75;
+const HUNG = HALF - 0.6;
 
-function layStreet(): { pieces: Piece[]; yard: number } {
+type Loose<T> = Omit<T, "id">;
+const numbered = <T>(all: Array<Loose<T>>): T[] => all.map((one, id) => ({ id, ...one }) as T);
+
+const pot = (d: number, x: number): Loose<ClutterDef> => ({ kind: "pot", d, x, up: 3.4, bowl: 1.3, fright: 0 });
+const barrel = (d: number, x: number): Loose<ClutterDef> => ({ kind: "barrel", d, x, up: 1.55, bowl: 0, fright: 5.5 });
+const coop = (d: number, x: number): Loose<ClutterDef> => ({ kind: "coop", d, x, up: 1.4, bowl: 0, fright: 5.5 });
+const trap = (d: number, x: number): Loose<KegDef> => ({ d, x, up: 0, trap: true, big: false });
+const link = (d: number, x: number): Loose<KegDef> => ({ d, x, up: KERB_TOP, trap: false, big: false });
+const ranks = (rows: Array<{ d: number; xs: number[] }>): MobDef[] => {
+  let id = 0;
+  return rows.flatMap((row, rank) => row.xs.map((x) => ({ id: id++, rank, d: row.d, x })));
+};
+
+interface Laid {
+  pieces: Piece[];
+  /** Where the hill runs out and the level ground at the bottom begins. */
+  foot: number;
+}
+
+/**
+ * Lay a street as runs of [length, slope], with a stretch of open water where one is named.
+ * The last run is the ground at the bottom.
+ */
+function lay(runs: Array<[number, number] | { water: number; fall: number }>): Laid {
   const pieces: Piece[] = [];
   let d = -14;
   let y = 0;
-  const run = (length: number, slope: number): void => {
-    pieces.push({ d0: d, d1: d + length, y0: y, y1: y - length * slope });
-    d += length;
-    y -= length * slope;
-  };
-  run(22, 0.01); // the crest: she crawls over it, and the whole street is in view
-  run(LIP - d, SLOPE); // down to the canal
-  d += CANAL; // the bridge is gone
-  y -= CANAL * SLOPE; // the far bank carries the street on at the same fall
-  run(58, SLOPE);
-  run(8, 0.07);
-  const yard = d;
-  run(56, 0); // the roost yard
-  return { pieces, yard };
+  let foot = 0;
+  for (const run of runs) {
+    if (Array.isArray(run)) {
+      const [length, slope] = run;
+      foot = d;
+      pieces.push({ d0: d, d1: d + length, y0: y, y1: y - length * slope });
+      d += length;
+      y -= length * slope;
+    } else {
+      d += run.water;
+      y -= run.water * run.fall;
+    }
+  }
+  return { pieces, foot };
 }
 
-const STREET = layStreet();
+// ---------------------------------------------------------------- Bell Tower Street
+
+const LIP = 66;
+const CANAL = 12;
 const FAR = LIP + CANAL;
 
-const HALF = 5;
-const KERB = HALF + 0.3;
-const HUNG = HALF - 0.6;
+const BELL = lay([
+  [22, 0.01], // the crest: she crawls over it, and the whole street is in view
+  [LIP + 14 - 22, SLOPE], // down to the canal
+  { water: CANAL, fall: SLOPE }, // the bridge is gone; the far bank carries the street on at the same fall
+  [58, SLOPE],
+  [8, 0.07],
+  [46, 0.02], // out through the town gate
+]);
 
-/** Baskets hang out over the edge of the street; barrels and coops stand on the kerb. */
-function layClutter(): ClutterDef[] {
-  const pot = (d: number, x: number): Omit<ClutterDef, "id"> => ({ kind: "pot", d, x, up: 3.4, bowl: 1.3, fright: 0 });
-  const barrel = (d: number, x: number): Omit<ClutterDef, "id"> => ({ kind: "barrel", d, x, up: 1.55, bowl: 0, fright: 5.5 });
-  const coop = (d: number, x: number): Omit<ClutterDef, "id"> => ({ kind: "coop", d, x, up: 1.4, bowl: 0, fright: 5.5 });
-  const all: Array<Omit<ClutterDef, "id">> = [
+const BELL_TOWER_STREET: CourseDef = {
+  name: "Bell Tower Street",
+  width: HALF * 2,
+  pieces: BELL.pieces,
+  tower: {
+    d: LIP,
+    x0: -5.2,
+    x1: 0.8,
+    height: Math.hypot(CANAL, CANAL * SLOPE),
+    thick: 3,
+    lean: 0.14,
+    rest: Math.PI / 2 + Math.atan(SLOPE),
+  },
+  windlass: { d: LIP - 1.2, x: 3 },
+  wain: { d: FAR + 5, x: 3.3 },
+  well: { d: FAR + 54, x: 3.3 },
+  sacks: { d: FAR + 46, x: -2.6 },
+  mob: ranks([0, 1, 2].map((rank) => ({ d: FAR + 16 + rank * 8, xs: [-4, -2, 0, 2, 4] }))),
+  clutter: numbered<ClutterDef>([
     // Down to the water: nothing here is in his way, and all of it is fair game.
     pot(20, HUNG),
     barrel(28, -KERB),
@@ -132,32 +214,74 @@ function layClutter(): ClutterDef[] {
     pot(FAR + 24, -HUNG),
     coop(FAR + 28, -KERB),
     pot(FAR + 32, HUNG),
-  ];
-  return all.map((one, id) => ({ id, ...one }));
-}
-
-export const COURSE: CourseDef = {
-  name: "Bell Tower Street",
-  width: HALF * 2,
-  pieces: STREET.pieces,
-  tower: {
-    d: LIP,
-    x0: -5.2,
-    x1: 0.8,
-    height: Math.hypot(CANAL, CANAL * SLOPE),
-    thick: 3,
-    lean: 0.14,
-    rest: Math.PI / 2 + Math.atan(SLOPE),
-  },
-  windlass: { d: LIP - 1.2, x: 3 },
-  wain: { d: FAR + 5, x: 3.3 },
-  well: { d: FAR + 54, x: 3.3 },
-  sacks: { d: FAR + 46, x: -2.6 },
-  mob: [0, 1, 2].flatMap((rank) => [-4, -2, 0, 2, 4].map((x, index) => ({ id: rank * 5 + index, rank, d: FAR + 16 + rank * 8, x }))),
-  clutter: layClutter(),
-  finish: STREET.yard + 6,
-  roost: STREET.yard + 42,
+  ]),
+  pickups: numbered<PickupDef>([
+    { kind: "eggs", d: 24, x: 3.4 },
+    { kind: "shot", d: 44, x: 3.5 },
+    { kind: "eggs", d: FAR + 62, x: 0 },
+  ]),
+  // One of the Queen's little surprises, at the bottom of the wain's side of the street.
+  kegs: numbered<KegDef>([trap(FAR + 40, 3.6)]),
+  walls: [],
+  finish: BELL.foot + 12,
+  roost: null,
 };
+
+// ---------------------------------------------------------------- Powder Row
+
+const WAGON = 90;
+
+const POWDER = lay([
+  [22, 0.03], // in under the gate, and the Queen's powder store laid out below
+  [128 + 14 - 22, 0.13],
+  [8, 0.07],
+  [56, 0], // the roost yard
+]);
+
+/**
+ * The Queen's powder is stacked all down one kerb, a keg every few yards, as far as the wagon
+ * drawn up against her barricade. Any one of them will set the rest going, a keg at a time,
+ * down the hill and up it. The wagon takes the barricade with it. So will it take the cart.
+ */
+const POWDER_ROW: CourseDef = {
+  name: "Powder Row",
+  width: HALF * 2,
+  pieces: POWDER.pieces,
+  tower: null,
+  windlass: null,
+  wain: null,
+  well: null,
+  sacks: null,
+  mob: ranks([
+    { d: 64, xs: [-4, -2] }, // minding the powder
+    { d: 106, xs: [-4, -2, 0, 2, 4] },
+    { d: 114, xs: [-4, -2, 0, 2, 4] },
+  ]),
+  clutter: numbered<ClutterDef>([pot(18, HUNG), barrel(26, KERB), coop(40, KERB), pot(56, HUNG), barrel(76, KERB), pot(102, -HUNG), coop(110, KERB), pot(118, HUNG), barrel(122, -KERB)]),
+  pickups: numbered<PickupDef>([
+    { kind: "eggs", d: 12, x: -2.6 },
+    { kind: "shot", d: 40, x: 2.8 },
+    { kind: "eggs", d: 99, x: 0.5 },
+  ]),
+  kegs: numbered<KegDef>([
+    // The powder train down the left kerb, and the wagon it ends at.
+    ...Array.from({ length: 11 }, (_, index) => link(36 + index * 5, -KERB)),
+    { d: WAGON, x: -2.4, up: 0, trap: false, big: true },
+    // And the ones left in the road for him.
+    trap(30, 2.6),
+    trap(52, 0.8),
+    trap(72, 3.4),
+    trap(104, -1.5),
+    trap(116, 2.5),
+  ]),
+  walls: [{ id: 0, d: WAGON + 3.2, height: 2.8 }],
+  finish: POWDER.foot + 6,
+  roost: POWDER.foot + 42,
+};
+
+/** The streets of a run, in the order they are ridden. */
+export const STREETS: CourseDef[] = [BELL_TOWER_STREET, POWDER_ROW];
+export const COURSE: CourseDef = BELL_TOWER_STREET;
 
 /** The piece under `d`; over the water, the piece just left. */
 export function pieceAt(course: CourseDef, d: number): Piece {

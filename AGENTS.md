@@ -2,7 +2,7 @@
 
 A mobile-first physics game. A hill village is one Rube Goldberg machine: the player sets it
 off, then has to ride the Egg King's cart through what follows, down to the Empress Hen.
-Prototype stage: one street, Bell Tower Street.
+Prototype stage: two streets ridden one after the other, Bell Tower Street and Powder Row.
 
 The first game (pick three machines, ride the Queen's gauntlet) is frozen on branch
 `gauntlet` (tag `gauntlet-v1`) and published beside this one at `/gauntlet/`. Do not merge
@@ -13,6 +13,12 @@ it back or change it in passing; it is kept as it was on purpose.
 - A street is one contraption: something to set off, a chain that follows, and a moment to
   arrive. Start, shot, chain, crossing and verdict fit in about twenty seconds, and a failed
   go restarts at once.
+- Streets are stitched by a town gate (`STREETS` in `course.ts`). A street whose `roost` is
+  null ends in phase `"through"`; the page draws a curtain, and the next street begins with
+  the `Carry` of the last: shell, hay, rounds, eggs, knocks and speed. Nothing is topped up at
+  a gate. A street must be playable from a fresh cart too (`?street=2`), and anything a street
+  needs (a tower, a wain, a barricade) is optional in `CourseDef`, so the sim and the view
+  build only what a street has.
 - Setting off the chain is easy. Arriving at the right moment is the game. The bell tower
   takes about three seconds to fall; a cart that never brakes reaches the bank before it is
   down, and a cart that brakes arrives as it lands. `npx tsx scripts/window.ts` prints the
@@ -32,17 +38,29 @@ it back or change it in passing; it is kept as it was on purpose.
 - Three verbs, two thumbs. One finger drags like a stick: sideways and the cart goes that way
   and keeps going until the finger lifts or comes back (`leanAt`); pulling down puts the
   brake on. A tap on a gold ring or the one Fire button shoots the gun; a tap or a second finger
-  anywhere else slings a stone at what is under it (`View.pickAt`).
+  anywhere else throws an egg at what is under it (`View.pickAt`).
 - The brake slows her and never stops her (`BRAKE_FLOOR`). There is no accelerator.
-- One cart, three rounds, no build screen. The gun reaches only what is lit (`GUN_RANGE`);
+- One cart, three rounds to start with, no build screen. The gun reaches only what is lit (`GUN_RANGE`);
   every target wears a ring, faint out of range and gold within it.
-- Two kinds of shot, and they must stay distinct. The three rounds are for the rings: they
-  work the machine. The sling's stones (`START_STONES`) are for everything else and are never
-  needed to get home: a tap on anything without a ring slings one at it. A stone knocks a
-  thrown pan out of the air, puts a cook's head down for a moment (`DUCK`), and sets off the
-  village's clutter (`clutter` in `course.ts`: baskets, barrels, hen coops, the Queen's
-  crown). Clutter is state plus spectacle props, like the mob; add more freely, but give each
-  piece an effect a player can see.
+- Two kinds of shot, and they must stay distinct. The rounds are for the rings: they work
+  the machine, flatten a rank of cooks and breach a barricade. Eggs (`START_EGGS`) are for
+  everything else: a tap on anything without a ring throws one at it, and it bursts over
+  everything within `EGG_SPLASH`. An egg does less than a round on purpose: it knocks a thrown
+  pan out of the air, puts cooks' heads down for a moment (`DUCK`) but never bowls them,
+  sets off the village's clutter (`clutter` in `course.ts`: baskets, barrels, hen coops, the
+  Queen's crown) and bursts a powder keg. Clutter is state plus spectacle props, like the
+  mob; add more freely, but give each piece an effect a player can see.
+- Both run out and both can be found again: a basket of eggs (`EGG_BASKET`, up to `MAX_EGGS`)
+  or a pyramid of shot (`SHOT_PILE`, up to `MAX_AMMO`) in the road, each in a gold ring,
+  taken by driving over it.
+- Powder is the Queen's and it cuts both ways (`kegs` in `course.ts`). A keg in the road is a
+  trap with a slow match: it wears a red ring as wide as its temper (`KEG_TRIP`) and goes off
+  under a cart that comes inside it. A keg on the kerb is a link in a powder train. Any keg
+  bursts when an egg, a round or another keg goes off beside it, and lights its neighbours a
+  moment later (`KEG_FUSE`), so one egg can walk a whole row down the hill. A blast hurts the
+  cart only inside `hurt`; kerb kegs are out of reach of a cart that keeps to the road. The
+  powder wagon is the big one, and the only thing besides a round that shifts a barricade
+  (`walls`). Kegs are state, not bodies.
 - No cart may play itself, and no street may need a shot the player cannot see: `npm test`
   checks that an idle cart never gets home and that a sensible driver gets three stars.
 - The village is the Queen's and the story is on the street: her kitchen mob with pans,
@@ -57,8 +75,9 @@ it back or change it in passing; it is kept as it was on purpose.
 - The simulation steps at a fixed `STEP` (1/60 s) and uses no wall clock and no
   `Math.random`, so a run replays exactly. Physics is the deterministic Rapier build
   (`@dimforge/rapier3d-deterministic-compat`).
-- After changing physics constants or the street, run `npm test`, `npx tsx scripts/window.ts`
-  and `npx tsx scripts/window.ts wain`.
+- After changing physics constants or a street, run `npm test`, `npx tsx scripts/window.ts`
+  and `npx tsx scripts/window.ts wain`; for Powder Row, `npx tsx scripts/trace.ts wagon`
+  (also `train`, `rush`, `blind`).
 
 ## Commands
 

@@ -1,5 +1,5 @@
 import RAPIER from "@dimforge/rapier3d-deterministic-compat";
-import { COURSE, courseEnd, heightAt, slopeAt, type ClutterDef, type ClutterKind, type CourseDef, type MobDef } from "./course";
+import { COURSE, courseEnd, heightAt, slopeAt, type ClutterDef, type ClutterKind, type CourseDef, type KegDef, type MobDef, type PickupDef, type WallDef } from "./course";
 
 /** Fixed simulation step. Slow motion changes how many steps run, never the step. */
 export const STEP = 1 / 60;
@@ -55,15 +55,48 @@ export const GUN_RANGE = 25;
 const SHOT_SPEED = 44;
 const SHOT_SCATTER = 2.4;
 
-// The sling. One of the men has a bag of stones and no particular orders.
-export const START_STONES = 12;
-export const SLING_RANGE = 30;
-const SLING_COOLDOWN = 0.18;
-const STONE_SPEED = 60;
-/** Seconds a cook keeps his head down after a stone finds him. */
+// The eggs. Not the King's kind: the other sort, well past their best, and they burst.
+export const START_EGGS = 12;
+export const MAX_EGGS = 24;
+/** How many a basket by the road holds. */
+export const EGG_BASKET = 6;
+export const EGG_RANGE = 30;
+const EGG_COOLDOWN = 0.18;
+const EGG_SPEED = 46;
+/** How far the mess goes: who gets yolk on them, and what it sets off. */
+export const EGG_SPLASH = 1.7;
+/** Seconds a cook keeps his head down with yolk in his eye. */
 export const DUCK = 2.5;
 /** Seconds the whole kitchen stands and stares when the Queen loses her crown. */
 const GASP = 3;
+
+// Powder.
+/** A trap in the road hears the cart at this distance, and its match is this short. */
+export const KEG_TRIP = 2.3;
+const TRIP_FUSE = 0.3;
+/** Seconds from one keg going to its neighbour following. */
+export const KEG_FUSE = 0.85;
+interface Blast {
+  /** Cooks this close are thrown. */
+  bowl: number;
+  /** Cooks this close dive. */
+  fright: number;
+  /** Kegs this close have their fuses lit. */
+  chain: number;
+  /** The cart is hurt inside this, the more the closer. */
+  hurt: number;
+  damage: number;
+  floor: number;
+}
+const KEG_BLAST: Blast = { bowl: 3, fright: 6, chain: 5.6, hurt: 4.5, damage: 26, floor: 6 };
+const WAGON_BLAST: Blast = { bowl: 5.5, fright: 13, chain: 6.5, hurt: 9, damage: 70, floor: 14 };
+/** A wall this close along the street to the wagon goes with it. */
+const WAGON_BREACH = 7;
+
+// What his people leave in the road.
+export const MAX_AMMO = 5;
+export const SHOT_PILE = 2;
+const PICKUP_REACH = 1.5;
 
 // The bell.
 /** The tower lets go of the bell when it has fallen this far, in radians from upright. */
@@ -104,9 +137,21 @@ export interface Quat {
   w: number;
 }
 
-export type Phase = "run" | "won" | "broken";
-export type BreakCause = "jolt" | "spilled" | "fell" | "mob" | "caught";
-export type TargetKind = "windlass" | "wain" | "rank";
+/** "through" is a street finished with another to come; "won" is home. */
+export type Phase = "run" | "won" | "through" | "broken";
+export type BreakCause = "jolt" | "spilled" | "fell" | "mob" | "caught" | "blast";
+export type TargetKind = "windlass" | "wain" | "rank" | "wall";
+
+/** What the cart takes with it from one street into the next. */
+export interface Carry {
+  shell: number;
+  padding: number;
+  ammo: number;
+  eggs: number;
+  knocks: number;
+  /** How fast she was going through the gate. */
+  speed: number;
+}
 
 /** Something the gun can be laid on. It lights when it comes into range. */
 export interface Target {
@@ -132,11 +177,16 @@ export interface Flight {
 
 export type GameEvent =
   | { type: "shoot" }
-  | { type: "sling"; to: Vec3 }
-  | { type: "ping"; at: Vec3; what: "pan" | "cook" | "ground"; kind: number }
+  | { type: "lob"; to: Vec3 }
+  | { type: "splat"; at: Vec3; hit: "pan" | "cook" | "clutter" | "keg" | "ground"; kind: number }
+  | { type: "fuse"; id: number; at: Vec3 }
+  | { type: "boom"; id: number; at: Vec3; big: boolean }
+  | { type: "breach"; id: number; at: Vec3 }
+  | { type: "pickup"; id: number; kind: "eggs" | "shot"; at: Vec3 }
+  | { type: "through" }
   | { type: "smash"; id: number; kind: ClutterKind; at: Vec3 }
   | { type: "bang"; at: Vec3; target: TargetKind }
-  | { type: "dry"; why: "empty" | "aimless" | "stones" | "far" }
+  | { type: "dry"; why: "empty" | "aimless" | "eggs" | "far" }
   | { type: "brake" }
   | { type: "letGo"; at: Vec3 }
   | { type: "bellLoose"; at: Vec3 }
@@ -157,7 +207,7 @@ export type GameEvent =
   | { type: "finish" };
 
 export type PropKind = "hay" | "beam" | "shell" | "block" | "folk" | "shard" | "hen" | "crown";
-export type Bowler = "bell" | "wain" | "shot" | "cart" | "pot";
+export type Bowler = "bell" | "wain" | "shot" | "cart" | "pot" | "blast";
 
 /** A loose physical thing the view draws by id. */
 export interface Prop {
@@ -214,17 +264,38 @@ export interface Pan {
   doomed: boolean;
 }
 
-/** What a slung stone is meant for: something thrown, a cook, a piece of clutter, or just a spot. */
-export type SlingAim = { pan: number } | { cook: number } | { clutter: number } | { at: Vec3 };
+/** What a thrown egg is meant for: something in the air, a cook, a piece of clutter, a keg, or just a spot. */
+export type EggAim = { pan: number } | { cook: number } | { clutter: number } | { keg: number } | { at: Vec3 };
 
-/** A stone from the sling, on its way. */
-export interface Stone {
+/** An egg on its way. */
+export interface EggShot {
   id: number;
   from: Vec3;
   to: Vec3;
   t: number;
   total: number;
-  aim: SlingAim;
+  aim: EggAim;
+}
+
+export interface Keg {
+  def: KegDef;
+  at: Vec3;
+  /** Sitting there, fuse burning, or gone up. */
+  state: "set" | "lit" | "gone";
+  /** When a lit one goes. */
+  until: number;
+}
+
+export interface Wall {
+  def: WallDef;
+  state: "up" | "down";
+  body: RAPIER.RigidBody;
+}
+
+export interface Pickup {
+  def: PickupDef;
+  at: Vec3;
+  taken: boolean;
 }
 
 export interface Clutter {
@@ -251,8 +322,8 @@ export interface Input {
   brake?: number;
   /** Fire this step: at the named target, or with `true` at whatever is next in range. */
   shoot?: string | boolean;
-  /** Sling a stone this step. */
-  sling?: SlingAim;
+  /** Throw an egg this step. */
+  egg?: EggAim;
 }
 
 let ready: Promise<void> | null = null;
@@ -327,8 +398,8 @@ export class Game {
   airtime = 0;
   /** Rounds left in the rack. */
   ammo = START_AMMO;
-  /** Stones left in the sling bag. */
-  stones = START_STONES;
+  /** Eggs left to throw. */
+  eggs = START_EGGS;
   /** Pans that landed and townsfolk run into: none is a clean street. */
   knocks = 0;
 
@@ -336,13 +407,17 @@ export class Game {
   /** What the Fire button would hit: the next thing in range. */
   target: Target | null = null;
   readonly flights: Flight[] = [];
-  readonly tower: BellTower;
+  /** Null on a street with no bell tower. */
+  readonly tower: BellTower | null;
   readonly bell: Bell = { state: "hung", body: null, landed: false, quiet: 0 };
-  readonly wain: Wain;
+  readonly wain: Wain | null;
   readonly mob: Mobster[] = [];
   readonly pans: Pan[] = [];
-  readonly stoneFlights: Stone[] = [];
+  readonly eggFlights: EggShot[] = [];
   readonly clutter: Clutter[] = [];
+  readonly kegs: Keg[] = [];
+  readonly walls: Wall[] = [];
+  readonly pickups: Pickup[] = [];
   readonly props: Prop[] = [];
 
   private events: GameEvent[] = [];
@@ -355,19 +430,29 @@ export class Game {
   private tipTime = 0;
   private stalled = 0;
   private gunCooldown = 0;
-  private slingCooldown = 0;
+  private eggCooldown = 0;
   /** Until when the kitchen is too shocked to throw. */
   private gasp = 0;
   private airFrom = 0;
   private readonly regrouped = new Map<number, number>();
 
-  static async create(course: CourseDef = COURSE): Promise<Game> {
+  static async create(course: CourseDef = COURSE, carry?: Carry): Promise<Game> {
     await initPhysics();
-    return new Game(course);
+    return new Game(course, carry);
   }
 
-  constructor(course: CourseDef = COURSE) {
+  /** `carry` is what she came through the last gate with; without it she starts fresh at the top. */
+  constructor(course: CourseDef = COURSE, carry?: Carry) {
     this.course = course;
+    const startSpeed = carry ? clamp(carry.speed, START_SPEED, 9) : START_SPEED;
+    if (carry) {
+      this.shell = carry.shell;
+      this.stage = this.shell <= 33 ? 2 : this.shell <= 66 ? 1 : 0;
+      this.padding = carry.padding;
+      this.ammo = carry.ammo;
+      this.eggs = carry.eggs;
+      this.knocks = carry.knocks;
+    }
     this.world = new RAPIER.World({ x: 0, y: -G, z: 0 });
     this.world.timestep = STEP;
     this.layStreet();
@@ -376,7 +461,7 @@ export class Game {
     this.chassis = this.world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
         .setTranslation(0, heightAt(course, startD) + 0.8, -startD)
-        .setLinvel(0, -START_SPEED * slopeAt(course, startD), -START_SPEED)
+        .setLinvel(0, -startSpeed * slopeAt(course, startD), -startSpeed)
         .setAngularDamping(1.6)
         .setCcdEnabled(true)
         .setCanSleep(false)
@@ -406,6 +491,12 @@ export class Game {
 
     this.tower = this.raiseTower();
     this.wain = this.parkWain();
+    for (const def of course.kegs) {
+      this.kegs.push({ def, at: { x: def.x, y: heightAt(course, def.d) + def.up + (def.big ? 0.9 : 0.55), z: -def.d }, state: "set", until: 0 });
+    }
+    for (const def of course.pickups) {
+      this.pickups.push({ def, at: { x: def.x, y: heightAt(course, def.d) + 0.5, z: -def.d }, taken: false });
+    }
     for (const def of course.mob) {
       this.mob.push({ def, pos: { x: def.x, y: heightAt(course, def.d), z: -def.d }, state: "stand", until: 0, next: -1 });
     }
@@ -413,9 +504,12 @@ export class Game {
       this.clutter.push({ def, at: { x: def.x, y: heightAt(course, def.d) + def.up, z: -def.d }, done: false });
     }
     const windlass = course.windlass;
-    this.targets.push({ id: "windlass", kind: "windlass", at: { x: windlass.x, y: heightAt(course, windlass.d) + 1.1, z: -windlass.d }, lit: false, done: false, doomed: false });
-    const wain = this.wain.body.translation();
-    this.targets.push({ id: "wain", kind: "wain", at: { x: wain.x, y: wain.y - 0.3, z: wain.z - 1.5 }, lit: false, done: false, doomed: false });
+    if (windlass) this.targets.push({ id: "windlass", kind: "windlass", at: { x: windlass.x, y: heightAt(course, windlass.d) + 1.1, z: -windlass.d }, lit: false, done: false, doomed: false });
+    if (this.wain) {
+      const wain = this.wain.body.translation();
+      this.targets.push({ id: "wain", kind: "wain", at: { x: wain.x, y: wain.y - 0.3, z: wain.z - 1.5 }, lit: false, done: false, doomed: false });
+    }
+    this.raiseWalls();
     for (const rank of new Set(course.mob.map((def) => def.rank))) {
       this.targets.push({ id: `rank${rank}`, kind: "rank", at: { x: 0, y: 0, z: 0 }, lit: false, done: false, doomed: false });
     }
@@ -459,18 +553,24 @@ export class Game {
     return this.phase !== "run";
   }
 
-  /** Stars for a finished street: home, an unbroken shell, and not a pan landed on him. */
+  /** What she would take through the gate with her, as she stands. */
+  get carry(): Carry {
+    return { shell: this.shell, padding: this.padding, ammo: this.ammo, eggs: this.eggs, knocks: this.knocks, speed: -this.chassis.linvel().z };
+  }
+
+  /** Stars so far: through, an unbroken shell, and nothing landed on him. */
   get stars(): number {
-    if (this.phase !== "won") return 0;
+    if (this.phase !== "won" && this.phase !== "through") return 0;
     return 1 + (this.stage === 0 ? 1 : 0) + (this.knocks === 0 ? 1 : 0);
   }
 
   /** Seconds until the tower lies across the water: 0 once it does, Infinity while the rope holds. */
   get bridgeIn(): number {
     const tower = this.tower;
-    if (tower.state === "down") return 0;
+    const def = this.course.tower;
+    if (!tower || !def || tower.state === "down") return 0;
     if (tower.state === "held") return Infinity;
-    return fallTime(this.course.tower.height, this.course.tower.rest, tower.angle, tower.speed);
+    return fallTime(def.height, def.rest, tower.angle, tower.speed);
   }
 
   /** How many of the mob are on their feet. */
@@ -504,12 +604,12 @@ export class Game {
     if (this.over) this.after += STEP;
 
     this.gunCooldown = Math.max(0, this.gunCooldown - STEP);
-    this.slingCooldown = Math.max(0, this.slingCooldown - STEP);
+    this.eggCooldown = Math.max(0, this.eggCooldown - STEP);
     this.aim();
     if (!this.over && input.shoot) this.shoot(input.shoot);
-    if (!this.over && input.sling) this.sling(input.sling);
+    if (!this.over && input.egg) this.lob(input.egg);
     this.stepFlights();
-    this.stepStones();
+    this.stepEggs();
 
     this.steer(this.over ? 0 : input.lean);
     this.push(this.over ? 0 : clamp(input.brake ?? 0, 0, 1));
@@ -520,8 +620,10 @@ export class Game {
 
     this.stepBell();
     this.stepWain();
+    this.stepKegs();
     this.stepMob();
     this.stepPans();
+    this.stepPickups();
     this.stepProps();
     this.feelJolt();
     if (!this.over) this.judge();
@@ -650,8 +752,18 @@ export class Game {
       } else if (target.kind === "wain") {
         target.done = true;
         this.unchock();
+      } else if (target.kind === "wall") {
+        const wall = this.walls.find((one) => `wall${one.def.id}` === target.id);
+        if (wall) this.breach(wall);
       } else {
         this.scatter(Number(target.id.slice(4)), flight.to);
+      }
+      // A round is not particular: anything loose or explosive beside where it lands goes too.
+      for (const thing of this.clutter) {
+        if (!thing.done && Math.hypot(thing.at.x - flight.to.x, thing.at.z - flight.to.z) <= SHOT_SCATTER) this.smash(thing);
+      }
+      for (const keg of this.kegs) {
+        if (keg.state !== "gone" && Math.hypot(keg.at.x - flight.to.x, keg.at.z - flight.to.z) <= SHOT_SCATTER + (keg.def.big ? 2.5 : 0)) this.explode(keg);
       }
     }
   }
@@ -665,17 +777,18 @@ export class Game {
     }
   }
 
-  // ---------------------------------------------------------------- the sling
+  // ---------------------------------------------------------------- the eggs
 
   /**
-   * A stone at whatever was pointed at. It costs nothing to miss but the stone; it will knock a
-   * thrown pan out of the air, put a cook's head down for a moment, and set off anything loose.
+   * An egg at whatever was pointed at. It bursts where it lands: it will knock a thrown pan out
+   * of the air, put yolk in the eye of any cook beside it, and set off anything loose or
+   * explosive within its splash. It will not knock a cook down or shift a wall: that wants a round.
    */
-  private sling(aim: SlingAim): void {
-    if (this.slingCooldown > 0) return;
-    if (this.stones <= 0) {
-      this.slingCooldown = 0.3;
-      this.events.push({ type: "dry", why: "stones" });
+  private lob(aim: EggAim): void {
+    if (this.eggCooldown > 0) return;
+    if (this.eggs <= 0) {
+      this.eggCooldown = 0.3;
+      this.events.push({ type: "dry", why: "eggs" });
       return;
     }
     const cart = this.chassis.translation();
@@ -685,11 +798,11 @@ export class Game {
     if ("pan" in aim) {
       const pan = this.pans.find((one) => one.id === aim.pan && !one.doomed);
       if (!pan) return;
-      // A stone in time always gets there: it is laid off for where the thing will be.
+      // An egg in time always gets there: it is laid off for where the thing will be.
       const left = PAN_FLIGHT - pan.t - STEP;
       if (left < STEP * 2) return;
       const now = panAt(pan);
-      total = clamp(Math.hypot(now.x - from.x, now.y - from.y, now.z - from.z) / STONE_SPEED, 0.08, left);
+      total = clamp(Math.hypot(now.x - from.x, now.y - from.y, now.z - from.z) / EGG_SPEED, 0.08, left);
       to = panAt(pan, pan.t + total);
       pan.doomed = true;
     } else if ("cook" in aim) {
@@ -700,63 +813,76 @@ export class Game {
       const thing = this.clutter.find((one) => one.def.id === aim.clutter);
       if (!thing || thing.done) return;
       to = { ...thing.at };
+    } else if ("keg" in aim) {
+      const keg = this.kegs.find((one) => one.def.id === aim.keg);
+      if (!keg || keg.state === "gone") return;
+      to = { ...keg.at };
     } else {
       to = { ...aim.at };
     }
     let reach = Math.hypot(to.x - from.x, to.y - from.y, to.z - from.z);
-    if (reach > SLING_RANGE) {
+    if (reach > EGG_RANGE) {
       if (!("at" in aim)) {
-        this.slingCooldown = 0.3;
+        this.eggCooldown = 0.3;
         this.events.push({ type: "dry", why: "far" });
         return;
       }
-      // A stone at nothing in particular just falls short.
-      const k = SLING_RANGE / reach;
+      // An egg at nothing in particular just falls short.
+      const k = EGG_RANGE / reach;
       to = { x: from.x + (to.x - from.x) * k, y: heightAt(this.course, -(from.z + (to.z - from.z) * k)), z: from.z + (to.z - from.z) * k };
-      reach = SLING_RANGE;
+      reach = EGG_RANGE;
     }
-    if (total === 0) total = clamp(reach / STONE_SPEED, 0.1, 0.6);
-    this.stones -= 1;
-    this.slingCooldown = SLING_COOLDOWN;
-    this.stoneFlights.push({ id: this.nextId++, from, to, t: 0, total, aim });
-    this.events.push({ type: "sling", to: { ...to } });
+    if (total === 0) total = clamp(reach / EGG_SPEED, 0.1, 0.7);
+    this.eggs -= 1;
+    this.eggCooldown = EGG_COOLDOWN;
+    this.eggFlights.push({ id: this.nextId++, from, to, t: 0, total, aim });
+    this.events.push({ type: "lob", to: { ...to } });
   }
 
-  private stepStones(): void {
-    for (let index = this.stoneFlights.length - 1; index >= 0; index -= 1) {
-      const stone = this.stoneFlights[index]!;
-      stone.t += STEP;
-      if (stone.t < stone.total) continue;
-      this.stoneFlights.splice(index, 1);
-      const aim = stone.aim;
+  private stepEggs(): void {
+    for (let index = this.eggFlights.length - 1; index >= 0; index -= 1) {
+      const egg = this.eggFlights[index]!;
+      egg.t += STEP;
+      if (egg.t < egg.total) continue;
+      this.eggFlights.splice(index, 1);
+      const at = egg.to;
+      let hit: "pan" | "cook" | "clutter" | "keg" | "ground" = "ground";
+      let kind = 0;
+      const aim = egg.aim;
       if ("pan" in aim) {
-        const at = this.pans.findIndex((one) => one.id === aim.pan);
-        if (at >= 0) {
-          const pan = this.pans[at]!;
-          this.pans.splice(at, 1);
-          this.events.push({ type: "ping", at: { ...stone.to }, what: "pan", kind: pan.by });
-          continue;
-        }
-      } else if ("cook" in aim) {
-        const one = this.mob.find((cook) => cook.def.id === aim.cook);
-        if (one?.state === "stand") {
-          this.dive(one, DUCK);
-          this.events.push({ type: "ping", at: { ...stone.to }, what: "cook", kind: one.def.id });
-          continue;
-        }
-      } else if ("clutter" in aim) {
-        const thing = this.clutter.find((one) => one.def.id === aim.clutter);
-        if (thing && !thing.done) {
-          this.smash(thing);
-          continue;
+        const where = this.pans.findIndex((one) => one.id === aim.pan);
+        if (where >= 0) {
+          hit = "pan";
+          kind = this.pans[where]!.by;
+          this.pans.splice(where, 1);
         }
       }
-      this.events.push({ type: "ping", at: { ...stone.to }, what: "ground", kind: 0 });
+      // The splash: everyone and everything within it gets some.
+      for (const one of this.mob) {
+        if (one.state !== "stand" || Math.hypot(one.pos.x - at.x, one.pos.z - at.z) > EGG_SPLASH || Math.abs(one.pos.y + 1 - at.y) > 2.5) continue;
+        this.dive(one, DUCK);
+        if (hit === "ground") {
+          hit = "cook";
+          kind = one.def.id;
+        }
+      }
+      for (const thing of this.clutter) {
+        if (thing.done || Math.hypot(thing.at.x - at.x, thing.at.y - at.y, thing.at.z - at.z) > EGG_SPLASH) continue;
+        this.smash(thing);
+        if (hit === "ground") hit = "clutter";
+      }
+      for (const keg of this.kegs) {
+        if (keg.state === "gone" || Math.hypot(keg.at.x - at.x, keg.at.y - at.y, keg.at.z - at.z) > EGG_SPLASH) continue;
+        this.explode(keg);
+        hit = "keg";
+      }
+      this.events.push({ type: "splat", at: { ...at }, hit, kind });
     }
   }
 
   /** Something in the village goes: whoever is under it is flattened, whoever is near it dives. */
   private smash(thing: Clutter): void {
+    if (thing.done) return;
     thing.done = true;
     const at = thing.at;
     const kind = thing.def.kind;
@@ -782,10 +908,130 @@ export class Game {
     }
   }
 
+  // ---------------------------------------------------------------- powder
+
+  /** Light a keg's fuse: it goes after `fuse` seconds, unless something sets it off sooner. */
+  private light(keg: Keg, fuse: number): void {
+    if (keg.state !== "set") return;
+    keg.state = "lit";
+    keg.until = this.time + fuse;
+    this.events.push({ type: "fuse", id: keg.def.id, at: { ...keg.at } });
+  }
+
+  /**
+   * A keg goes up. Cooks beside it are thrown, cooks near it dive, anything loose near it is
+   * set off, its neighbours' fuses are lit, and a cart inside the blast is hurt by how close it is.
+   */
+  private explode(keg: Keg): void {
+    if (keg.state === "gone") return;
+    keg.state = "gone";
+    const at = keg.at;
+    const big = keg.def.big;
+    const size = big ? WAGON_BLAST : KEG_BLAST;
+    this.events.push({ type: "boom", id: keg.def.id, at: { ...at }, big });
+    for (let piece = 0; piece < (big ? 12 : 5); piece += 1) {
+      this.spawn("beam", { x: 0.07, y: 0.07, z: 0.5 }, 2, { x: at.x, y: at.y + 0.4, z: at.z }, { x: this.random() * 14 - 7, y: 5 + this.random() * 8, z: this.random() * 14 - 7 });
+    }
+    for (const one of this.mob) {
+      if (one.state === "out") continue;
+      const away = Math.hypot(one.pos.x - at.x, one.pos.z - at.z);
+      if (away <= size.bowl) this.bowl(one, "blast", { x: (one.pos.x - at.x) * 3, y: 8, z: (one.pos.z - at.z) * 3 });
+      else if (away <= size.fright) this.dive(one);
+    }
+    for (const thing of this.clutter) {
+      if (!thing.done && Math.hypot(thing.at.x - at.x, thing.at.z - at.z) <= size.bowl + 1) this.smash(thing);
+    }
+    for (const other of this.kegs) {
+      if (other.state === "set" && Math.hypot(other.at.x - at.x, other.at.z - at.z) <= size.chain) this.light(other, KEG_FUSE);
+    }
+    if (big) {
+      for (const wall of this.walls) {
+        if (wall.state === "up" && Math.abs(wall.def.d + at.z) <= WAGON_BREACH) this.breach(wall);
+      }
+    }
+    if (this.over) return;
+    const cart = this.chassis.translation();
+    const away = Math.hypot(cart.x - at.x, cart.z - at.z);
+    if (away >= size.hurt || Math.abs(cart.y - at.y) > 4) return;
+    const close = 1 - away / size.hurt;
+    // The shove is for show; what it costs him is counted here, once.
+    const mass = this.chassis.mass();
+    const push = (big ? 9 : 5) * close * mass;
+    this.chassis.applyImpulse({ x: ((cart.x - at.x) / Math.max(0.5, away)) * push, y: push * 0.5, z: ((cart.z - at.z) / Math.max(0.5, away)) * push }, true);
+    this.joltSkip = Math.max(this.joltSkip, 8);
+    this.prevVel = { ...this.chassis.linvel() };
+    this.knocks += 1;
+    this.damage(size.floor + size.damage * close, "blast");
+  }
+
+  private stepKegs(): void {
+    const cart = this.chassis.translation();
+    const rollers = this.rollers();
+    for (const keg of this.kegs) {
+      if (keg.state === "gone") continue;
+      if (keg.state === "lit") {
+        if (this.time >= keg.until) this.explode(keg);
+        continue;
+      }
+      if (!keg.def.trap) continue;
+      // The slow match: near enough to hear it is near enough.
+      if (!this.over && Math.hypot(cart.x - keg.at.x, cart.z - keg.at.z) <= KEG_TRIP && Math.abs(cart.y - keg.at.y) < 3) this.light(keg, TRIP_FUSE);
+      for (const roller of rollers) {
+        if (Math.hypot(roller.x - keg.at.x, -roller.d - keg.at.z) <= 1.8) this.explode(keg);
+      }
+    }
+  }
+
+  private raiseWalls(): void {
+    const half = this.course.width / 2;
+    for (const def of this.course.walls) {
+      const body = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, heightAt(this.course, def.d) + def.height / 2, -def.d));
+      this.world.createCollider(RAPIER.ColliderDesc.cuboid(half + 0.6, def.height / 2, 0.45).setFriction(0.6), body);
+      this.walls.push({ def, state: "up", body });
+      this.targets.push({ id: `wall${def.id}`, kind: "wall", at: { x: 0, y: heightAt(this.course, def.d) + def.height * 0.6, z: -def.d }, lit: false, done: false, doomed: false });
+    }
+  }
+
+  /** The barricade comes apart, and what was a wall is a great deal of firewood. */
+  private breach(wall: Wall): void {
+    if (wall.state !== "up") return;
+    wall.state = "down";
+    this.world.removeRigidBody(wall.body);
+    const y = heightAt(this.course, wall.def.d);
+    const half = this.course.width / 2;
+    for (let piece = 0; piece < 16; piece += 1) {
+      const x = -half + (piece + 0.5) * ((half * 2) / 16);
+      this.spawn(piece % 3 ? "beam" : "block", piece % 3 ? { x: 0.12, y: 0.12, z: 0.9 } : { x: 0.3, y: 0.26, z: 0.3 }, 5, { x, y: y + 0.6 + this.random() * 1.6, z: -wall.def.d }, {
+        x: this.random() * 8 - 4,
+        y: 5 + this.random() * 8,
+        z: -4 - this.random() * 10,
+      });
+    }
+    const target = this.targets.find((one) => one.id === `wall${wall.def.id}`);
+    if (target) target.done = true;
+    this.events.push({ type: "breach", id: wall.def.id, at: { x: 0, y: y + 1, z: -wall.def.d } });
+  }
+
+  // ---------------------------------------------------------------- what his people left him
+
+  private stepPickups(): void {
+    if (this.over) return;
+    const cart = this.chassis.translation();
+    for (const one of this.pickups) {
+      if (one.taken || Math.abs(cart.x - one.at.x) > PICKUP_REACH || Math.abs(cart.z - one.at.z) > PICKUP_REACH || Math.abs(cart.y - one.at.y) > 3) continue;
+      one.taken = true;
+      if (one.def.kind === "eggs") this.eggs = Math.min(MAX_EGGS, this.eggs + EGG_BASKET);
+      else this.ammo = Math.min(MAX_AMMO, this.ammo + SHOT_PILE);
+      this.events.push({ type: "pickup", id: one.def.id, kind: one.def.kind, at: { ...one.at } });
+    }
+  }
+
   // ---------------------------------------------------------------- the bell tower
 
-  private raiseTower(): BellTower {
+  private raiseTower(): BellTower | null {
     const def = this.course.tower;
+    const post = this.course.windlass;
+    if (!def || !post) return null;
     const wide = def.x1 - def.x0;
     const body = this.world.createRigidBody(
       RAPIER.RigidBodyDesc.kinematicPositionBased()
@@ -799,7 +1045,6 @@ export class Game {
       this.world.createCollider(RAPIER.ColliderDesc.cuboid(0.18, def.height / 2, 0.2).setTranslation(side * (wide / 2 - 0.18), def.height / 2, 0.2).setFriction(0.15), body);
     }
     // The capstan its rope is made fast to, on the edge of the quay.
-    const post = this.course.windlass;
     const quay = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
     this.world.createCollider(RAPIER.ColliderDesc.cuboid(0.4, 0.6, 0.4).setTranslation(post.x, heightAt(this.course, post.d) + 0.6, -post.d), quay);
     return { state: "held", angle: def.lean, speed: 0, body };
@@ -807,7 +1052,7 @@ export class Game {
 
   /** The rope is gone. The tower begins, very slowly, to go. */
   private letGo(at: Vec3): void {
-    if (this.tower.state !== "held") return;
+    if (this.tower?.state !== "held") return;
     this.tower.state = "falling";
     for (let piece = 0; piece < 6; piece += 1) {
       this.spawn("beam", { x: 0.1, y: 0.1, z: 0.7 }, 4, { x: at.x, y: at.y + 0.3, z: at.z }, { x: this.random() * 6 - 1, y: 4 + this.random() * 5, z: this.random() * 6 - 3 });
@@ -817,8 +1062,8 @@ export class Game {
 
   private stepTower(): void {
     const tower = this.tower;
-    if (tower.state !== "falling") return;
     const def = this.course.tower;
+    if (!tower || !def || tower.state !== "falling") return;
     tower.speed += topple(def.height, tower.angle) * STEP;
     tower.angle += tower.speed * STEP;
     if (this.bell.state === "hung" && tower.angle >= BELL_AWAY) this.looseBell();
@@ -848,6 +1093,7 @@ export class Game {
   private looseBell(): void {
     const def = this.course.tower;
     const tower = this.tower;
+    if (!def || !tower) return;
     const foot = tower.body.translation();
     const reach = def.height + BELL_RADIUS + 0.4;
     const up = Math.cos(tower.angle);
@@ -903,8 +1149,11 @@ export class Game {
 
   // ---------------------------------------------------------------- the wain
 
-  private parkWain(): Wain {
+  private parkWain(): Wain | null {
     const def = this.course.wain;
+    const well = this.course.well;
+    const sacks = this.course.sacks;
+    if (!def || !well || !sacks) return null;
     const slope = Math.atan(slopeAt(this.course, def.d));
     const body = this.world.createRigidBody(
       RAPIER.RigidBodyDesc.fixed()
@@ -925,11 +1174,9 @@ export class Game {
       body,
     );
     // The well at the bottom of its side of the street.
-    const well = this.course.well;
     const ground = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
     this.world.createCollider(RAPIER.ColliderDesc.cuboid(1.15, 0.8, 1.15).setTranslation(well.x, heightAt(this.course, well.d) + 0.6, -well.d).setRestitution(0), ground);
     // And the woolsacks at the bottom of the bell's side.
-    const sacks = this.course.sacks;
     this.world.createCollider(RAPIER.ColliderDesc.cuboid(1.2, 1, 1.1).setTranslation(sacks.x, heightAt(this.course, sacks.d) + 0.8, -sacks.d).setRestitution(0).setFriction(1), ground);
     return { state: "chocked", body };
   }
@@ -937,9 +1184,10 @@ export class Game {
   /** The chock is shot out and the wain is away down the hill. */
   private unchock(): void {
     const wain = this.wain;
-    if (wain.state !== "chocked") return;
+    const def = this.course.wain;
+    if (!wain || !def || wain.state !== "chocked") return;
     wain.state = "away";
-    const slope = slopeAt(this.course, this.course.wain.d);
+    const slope = slopeAt(this.course, def.d);
     const norm = Math.hypot(1, slope);
     wain.body.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
     wain.body.setLinvel({ x: 0, y: (-slope / norm) * WAIN_SHOVE, z: (-1 / norm) * WAIN_SHOVE }, true);
@@ -948,10 +1196,11 @@ export class Game {
 
   private stepWain(): void {
     const wain = this.wain;
-    if (wain.state !== "away") return;
+    const def = this.course.wain;
+    if (!wain || !def || wain.state !== "away") return;
     const p = wain.body.translation();
     const v = wain.body.linvel();
-    if (-p.z - this.course.wain.d > 6 && Math.hypot(v.y, v.z) < 0.6) {
+    if (-p.z - def.d > 6 && Math.hypot(v.y, v.z) < 0.6) {
       wain.state = "wrecked";
       wain.body.setBodyType(RAPIER.RigidBodyType.Fixed, true);
       for (let piece = 0; piece < 8; piece += 1) {
@@ -975,7 +1224,7 @@ export class Game {
       const v = this.bell.body.linvel();
       if (-v.z > 1.5) out.push({ x: p.x, d: -p.z, by: "bell", fright: BELL_FRIGHT, v });
     }
-    if (this.wain.state === "away") {
+    if (this.wain?.state === "away") {
       const p = this.wain.body.translation();
       const v = this.wain.body.linvel();
       if (-v.z > 1.5) out.push({ x: p.x, d: -p.z, by: "wain", fright: WAIN_FRIGHT, v });
@@ -1178,8 +1427,9 @@ export class Game {
     this.stalled = this.speed < 1.2 ? this.stalled + STEP : 0;
     if (this.stalled > CAUGHT_AFTER || this.time > 90) return this.shatter("caught");
     if (d >= this.course.finish) {
-      this.phase = "won";
-      this.events.push({ type: "finish" });
+      // The roost, or the gate to the next street.
+      this.phase = this.course.roost === null ? "through" : "won";
+      this.events.push({ type: this.phase === "won" ? "finish" : "through" });
     }
   }
 

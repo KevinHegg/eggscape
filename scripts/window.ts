@@ -18,8 +18,8 @@ for (const wait of [0, 0.5, 1, 1.5, 2, 2.5, 3]) {
     let bank = NaN;
     while (!game.over && game.time < 100) {
       game.step(pilot(game));
-      if (Number.isNaN(slam) && game.tower.state === "down") slam = game.time;
-      if (Number.isNaN(bank) && game.distance >= game.course.tower.d) bank = game.time;
+      if (Number.isNaN(slam) && game.tower?.state === "down") slam = game.time;
+      if (Number.isNaN(bank) && game.distance >= game.course.tower!.d) bank = game.time;
     }
     const gap = bank - slam;
     const how = game.phase === "won" ? `${"★".repeat(game.stars)} shell ${game.shell.toFixed(0)} hits ${game.knocks}` : `${game.cause} @${game.distance.toFixed(0)}`;

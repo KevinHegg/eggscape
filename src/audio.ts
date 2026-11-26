@@ -237,6 +237,35 @@ export class Sound {
     this.tone("triangle", 320, 520, 0.06, 0.12);
   }
 
+  /** An egg arriving: a crack, and something wet. */
+  egg(): void {
+    this.hiss("highpass", 3600, 1800, 0.035, 0.45);
+    this.hiss("lowpass", 1500, 260, 0.2, 0.55, 0.02);
+    this.tone("sine", 260, 90, 0.14, 0.3, 0.02);
+  }
+
+  /** A fuse catching: a spit and a fizz. */
+  fuse(): void {
+    this.hiss("highpass", 5200, 3000, 0.4, 0.22);
+    this.tone("square", 1800, 2400, 0.03, 0.08);
+  }
+
+  /** Powder going up. The wagon is a good deal more of it. */
+  boom(big: boolean): void {
+    this.tone("sine", big ? 110 : 170, 26, big ? 1.2 : 0.45, 1);
+    this.tone("triangle", big ? 70 : 90, 30, big ? 0.9 : 0.3, 0.6, 0.02);
+    this.hiss("lowpass", big ? 2200 : 3000, 80, big ? 1.4 : 0.5, big ? 1 : 0.7);
+    if (big) this.rubble(10, 0.2);
+  }
+
+  /** Under the gate and out the other side. */
+  gate(): void {
+    for (const [note, at] of [[392, 0], [523, 0.12], [659, 0.24]] as const) {
+      this.tone("triangle", note, note, 0.2, 0.3, at);
+      this.tone("square", note * 2, note * 2, 0.12, 0.08, at);
+    }
+  }
+
   /** Hens with opinions. */
   cluck(): void {
     for (const [at, pitch] of [[0, 480], [0.09, 520], [0.2, 460], [0.3, 560], [0.44, 500]] as const) this.tone("sawtooth", pitch, pitch * 0.7, 0.07, 0.16, at);

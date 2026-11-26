@@ -1,4 +1,5 @@
-import { Game, STEP, type Input } from "./game";
+import { STREETS, type CourseDef } from "./course";
+import { Game, STEP, type Carry, type Input } from "./game";
 
 /** Something that plays a street: given the game, what to do this step. */
 export type Pilot = (game: Game) => Input;
@@ -38,8 +39,8 @@ export interface Plan {
   brake?: "judge" | number;
   /** Keep the brake hard on beyond the canal too: a driver with no nerve. */
   dawdle?: boolean;
-  /** Sling a stone at everything the cooks throw, the moment it is in the air. */
-  sling?: boolean;
+  /** Throw an egg at everything the cooks throw, the moment it is in the air. */
+  eggs?: boolean;
   /** Seconds of safety "judge" leaves between the tower landing and the cart reaching it. */
   margin?: number;
 }
@@ -52,11 +53,12 @@ export function driver(plan: Plan = {}): Pilot {
   let litAt = -1;
   return (game) => {
     const course = game.course;
-    const cart = game.position;
     const d = game.distance;
-    const lip = course.tower.d;
-    const far = lip + Math.sin(course.tower.rest) * course.tower.height;
-    const lane = (course.tower.x0 + course.tower.x1) / 2;
+    const tower = course.tower;
+    if (!tower || !course.sacks || !course.well || !game.tower) return { lean: leanToward(game, 0) };
+    const lip = tower.d;
+    const far = lip + Math.sin(tower.rest) * tower.height;
+    const lane = (tower.x0 + tower.x1) / 2;
 
     // Across the fallen tower, then down the street the bell has cleared, round the bell itself.
     // Between the woolsacks on one side and the well on the other there is a way through.
@@ -88,14 +90,68 @@ export function driver(plan: Plan = {}): Pilot {
     }
     const input: Input = { lean: leanToward(game, goal), brake };
     if (shoot) input.shoot = shoot;
-    const thrown = plan.sling ? game.pans.find((pan) => !pan.doomed) : undefined;
-    if (thrown) input.sling = { pan: thrown.id };
+    const thrown = plan.eggs ? game.pans.find((pan) => !pan.doomed) : undefined;
+    if (thrown) input.egg = { pan: thrown.id };
     return input;
   };
 }
 
 /** The ordinary driver: fires the moment the winch lights, sets the wain off, brakes by eye. */
 export const steady: Pilot = driver({ wain: true });
+
+export interface Blasting {
+  /**
+   * "wagon" throws an egg straight at the powder wagon once it is in reach. "train" sets the
+   * first keg on the kerb going as soon as it can be reached, and lets the fire run down to it.
+   */
+  how?: "wagon" | "train" | "none";
+  /** Hold her back until the barricade is down. Without it she rolls on regardless. */
+  brake?: boolean;
+  /** Burst the traps in the road from a safe distance, rather than steering round them. */
+  traps?: boolean;
+  /** Throw an egg at everything the cooks throw. */
+  eggs?: boolean;
+  lane?: number;
+}
+
+/** A driver for Powder Row, reading only what a player can see. */
+export function sapper(plan: Blasting = {}): Pilot {
+  const asked = new Map<number, number>();
+  return (game) => {
+    const cart = game.position;
+    const d = game.distance;
+    const how = plan.how ?? "wagon";
+    const wall = game.walls.find((one) => one.state === "up");
+    const input: Input = { lean: leanToward(game, plan.lane ?? 1.4) };
+    // Hold off the barricade until it has gone, and off the wagon while it is still to go.
+    if ((plan.brake ?? true) && wall && wall.def.d - d < 34) input.brake = 1;
+    const reach = (at: { x: number; y: number; z: number }): number => Math.hypot(at.x - cart.x, at.y - cart.y, at.z - cart.z);
+    const want = (id: number): boolean => {
+      if (game.time - (asked.get(id) ?? -9) < 1) return false;
+      asked.set(id, game.time);
+      return true;
+    };
+    if (plan.traps ?? true) {
+      const trap = game.kegs.find((keg) => keg.def.trap && keg.state === "set" && keg.def.d > d + 7 && reach(keg.at) < 26);
+      if (trap && want(trap.def.id)) input.egg = { keg: trap.def.id };
+    }
+    if (!input.egg && how !== "none") {
+      const first = how === "wagon" ? game.kegs.find((keg) => keg.def.big) : game.kegs.find((keg) => !keg.def.trap && !keg.def.big);
+      if (first && first.state === "set" && reach(first.at) < 28 && want(first.def.id)) input.egg = { keg: first.def.id };
+    }
+    if (!input.egg && plan.eggs) {
+      const thrown = game.pans.find((pan) => !pan.doomed);
+      if (thrown) input.egg = { pan: thrown.id };
+    }
+    return input;
+  };
+}
+
+/** A fresh, sensible driver for whichever street this is. */
+export function pilotFor(course: CourseDef): Pilot {
+  return course.tower ? driver({ wain: true, eggs: true }) : sapper({ eggs: true });
+}
+
 
 export interface Outcome {
   phase: Game["phase"];
@@ -104,14 +160,14 @@ export interface Outcome {
   shell: number;
   hay: number;
   knocks: number;
-  stones: number;
+  eggs: number;
   distance: number;
   time: number;
 }
 
 /** Play one street to its end and say how it went. */
-export async function play(pilot: Pilot, limit = 100): Promise<Outcome> {
-  const game = await Game.create();
+export async function play(pilot: Pilot, limit = 100, course: CourseDef = STREETS[0]!, carry?: Carry): Promise<Outcome> {
+  const game = await Game.create(course, carry);
   while (!game.over && game.time < limit) game.step(pilot(game));
   const outcome: Outcome = {
     phase: game.phase,
@@ -120,7 +176,7 @@ export async function play(pilot: Pilot, limit = 100): Promise<Outcome> {
     shell: Math.round(game.shell),
     hay: game.hay,
     knocks: game.knocks,
-    stones: game.stones,
+    eggs: game.eggs,
     distance: Math.round(game.distance),
     time: Math.round(game.time * 10) / 10,
   };
