@@ -26,9 +26,11 @@ cart.
 
 - **Steer:** put a finger down anywhere and drag sideways. The cart goes that way and keeps
   going until you lift the finger or bring it back (or **←/→**, **A/D**).
-- **Brake:** pull the same finger down (or **↓**, **S**). She slows to a trot, never to a stand.
+- **Brake:** pull the same finger down (or **↓**, **S**) and she slows to a trot, never to a
+  stand. The brake stays on, even with the finger lifted, until you push up (or **↑**, **W**,
+  or tap the Brake badge). There is no going faster than letting her run.
 - **Fire:** everything the gun could hit wears a ring. When a ring turns gold it is in range:
-  tap it, or press **Fire** (or **Space**) for the next one. Three rounds to start with.
+  tap it, or press **Fire** (or **Space**, **F**) for the next one. Three rounds to start with.
 - **Eggs:** tap anything else and one of the men throws an egg at it: an egg beater in mid
   air, a cook, a flower basket, a barrel, a hen coop, a powder keg, the Queen's crown. It
   bursts over whatever is near, and leaves the yolk on the cobbles. A dozen to start with.

@@ -39,7 +39,9 @@ it back or change it in passing; it is kept as it was on purpose.
   cook he runs into). Hay takes every knock before the shell does, and the bales visibly go.
 - Three verbs, two thumbs. One finger drags like a stick: sideways and the cart goes that way
   and keeps going until the finger lifts or comes back (`leanAt`); pulling down puts the
-  brake on. A tap on a gold ring or the one Fire button shoots the gun; a tap or a second finger
+  brake on, and it stays on, finger or no finger, until a push up (or a tap on the Brake
+  badge) lets it off. The brake is the only speed control: it is for slowing things down when
+  the action is hot, and there is nothing faster than letting her run. A tap on a gold ring or the one Fire button shoots the gun; a tap or a second finger
   anywhere else throws an egg at what is under it (`View.pickAt`).
 - The brake slows her and never stops her (`BRAKE_FLOOR`). There is no accelerator.
 - One cart, three rounds to start with, no build screen. The gun reaches only what is lit (`GUN_RANGE`);

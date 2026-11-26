@@ -420,25 +420,41 @@ body {
 
 /* Shown only while the brake is on. */
 #brake {
+  flex: none;
   margin-bottom: 30px;
-  padding: 6px 14px;
+  padding: 6px 10px;
   border: 3px solid var(--ink);
   border-radius: 8px;
   background: var(--vermilion);
   color: #fff6e6;
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 700;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
   text-transform: uppercase;
   box-shadow: 0 3px 0 var(--ink);
   opacity: 0;
   transform: translateY(8px);
   transition: opacity 0.1s, transform 0.1s;
+  touch-action: none;
 }
 
+/* On, it can be tapped off as well as pushed off. */
 #brake.on {
   opacity: 1;
   transform: none;
+  pointer-events: auto;
+}
+
+#brake b {
+  display: inline-block;
+  animation: nudge 0.9s ease-in-out infinite;
+}
+
+@keyframes nudge {
+  50% {
+    transform: translateY(-4px);
+  }
 }
 
 /* The machines work by themselves; these only say what state each is in. */

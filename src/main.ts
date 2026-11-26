@@ -60,8 +60,17 @@ interface Drag {
   y: number;
   since: number;
   moved: boolean;
+  /** Where the finger was across the street when it was last at the top (or bottom) of its travel. */
+  xTurn: number;
 }
 let drag: Drag | null = null;
+/**
+ * The brake is on. It is a latch, not a hold: a pull down puts it on and it stays on, finger
+ * or no finger, until a push up (or a tap on the badge) lets it off again.
+ */
+let slow = false;
+/** Pixels of pull, or of push, that work the brake. */
+const BRAKE_PULL = 36;
 const keys = new Set<string>();
 /** A shot was asked for and the sim has not yet heard: at a named target, or at whatever is next. */
 let trigger: string | true | null = null;
@@ -111,6 +120,7 @@ function enter(run: boolean, index: number, carry?: Carry): void {
   accumulator = 0;
   trigger = null;
   lobbed = null;
+  setSlow(false);
   lastBoom = { big: false, time: -1 };
   freeze = 0;
   flying = false;
@@ -135,7 +145,7 @@ function drawHud(current: Game): void {
   const along = ((street + current.progress) / STREETS.length) * 100;
   $("track-fill").style.width = `${along}%`;
   $("track-egg").style.left = `${along}%`;
-  $("brake").classList.toggle("on", current.braking > 0);
+  $("brake").classList.toggle("on", slow && current.phase === "run");
   // The gun: what is in the rack, and whether it has anything to shoot at.
   if (current.ammo !== rounds) {
     rounds = current.ammo;
@@ -250,7 +260,7 @@ function narrate(event: GameEvent, current: Game): void {
       break;
     case "letGo":
       sound.groan();
-      hint("brake", "It's going! Pull down to brake: let it land first");
+      hint("brake", "It's going! Pull down to slow her: let it land first");
       break;
     case "bellLoose":
       sound.toll(0.5);
@@ -463,7 +473,8 @@ const SLACK = 7;
 
 /**
  * Drag sideways and the cart goes that way, and keeps going until the finger lifts or comes
- * back: a little drag is a drift, a long one a swerve. Pull down and the brake comes on. Arrow
+ * back: a little drag is a drift, a long one a swerve. Pull down and the brake comes on, and
+ * stays on until a push up; there is nothing faster than letting her run. Arrow
  * keys do the same from a keyboard.
  */
 function steer(current: Game): { lean: number; brake: number } {
@@ -472,12 +483,17 @@ function steer(current: Game): { lean: number; brake: number } {
   if (drag) {
     const across = drag.x - drag.x0;
     rate = (Math.sign(across) * Math.max(0, Math.abs(across) - SLACK)) / (fullLean() - SLACK);
-    brake = Math.max(0, Math.min(1, (drag.y - drag.y0 - 26) / 60));
   }
+  if (slow) brake = 1;
   if (keys.has("ArrowLeft") || keys.has("a")) rate -= 1;
   if (keys.has("ArrowRight") || keys.has("d")) rate += 1;
-  if (keys.has("ArrowDown") || keys.has("s")) brake = 1;
   return { lean: leanAt(current, Math.max(-1, Math.min(1, rate))), brake };
+}
+
+function setSlow(on: boolean): void {
+  if (slow === on) return;
+  slow = on;
+  if (on && running) hint("slow", "Brake's on. Push up to let her run");
 }
 
 /** A touch on the street: a round at the gold ring under it, or an egg at whatever else is there. */
@@ -506,7 +522,7 @@ stageHost.addEventListener("pointerdown", (event) => {
     tap(event.clientX, event.clientY);
     return;
   }
-  drag = { id: event.pointerId, x0: event.clientX, y0: event.clientY, x: event.clientX, y: event.clientY, since: performance.now(), moved: false };
+  drag = { id: event.pointerId, x0: event.clientX, y0: event.clientY, x: event.clientX, y: event.clientY, since: performance.now(), moved: false, xTurn: event.clientX };
 });
 window.addEventListener("pointermove", (event) => {
   if (!drag || event.pointerId !== drag.id) return;
@@ -515,8 +531,20 @@ window.addEventListener("pointermove", (event) => {
   // The stick's centre trails a finger that has gone past full lean, so turning back bites at once.
   const full = fullLean();
   drag.x0 = Math.max(drag.x - full, Math.min(drag.x + full, drag.x0));
-  // The brake is measured from the highest the finger has been, so it can be let off again.
-  drag.y0 = Math.min(drag.y0, drag.y);
+  // The brake works like a lever with two stops. Off, it is measured from the highest the finger
+  // has been, and a pull down from there puts it on; on, from the lowest, and a push up lets it
+  // off. A thumb sweeping across the street rises and falls a little, and that must not work it.
+  const turned = slow ? drag.y > drag.y0 : drag.y < drag.y0;
+  if (turned) {
+    drag.y0 = drag.y;
+    drag.xTurn = drag.x;
+  }
+  const travel = Math.abs(drag.y - drag.y0);
+  if (travel > BRAKE_PULL && Math.abs(drag.x - drag.xTurn) < travel * 1.5) {
+    setSlow(!slow);
+    drag.y0 = drag.y;
+    drag.xTurn = drag.x;
+  }
   if (!drag.moved && Math.hypot(drag.x - drag.x0, drag.y - drag.y0) > 12) {
     drag.moved = true;
     if (!steered) {
@@ -534,6 +562,10 @@ for (const type of ["pointerup", "pointercancel"] as const) {
   });
 }
 stageHost.addEventListener("contextmenu", (event) => event.preventDefault());
+$("brake").addEventListener("pointerdown", (event) => {
+  event.preventDefault();
+  setSlow(false);
+});
 $("fire").addEventListener("pointerdown", (event) => {
   event.preventDefault();
   if (running) trigger = true;
@@ -543,10 +575,13 @@ window.addEventListener("keydown", (event) => {
   if (event.repeat) return;
   const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
   keys.add(key);
-  if (running && (key === " " || key === "f" || key === "ArrowUp" || key === "w")) {
+  if (running && (key === " " || key === "f")) {
     event.preventDefault();
     trigger = true;
   }
+  // Down puts the brake on and up lets it off, as a finger would.
+  if (running && (key === "ArrowDown" || key === "s")) setSlow(true);
+  if (running && (key === "ArrowUp" || key === "w")) setSlow(false);
   if (key === "m") toggleSound();
   if (key === "r" && (running || resultShown) && !handing) void start(street, entry);
 });
@@ -654,13 +689,13 @@ function coach(current: Game): void {
     if (!wagon) {
       // No powder against this one: the stone, or a round.
       if (gap < 30 && gap > 8 && current.stone?.state === "hung") hint("wall", "The barricade! Tap its gold ring");
-    } else if (gap < 34 && gap > 12 && lit) hint("wait", "It's lit! Pull down to brake and let it go up");
+    } else if (gap < 34 && gap > 12 && lit) hint("wait", "It's lit! Pull down to slow her and let it go up");
     else if (gap < 60 && gap > 30 && !lit) hint("train", "One egg on a kerb keg sets the whole row off");
     else if (gap < 28 && gap > 10 && !lit) hint("wagon", "The barricade! Egg the powder wagon, and brake");
   }
   // The leap: said in good time, on the last of the hill.
   const stump = current.course.pieces.find((piece) => piece.x0 !== undefined);
-  if (stump && current.distance > stump.d0 - 46 && current.distance < stump.d0 - 12 && !wall) hint("leap", "Keep right for the bridge, and off the brake!");
+  if (stump && current.distance > stump.d0 - 46 && current.distance < stump.d0 - 12 && !wall) hint("leap", slow ? "Brake off for the bridge: push up! And keep right" : "Keep right for the bridge, and off the brake!");
   if (current.ammo === 0) return;
   const lit = current.target;
   if (!lit) return;
