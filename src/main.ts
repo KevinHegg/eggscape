@@ -144,6 +144,16 @@ function drawHud(current: Game): void {
   const along = ((street + current.progress) / STREETS.length) * 100;
   $("track-fill").style.width = `${along}%`;
   $("track-egg").style.left = `${along}%`;
+  // The rolling pin, while it is behind her: how far behind.
+  const pin = current.pin;
+  const gap = pin ? current.distance - pin.d : 0;
+  const chased = pin !== null && (pin.state === "falling" || pin.state === "rolling") && gap > 0 && current.phase === "run";
+  $("chase").classList.toggle("gone", !chased);
+  if (chased) {
+    $("chase").classList.toggle("near", gap < 9);
+    $("chase-pin").style.left = `${Math.max(0, Math.min(100, 100 - (gap / 26) * 100))}%`;
+    $("chase-gap").textContent = `${Math.round(gap)} m`;
+  }
   $("brake").classList.toggle("on", slow);
   $("brake").setAttribute("aria-pressed", String(slow));
   // The gun: what is in the rack, and whether it has anything to shoot at.
@@ -315,6 +325,22 @@ function narrate(event: GameEvent, current: Game): void {
         hint("knock", "The see-saw is spent. There is still the gate: a round at its ring");
       }
       break;
+    case "pinLoose":
+      sound.twang();
+      sound.groan();
+      toast("Her rolling pin!", "bad");
+      break;
+    case "pinDown":
+      sound.bang(true);
+      sound.thud(2);
+      freeze = Math.max(freeze, 0.07);
+      hint("pin", "It has the whole street, and it does not stop. Keep ahead of it, or get out of its road");
+      break;
+    case "pinPast":
+      sound.whoosh();
+      toast("There it goes!");
+      hint("after", "Brake off, and follow it down. It is flattening the hill for her");
+      break;
     case "letGo":
       sound.groan();
       hint("brake", "It's going! Brake, and let it land first");
@@ -336,6 +362,7 @@ function narrate(event: GameEvent, current: Game): void {
       if (event.by === "cart") toast("Oof!", "bad");
       else if (event.by === "ram") toast("Skittles!");
       else if (event.by === "flood") toast("Washed away!");
+      else if (event.by === "pin") toast("Rolled out flat!");
       break;
     case "bash":
       sound.clang();
@@ -439,6 +466,20 @@ function verdict(current: Game): { title: string; line: string } {
       if (held && seesaw === "wasted") return { title, line: "The cauldron came down with nobody on the plank. After that there is only the gate: a round at its gold ring." };
       if (held) return { title, line: "The kitchen wall, and the gate shut. Be on the plank when the cauldron lands and she goes over it. Or put a round into the gate." };
       if (current.cause === "mob") return { title: "Beaten", line: "The shield wall behind the gate had him. Over the wall misses them altogether. So does sending the keg over first." };
+    }
+    if (course.pin) {
+      // The hill with the rolling pin on it: out of its road, or in front of it all the way down.
+      const half = course.width / 2;
+      const market = course.square;
+      const leaving = market !== null && current.distance > market.d0 && current.distance < market.d1 + 6 && current.position.x * Math.sign(market.x) > half - 2.5;
+      if (current.cause === "rolled") {
+        if (held) return { title: "Pancake", line: "The barricade stopped her, and nothing stops the pin. A round at its gold ring, before she gets there." };
+        if (leaving) return { title: "Pancake", line: "She came out of the bottom of the square as it came by. Turn in, brake, and stay in until it has gone past." };
+        if (slow) return { title: "Pancake", line: "The Queen's rolling pin does not brake. On this hill the brake is for the market square, and nowhere else." };
+        return { title: "Pancake", line: "The Queen's rolling pin has the whole street. Keep ahead of it all the way down, or turn in to the market square and let it by." };
+      }
+      if (held) return { title: current.cause === "caught" ? "Omelette" : "Scrambled", line: "The Queen's barricade. Her rolling pin would have gone through it for him. So would a round at its gold ring." };
+      if (current.cause === "mob") return { title: "Beaten", line: "The kitchen had him. A round flattens a rank. So does her rolling pin, if he lets it go first." };
     }
     if (course.mill && stump) {
       // The hill with the mill on it: a stone, a barricade, and a bridge with most of it missing.
@@ -683,6 +724,7 @@ const OPENING: Record<string, string> = {
   "Powder Row": "The Queen's powder. Red rings are traps: egg them from well back.",
   "Pudding Lane": "Kegs all down the lane, and a cistern over it. Fire, or water?",
   "Cauldron Gate": "A wall, a see-saw, and the Queen's cauldron on a rope over it.",
+  "Rolling Pin Hill": "That is the Queen's rolling pin, slung over the street. It is for him.",
   "Miller's Leap": "The miller's stone hangs over the road. Shoot the hoist.",
 };
 const opening = (index: number): string => OPENING[STREETS[index]?.name ?? ""] ?? "";
@@ -761,6 +803,18 @@ function coach(current: Game): void {
       else if (gap < 16 && gap > 4) hint("cue", slow ? "Cut the rope as she crosses the gold bar" : "Brake! Then cut the rope as she crosses the gold bar");
     } else if (current.seesaw.pot === "down" && gate && current.grounded && !current.kegs.some((keg) => keg.state === "flying") && gate.def.d - current.distance > 4 && gate.def.d - current.distance < 24) hint("gate", "The gate's gold ring: a round opens it");
   }
+  // The rolling pin: where to get out of its road, and what the brake is for on this hill.
+  const pin = current.pin;
+  const market = current.course.square;
+  const chased = pin !== null && pin.state === "rolling" && pin.d < current.distance;
+  if (pin && market && chased) {
+    const out = current.position.x * Math.sign(market.x) > current.course.width / 2 + 0.9;
+    const behind = current.distance - pin.d;
+    if (current.distance > market.d0 - 26 && current.distance < market.d0 - 4) hint("market", `The market square, on the ${market.x > 0 ? "right" : "left"}! Turn in, and let it go by`);
+    else if (out && !slow && current.distance < market.d1 - market.taper) hint("sit", "Brake! Wait here till it has gone by");
+    else if (!out && slow && behind < 16) hint("pinBrake", "Brake off! It's right behind her");
+    else if (!out && current.distance > market.d1 + 4 && current.distance < market.d1 + 30) hint("ahead", "No brake now. The powder it bursts behind her will throw her on");
+  }
   // The powder: said once the train is in sight, and again when the barricade is close.
   const wall = current.walls.find((one) => one.state === "up");
   if (wall) {
@@ -769,7 +823,7 @@ function coach(current: Game): void {
     const wagon = current.kegs.some((keg) => keg.def.big && keg.state !== "gone");
     if (!wagon) {
       // No powder against this one: the stone, or a round.
-      if (gap < 30 && gap > 8 && current.stone?.state === "hung") hint("wall", "The barricade! Tap its gold ring");
+      if (gap < 30 && gap > 8 && (current.stone?.state === "hung" || chased)) hint("wall", "The barricade! Tap its gold ring");
     } else if (gap < 34 && gap > 12 && lit) hint("wait", "It's lit! Brake, and let it go up");
     else if (gap < 60 && gap > 30 && !lit) hint("train", "One egg on a kerb keg sets the whole row off");
     else if (gap < 28 && gap > 10 && !lit) hint("wagon", "The barricade! Egg the powder wagon, and brake");

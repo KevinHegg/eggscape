@@ -1,6 +1,6 @@
 import * as pc from "playcanvas";
 import { chasms, courseEnd, heightAt, slopeAt, spanOf, type CourseDef } from "../sim/course";
-import { EGG_RANGE, KEG_TRIP, MEN, RAM_SPEED, STONE_RADIUS, panAt, type EggAim, type Game, type GameEvent, type Prop, type Vec3 } from "../sim/game";
+import { EGG_RANGE, KEG_TRIP, MEN, PIN_RADIUS, RAM_SPEED, STONE_RADIUS, panAt, type EggAim, type Game, type GameEvent, type Prop, type Vec3 } from "../sim/game";
 
 /** What a touch on the street means: a round from the gun at a ringed target, or an egg at anything else. */
 export type Pick = { shoot: string } | { egg: EggAim };
@@ -151,6 +151,8 @@ export class View {
   /** The see-saw: its plank, what it turns on, the crane's rope, the cauldron, and the marks that say when and where. */
   private saw: { plank: pc.Entity; trestle: pc.Entity; stub: pc.Entity; rope: pc.Entity; pot: pc.Entity; ring: pc.Entity; mark: pc.Entity; arrows: pc.Entity[] } | null = null;
   /** Seconds of fire still coming out from under her after a charge has thrown her. */
+  private pin: { root: pc.Entity; roll: pc.Entity; ropes: pc.Entity[] } | null = null;
+  private pinLift = 0;
   private rush = 0;
   private readonly walls = new Map<number, pc.Entity>();
   private readonly pickups = new Map<number, pc.Entity>();
@@ -431,6 +433,8 @@ export class View {
     this.stoneRoll = 0;
     this.cistern = null;
     this.saw = null;
+    this.pin = null;
+    this.pinLift = 0;
     this.puddled = 0;
     this.rush = 0;
     this.chock = null;
@@ -470,6 +474,8 @@ export class View {
     this.buildMill(game);
     this.buildCistern(game);
     this.buildSeesaw(game);
+    this.buildPin(game);
+    this.buildMarket(game.course);
     this.buildStraw(game.course);
     this.buildMob(game);
     this.buildPowder(game);
@@ -496,8 +502,19 @@ export class View {
         continue;
       }
       this.shape("box", this.scene, [0, mid.y - normal.y * 0.3, mid.z - normal.z * 0.3], [course.width + 1.2, 0.6, length], m.road, tilt, true);
+      const square = course.square;
+      const open = square && piece.d0 >= square.d0 - 0.01 && piece.d1 <= square.d1 + 0.01 ? Math.sign(square.x) : 0;
+      if (square && open) {
+        // The market square: the street goes on sideways, and the kerb is only a line of flags in it.
+        const wide = Math.abs(square.x) - half;
+        this.shape("box", this.scene, [open * (half + 0.6 + wide / 2), mid.y - normal.y * 0.3, mid.z - normal.z * 0.3], [wide + 0.6, 0.6, length], m.road, tilt, true);
+        this.shape("box", this.scene, [open * (half + 0.3), mid.y + normal.y * 0.012, mid.z + normal.z * 0.012], [0.6, 0.03, length], m.kerb, tilt, true);
+        for (let d = Math.ceil(piece.d0 / 6) * 6 + 3; d < piece.d1; d += 6) {
+          this.shape("box", this.scene, [open * (half + 0.6 + wide / 2), heightAt(course, d) + 0.012, -d], [wide, 0.03, 0.5], m.roadDark, tilt, true);
+        }
+      }
       for (const side of [-1, 1]) {
-        this.shape("box", this.scene, [side * (half + 0.3), mid.y + normal.y * 0.3, mid.z + normal.z * 0.3], [0.6, 0.9, length], m.kerb, tilt, true);
+        if (side !== open) this.shape("box", this.scene, [side * (half + 0.3), mid.y + normal.y * 0.3, mid.z + normal.z * 0.3], [0.6, 0.9, length], m.kerb, tilt, true);
         this.shape("box", this.scene, [side * (half + 45.6), mid.y - normal.y * 0.5, mid.z - normal.z * 0.5], [90, 0.6, length + 0.4], m.grass, tilt, true);
       }
       // Cobble bands, so speed can be seen.
@@ -618,13 +635,14 @@ export class View {
     if (course.cistern) gaps.push({ d0: course.cistern.d - 5.5, d1: course.cistern.d + 3.4 });
     if (course.roost === null) gaps.push({ d0: course.finish - 2.2, d1: course.finish + 2.2 });
     const yard = course.roost === null ? courseEnd(course) - 2 : course.finish - 8;
+    const square = course.square;
     for (const side of [-1, 1]) {
       let d = -8;
       let index = side < 0 ? 0 : 5;
       while (d < yard) {
         const unit = this.chance();
-        const long = 6.4 + unit * 2.4;
-        const deep = 5 + ((index * 7) % 3) * 0.7;
+        let long = 6.4 + unit * 2.4;
+        let deep = 5 + ((index * 7) % 3) * 0.7;
         const floors = 2 + ((index * 5 + (side < 0 ? 1 : 0)) % 2);
         index += 1;
         const gap = gaps.find((one) => d + long > one.d0 && d < one.d1);
@@ -633,10 +651,29 @@ export class View {
           continue;
         }
         if (d + long > yard) break;
+        // Round a square the houses stand back from the street, and the ones at its corners show a side to it.
+        let back = 0;
+        if (square && side === Math.sign(square.x)) {
+          if (d < square.d0 && d + long > square.d0) {
+            if (square.d0 - d < 3.2) {
+              d = square.d0;
+              continue;
+            }
+            long = square.d0 - d;
+          } else if (d >= square.d0 && d < square.d1) {
+            if (square.d1 - d < 3.2) {
+              d = square.d1;
+              continue;
+            }
+            long = Math.min(long, square.d1 - d);
+            back = Math.abs(square.x) - half;
+          }
+          if (Math.abs(d + long - square.d0) < 0.6 || Math.abs(d - square.d1) < 0.6) deep = Math.abs(square.x) - half + 1.6;
+        }
         const top = heightAt(course, d) + floors * 2.7 + 0.5;
         const base = heightAt(course, d + long) - 0.6;
         const tall = top - base;
-        const front = side * (half + 1.15);
+        const front = side * (half + 1.15 + back);
         const x = front + (side * deep) / 2;
         const z = -(d + long / 2);
         const wall = plasters[index % plasters.length]!;
@@ -988,6 +1025,126 @@ export class View {
     // It tears the cobbles up as it goes.
     if (stone.state === "rolling" && this.frame % 3 === 0 && -v.z > 3) {
       this.puff({ x: p.x + this.chance() * 1.4 - 0.7, y: p.y - STONE_RADIUS + 0.2, z: p.z + 0.8 }, this.m.dust, 0.9, 0.5, [this.chance() * 2 - 1, 1.5, 2]);
+    }
+  }
+
+  /** The Queen's rolling pin, slung across the street on a gantry at the top of the hill. */
+  private buildPin(game: Game): void {
+    const m = this.m;
+    const course = game.course;
+    const def = course.pin;
+    const pin = game.pin;
+    if (!def || !pin) return;
+    const half = course.width / 2;
+    const ground = heightAt(course, def.d);
+    const wood = this.paint("pin", new pc.Color(0.86, 0.68, 0.42), { gloss: 0.35 });
+    const flour = this.paint("flour", new pc.Color(0.98, 0.96, 0.9));
+    const long = def.x1 - def.x0 - 0.8;
+    const middle = (def.x0 + def.x1) / 2;
+    // The gantry: two masts on the kerbs and a beam between them.
+    const gantry = this.group("gantry", this.scene, [middle, ground, -def.d]);
+    const top = def.up + 2.1;
+    for (const side of [-1, 1]) {
+      this.shape("box", gantry, [side * (half + 0.55), top / 2, 0], [0.4, top, 0.4], m.oakDark, [0, 0, 0], true);
+      this.shape("box", gantry, [side * (half - 0.5), top - 1, 0], [0.24, 2.6, 0.24], m.oak, [0, 0, side * 42], true);
+      this.shape("cylinder", gantry, [side * (long / 2 + 0.5), top - 0.1, 0], [0.5, 0.5, 0.5], m.iron, [90, 0, 0], true);
+    }
+    this.shape("box", gantry, [0, top, 0], [course.width + 1.9, 0.38, 0.38], m.oakDark, [0, 0, 0], true);
+    // Her arms on it, so nobody is in doubt whose it is.
+    this.shape("box", gantry, [0, top + 0.95, 0], [2.2, 1.5, 0.12], m.vermilion, [0, 0, 0], true);
+    this.shape("box", gantry, [0, top + 1, 0.07], [1.5, 0.22, 0.04], m.gold, [0, 0, 0], true);
+    for (const side of [-1, 1]) this.shape("sphere", gantry, [side * 0.9, top + 1, 0.07], [0.32, 0.32, 0.08], m.gold, [0, 0, 0], true);
+    const ropes = [-1, 1].map((side) => this.shape("box", this.scene, [middle + side * (long / 2 + 0.5), ground + def.up + 1, -def.d], [0.12, 2, 0.12], m.rope));
+    const root = this.group("pin", this.scene, [middle, ground + pin.up, -pin.d]);
+    const roll = this.group("roll", root);
+    this.shape("cylinder", roll, [0, 0, 0], [PIN_RADIUS * 2, long, PIN_RADIUS * 2], wood, [0, 0, 90]);
+    for (const side of [-1, 1]) {
+      this.shape("cylinder", roll, [side * (long / 2 + 0.12), 0, 0], [PIN_RADIUS * 1.2, 0.24, PIN_RADIUS * 1.2], m.oak, [0, 0, 90]);
+      this.shape("cylinder", roll, [side * (long / 2 + 0.7), 0, 0], [0.6, 1, 0.6], wood, [0, 0, 90]);
+      this.shape("sphere", roll, [side * (long / 2 + 1.2), 0, 0], [0.8, 0.8, 0.8], wood);
+    }
+    // The grain, and what is left of the flour, so that it can be seen to turn.
+    for (let band = 0; band < 6; band += 1) {
+      const turn = this.group("band", roll, [0, 0, 0], [band * 60, 0, 0]);
+      this.shape("box", turn, [0, PIN_RADIUS - 0.01, 0], [long * 0.98, 0.05, 0.16], m.oak);
+      this.shape("box", turn, [((band * 37) % 7) - 3, PIN_RADIUS - 0.005, 0.55], [1.5 + (band % 3) * 0.5, 0.05, 0.6], flour);
+    }
+    this.pin = { root, roll, ropes };
+  }
+
+  private syncPin(game: Game): void {
+    const look = this.pin;
+    const pin = game.pin;
+    const def = game.course.pin;
+    if (!look || !pin || !def) return;
+    look.root.enabled = pin.state !== "gone";
+    for (const rope of look.ropes) rope.enabled = pin.state === "hung";
+    const sway = pin.state === "hung" ? Math.sin(this.clock * 1.3) * 0.12 : 0;
+    const ground = heightAt(game.course, pin.d);
+    look.root.setPosition((def.x0 + def.x1) / 2, ground + pin.up, -pin.d + sway);
+    look.roll.setLocalEulerAngles((-pin.spin * 180) / Math.PI, 0, 0);
+    if (pin.state !== "rolling") return;
+    // It tears the street up behind it, and the nearer it is the more she feels it.
+    if (this.frame % 2 === 0) {
+      this.puff({ x: def.x0 + this.chance() * (def.x1 - def.x0), y: ground + 0.2, z: -pin.d + 1 }, this.m.dust, 0.9, 0.5, [this.chance() * 2 - 1, 1.6, 2.5]);
+    }
+    const gap = Math.abs(game.distance - pin.d);
+    if (game.phase === "run" && gap < 14) this.shake = Math.max(this.shake, 0.42 * (1 - gap / 14));
+  }
+
+  /** The market square: woolsacks banked across its bottom corner, and stalls under the houses. */
+  private buildMarket(course: CourseDef): void {
+    const square = course.square;
+    if (!square) return;
+    const m = this.m;
+    const half = course.width / 2;
+    const side = Math.sign(square.x);
+    const far = Math.abs(square.x);
+    const turn = square.d1 - square.taper;
+    // The sacks, from the far wall down to the kerb where the street goes on.
+    const run = Math.hypot(far - half, square.taper);
+    const yaw = (Math.atan2(side * (half - far), -square.taper) * 180) / Math.PI;
+    const out = { x: (side * square.taper) / run, z: -(far - half) / run };
+    const count = Math.ceil(run / 1.25);
+    for (let sack = 0; sack <= count; sack += 1) {
+      for (const row of [0, 1]) {
+        const k = Math.min(1, (sack + row * 0.5) / count);
+        const d = turn + square.taper * k;
+        const x = side * (far - (far - half) * k);
+        const y = heightAt(course, d) + 0.42 + row * 0.66;
+        this.shape("sphere", this.scene, [x + out.x * (0.6 + row * 0.25), y, -d + out.z * (0.6 + row * 0.25)], [1.1, 0.8, 1.5], (sack + row) % 3 ? m.canvas : m.hay, [0, yaw, 0], true);
+      }
+    }
+    // What the sacks were in the way of: the wool merchant's corner.
+    for (const [k, depth] of [[0.45, 2.2], [0.7, 2], [0.86, 1.6]] as const) {
+      const d = turn + square.taper * k;
+      const x = side * (far - (far - half) * k) + out.x * depth;
+      this.shape("cylinder", this.scene, [x, heightAt(course, d) + 0.6, -d + out.z * depth], [1, 1.2, 1], m.oak, [0, 0, 0], true);
+      this.shape("cylinder", this.scene, [x, heightAt(course, d) + 0.6, -d + out.z * depth], [1.06, 0.14, 1.06], m.iron, [0, 0, 0], true);
+    }
+    // Stalls along the far side, under the eaves: an awning, a shelf, and whatever was for sale.
+    const awnings = [m.vermilion, m.lapis, m.gold, m.verdigris];
+    let stall = 0;
+    for (let d = square.d0 + 3.4; d < turn - 1.5; d += 4.6) {
+      const y = heightAt(course, d);
+      const x = side * (far + 0.25);
+      this.shape("box", this.scene, [x - side * 0.75, y + 2.75, -d], [1.9, 0.08, 3.2], awnings[stall % awnings.length]!, [0, 0, side * 16], true);
+      for (const end of [-1, 1]) this.shape("box", this.scene, [x - side * 1.5, y + 1.35, -d + end * 1.5], [0.1, 2.7, 0.1], m.oakDark, [0, 0, 0], true);
+      this.shape("box", this.scene, [x, y + 0.95, -d], [0.5, 0.1, 3], m.oak, [0, 0, 0], true);
+      for (let good = 0; good < 4; good += 1) {
+        const goods = [m.yolk, m.verdigris, m.vermilion, m.egg][(stall + good) % 4]!;
+        this.shape(good % 2 ? "sphere" : "cylinder", this.scene, [x, y + 1.18, -d - 1.05 + good * 0.7], [0.42, good % 2 ? 0.42 : 0.3, 0.42], goods, [0, 0, 0], true);
+      }
+      stall += 1;
+    }
+    // People who came for cheese and are staying for this.
+    const coats = [m.verdigris, m.hay, m.lapis];
+    for (let index = 0; index < 3; index += 1) {
+      const k = 0.5 + index * 0.17;
+      const d = turn + square.taper * k;
+      const at: Triple = [side * (far - (far - half) * k) + out.x * (3 + (index % 2)), heightAt(course, d), -d + out.z * (3 + (index % 2))];
+      const look = this.townsfolk(this.scene, at, coats[index]!, index % 2 ? "straw" : "hood");
+      this.folk.push({ root: look.root, arms: look.arms, at, phase: index * 2.3 });
     }
   }
 
@@ -1376,6 +1533,8 @@ export class View {
     if (!cart) return;
     cart.setPosition(p.x, p.y, p.z);
     cart.setRotation(q.x, q.y, q.z, q.w);
+    // What a rolling pin leaves of a cart.
+    if (game.cause === "rolled") cart.setLocalScale(1.25, 0.14, 1.25);
     for (let index = 0; index < this.wheels.length; index += 1) {
       const wheel = game.wheel(index);
       const look = this.wheels[index]!;
@@ -1440,6 +1599,7 @@ export class View {
     this.syncMill(game, dt);
     this.syncFlood(game);
     this.syncSeesaw(game);
+    this.syncPin(game);
     this.syncMob(game, dt);
     this.syncPans(game);
     this.syncEggs(game);
@@ -2126,6 +2286,14 @@ export class View {
       eye.z += this.sawLift * 2.5;
       gaze.y += this.sawLift * 2.6;
       gaze.z -= this.sawLift * 6;
+      // With the pin behind her the camera stands off and up, so that what is coming is on the screen too.
+      const pin = game.pin;
+      const behind = pin ? game.distance - pin.d : 99;
+      const chased = pin && pin.state !== "gone" && behind > (pin.state === "hung" ? -14 : -6) && behind < 26 ? 1 : 0;
+      this.pinLift += (chased - this.pinLift) * Math.min(1, dt * 2);
+      eye.y += this.pinLift * 4;
+      eye.z += this.pinLift * 6;
+      gaze.z += this.pinLift * 3.5;
       // Lean a little towards whatever the gun could reach, so it is on the screen to be tapped.
       const target = game.target;
       if (target && game.phase === "run") gaze.x += (target.at.x - p.x) * 0.22;
@@ -2305,6 +2473,19 @@ export class View {
       this.burst({ x: event.at.x, y: event.at.y + 0.3, z: event.at.z }, m.spray, 7, 0.5, 4);
       this.puff({ x: event.at.x, y: event.at.y + 0.8, z: event.at.z }, m.smoke, 0.9, 0.7, [0, 2.5, 0]);
     }
+    if (event.type === "pinLoose") {
+      this.shake = Math.max(this.shake, 0.4);
+      for (const side of [-1, 1]) this.burst({ x: event.at.x + side * (game.course.width / 2 - 0.2), y: event.at.y + 1.6, z: event.at.z }, m.rope, 5, 0.2, 4);
+    }
+    if (event.type === "pinDown") {
+      this.shake = Math.max(this.shake, 1.5);
+      for (const x of [-3.4, 0, 3.4]) {
+        this.burst({ x: event.at.x + x, y: event.at.y + 0.2, z: event.at.z }, m.dust, 8, 1.3, 6);
+        this.burst({ x: event.at.x + x, y: event.at.y + 0.4, z: event.at.z }, m.albumen, 4, 0.5, 5);
+      }
+      this.pulse(event.at, m.dust, 2, 13, 0.5);
+    }
+    if (event.type === "pinPast") this.burst({ x: event.at.x + Math.sign(cart.x) * (game.course.width / 2), y: event.at.y + 0.5, z: event.at.z }, m.dust, 8, 0.9, 5);
     if (event.type === "potLoose") this.burst({ x: event.at.x, y: event.at.y + 2.6, z: event.at.z }, m.rope, 6, 0.2, 4);
     if (event.type === "tip") this.burst({ x: event.at.x, y: event.at.y - 0.5, z: event.at.z - 2 }, m.dust, 5, 0.6, 2.5);
     if (event.type === "wham") {

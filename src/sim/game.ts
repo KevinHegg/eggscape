@@ -1,5 +1,5 @@
 import RAPIER from "@dimforge/rapier3d-deterministic-compat";
-import { COURSE, chasms, courseEnd, heightAt, pieceAt, slopeAt, spanOf, type ClutterDef, type ClutterKind, type CourseDef, type KegDef, type MobDef, type PickupDef, type WallDef } from "./course";
+import { COURSE, chasms, courseEnd, edgeAt, heightAt, pieceAt, slopeAt, spanOf, type ClutterDef, type ClutterKind, type CourseDef, type KegDef, type MobDef, type PickupDef, type WallDef } from "./course";
 
 /** Fixed simulation step. Slow motion changes how many steps run, never the step. */
 export const STEP = 1 / 60;
@@ -38,6 +38,12 @@ const CART_GROUPS = (0x0002 << 16) | 0xffff;
 const RUBBLE_GROUPS = (0x0004 << 16) | 0xfff5;
 const ROLLER_GROUPS = (0x0008 << 16) | 0xfffb;
 const FENCE_GROUPS = (0x0010 << 16) | 0x0008;
+/** Upright things a cart can lean on. Her wheels do not take them for ground: a wheel that did would throw her over. */
+/** How far inside the woolsacks the men keep her, and how fast they reckon on bringing her across. */
+const HEM_CLEAR = 1.3;
+const HEM_SIDLE = 2.8;
+const WALL_GROUPS = (0x0020 << 16) | 0xffff;
+const WHEEL_GROUPS = (0x0002 << 16) | 0xffdf;
 
 // The egg.
 const JOLT_FLOOR = 0.55;
@@ -169,6 +175,13 @@ const POT_REACH = 1.8;
 /** Seconds a keg is in the air when the see-saw throws it. */
 const TOSS_TIME = 1.5;
 
+/** The rolling pin: how thick, how fast the hill lets it go, and how quickly it gets there. */
+export const PIN_RADIUS = 1.25;
+export const PIN_PACE = 12.2;
+const PIN_PULL = 3.5;
+/** How far past the gantry she is when they let it go. */
+const PIN_LEAD = 4;
+
 /** Standing still this long, the Queen's cooks catch up. */
 const CAUGHT_AFTER = 4;
 
@@ -187,7 +200,7 @@ export interface Quat {
 
 /** "through" is a street finished with another to come; "won" is home. */
 export type Phase = "run" | "won" | "through" | "broken";
-export type BreakCause = "jolt" | "spilled" | "fell" | "mob" | "caught" | "blast" | "crushed";
+export type BreakCause = "jolt" | "spilled" | "fell" | "mob" | "caught" | "blast" | "crushed" | "rolled";
 export type TargetKind = "windlass" | "wain" | "rank" | "wall" | "hoist" | "cistern" | "crane";
 
 /** What the cart takes with it from one street into the next. */
@@ -256,6 +269,10 @@ export type GameEvent =
   | { type: "potLoose"; at: Vec3 }
   | { type: "wham"; at: Vec3; flung: "cart" | "keg" | "none"; hit: boolean }
   | { type: "tossed"; id: number; to: Vec3 }
+  | { type: "pinLoose"; at: Vec3 }
+  | { type: "pinDown"; at: Vec3 }
+  | { type: "pinPast"; at: Vec3 }
+  | { type: "pinGone" }
   | { type: "stoneLoose"; at: Vec3 }
   | { type: "thud"; at: Vec3 }
   | { type: "plunge"; at: Vec3 }
@@ -267,7 +284,7 @@ export type GameEvent =
   | { type: "finish" };
 
 export type PropKind = "hay" | "beam" | "shell" | "block" | "folk" | "shard" | "hen" | "crown";
-export type Bowler = "bell" | "wain" | "shot" | "cart" | "pot" | "blast" | "stone" | "flood" | "ram";
+export type Bowler = "bell" | "wain" | "shot" | "cart" | "pot" | "blast" | "stone" | "flood" | "ram" | "pin";
 
 /** The cistern's water: still in it, on its way down the street, or run out. */
 export interface Flood {
@@ -296,6 +313,19 @@ export interface Seesaw {
   /** Where its foot is, and how fast it is coming down. */
   potAt: Vec3;
   potV: number;
+}
+
+/** The Queen's rolling pin: slung on its gantry, let go, coming down the hill, and gone out through the gate. */
+export interface Pin {
+  state: "hung" | "falling" | "rolling" | "gone";
+  /** How far down the street its axle has got, and how high it is above the road. */
+  d: number;
+  up: number;
+  speed: number;
+  /** How far it has turned, in radians. */
+  spin: number;
+  /** She was beside it when it went by. */
+  passed: boolean;
 }
 
 /** A loose physical thing the view draws by id. */
@@ -508,6 +538,7 @@ export class Game {
   readonly stone: Stone | null;
   readonly flood: Flood | null;
   readonly seesaw: Seesaw | null;
+  readonly pin: Pin | null;
   readonly mob: Mobster[] = [];
   readonly pans: Pan[] = [];
   readonly eggFlights: EggShot[] = [];
@@ -614,6 +645,7 @@ export class Game {
     this.flood = cistern ? { state: "held", front: cistern.d } : null;
     if (cistern) this.targets.push({ id: "cistern", kind: "cistern", at: { x: cistern.x, y: heightAt(course, cistern.d) + 4.4, z: -cistern.d }, lit: false, done: false, doomed: false });
     this.seesaw = this.setSeesaw();
+    this.pin = course.pin ? { state: "hung", d: course.pin.d, up: course.pin.up, speed: 0, spin: 0, passed: false } : null;
     this.raiseWalls();
     for (const rank of new Set(course.mob.map((def) => def.rank))) {
       this.targets.push({ id: `rank${rank}`, kind: "rank", at: { x: 0, y: 0, z: 0 }, lit: false, done: false, doomed: false });
@@ -716,17 +748,18 @@ export class Game {
     this.stepFlights();
     this.stepEggs();
 
-    this.steer(this.over ? 0 : input.lean);
+    this.steer(this.over ? 0 : this.hem(input.lean));
     this.push(this.over ? 0 : clamp(input.brake ?? 0, 0, 1));
     this.stepTower();
     this.stepSeesaw();
 
-    this.vehicle.updateVehicle(STEP, undefined, CART_GROUPS);
+    this.vehicle.updateVehicle(STEP, undefined, WHEEL_GROUPS);
     this.world.step();
 
     this.stepBell();
     this.stepWain();
     this.stepStone();
+    this.stepPin();
     this.stepFlood();
     this.stepKegs();
     this.stepMob();
@@ -735,6 +768,36 @@ export class Game {
     this.stepProps();
     this.feelJolt();
     if (!this.over) this.judge();
+  }
+
+  /**
+   * Where a square runs back in to the street, the men bring her back in with it: however the
+   * lean is asked for, it is no further out than the road goes a moment ahead.
+   */
+  private hem(lean: number): number {
+    const square = this.course.square;
+    if (!square) return lean;
+    const p = this.chassis.translation();
+    const v = this.chassis.linvel();
+    const d = -p.z;
+    const side = Math.sign(square.x);
+    if (d < square.d0 || d > square.d1 + 4 || p.x * side < this.course.width / 2 - 1.4) return lean;
+    // As far out as she can be now and still be inside the sacks at every yard between here and
+    // the bottom, crossing no faster than the men can bring her across.
+    const pace = Math.max(4, -v.z);
+    let room = Infinity;
+    for (let ahead = 0; d + ahead <= square.d1 + 1; ahead += 1) {
+      room = Math.min(room, edgeAt(this.course, d + ahead, side) - HEM_CLEAR + (HEM_SIDLE * ahead) / pace);
+    }
+    room = Math.min(room, this.course.width / 2 - HEM_CLEAR + (HEM_SIDLE * Math.max(0, square.d1 - d)) / pace);
+    // Across at the pace that closes the gap, and never slower than the sacks are closing on her.
+    const out = p.x * side;
+    const turn = square.d1 - square.taper;
+    const closing = d > turn - 2 && d < square.d1 && out > room - 0.5 ? ((Math.abs(square.x) - this.course.width / 2) / square.taper) * pace : 0;
+    const gap = clamp((room - out) * 2.5, -4, 4);
+    const want = closing > 0 ? Math.min(gap, -closing) : gap;
+    const back = clamp(want / 4 + (want - v.x * side) * 0.3, -1, 1) * side;
+    return side > 0 ? Math.min(lean, back) : Math.max(lean, back);
   }
 
   private steer(leanInput: number): void {
@@ -1624,6 +1687,77 @@ export class Game {
     }
   }
 
+  /**
+   * The pin is not a body: it is where it has got to. Whatever of the Queen's is in the road
+   * when it gets there is flattened, burst or broken, and so is a cart. Out of the road, it
+   * goes by.
+   */
+  private stepPin(): void {
+    const pin = this.pin;
+    const def = this.course.pin;
+    if (!pin || !def || pin.state === "gone") return;
+    const cart = this.chassis.translation();
+    const at = -cart.z;
+    if (pin.state === "hung") {
+      if (!this.over && at > def.d + PIN_LEAD) {
+        pin.state = "falling";
+        this.events.push({ type: "pinLoose", at: { x: 0, y: heightAt(this.course, pin.d) + pin.up, z: -pin.d } });
+      }
+      return;
+    }
+    if (pin.state === "falling") {
+      pin.speed += G * STEP;
+      pin.up -= pin.speed * STEP;
+      if (pin.up <= PIN_RADIUS) {
+        pin.up = PIN_RADIUS;
+        pin.speed = 1;
+        pin.state = "rolling";
+        this.events.push({ type: "pinDown", at: { x: 0, y: heightAt(this.course, pin.d), z: -pin.d } });
+      }
+      return;
+    }
+    pin.speed = Math.min(PIN_PACE, pin.speed + PIN_PULL * STEP);
+    pin.d += pin.speed * STEP;
+    pin.spin += (pin.speed * STEP) / PIN_RADIUS;
+    if (pin.d > courseEnd(this.course) - 3) {
+      pin.state = "gone";
+      this.events.push({ type: "pinGone" });
+      return;
+    }
+    const inRoad = (x: number): boolean => x >= def.x0 - 0.3 && x <= def.x1 + 0.3;
+    for (const one of this.mob) {
+      if (one.state === "out" || !inRoad(one.pos.x)) continue;
+      const ahead = one.def.d - pin.d;
+      if (ahead < PIN_RADIUS && ahead > -1.5) this.bowl(one, "pin", { x: this.random() * 6 - 3, y: 6 + this.random() * 3, z: -pin.speed * 0.8 });
+      else if (ahead > 0 && ahead < SEES_IT_COMING && one.state === "stand") this.dive(one);
+    }
+    for (const keg of this.kegs) {
+      if ((keg.state === "set" || keg.state === "lit") && keg.def.up < 0.5 && inRoad(keg.def.x) && Math.abs(keg.def.d - pin.d) < PIN_RADIUS) this.explode(keg);
+    }
+    for (const wall of this.walls) {
+      if (wall.state === "up" && Math.abs(wall.def.d - pin.d) < PIN_RADIUS + 0.7) this.breach(wall);
+    }
+    if (this.over) return;
+    const gap = at - pin.d;
+    if (cart.x > def.x0 - 0.8 && cart.x < def.x1 + 0.8 && Math.abs(cart.y - heightAt(this.course, at)) < 4) {
+      if (gap > -0.6 && gap < PIN_RADIUS + 0.9) return this.shatter("rolled");
+      if (gap <= -0.6 && gap > -(PIN_RADIUS + 1) && this.time - this.bashed > 0.6) {
+        // Run into the back of it: it does not notice, and she does.
+        this.bashed = this.time;
+        this.knocks += 1;
+        const v = this.chassis.linvel();
+        const back = { x: v.x * 0.5, y: Math.max(v.y, 1), z: -pin.speed * 0.5 };
+        this.chassis.setLinvel(back, true);
+        this.joltSkip = Math.max(this.joltSkip, 8);
+        this.prevVel = back;
+        this.damage(SHIELD_BASH, "jolt");
+      }
+    } else if (!pin.passed && gap < -PIN_RADIUS) {
+      pin.passed = true;
+      this.events.push({ type: "pinPast", at: { x: 0, y: heightAt(this.course, pin.d), z: -pin.d } });
+    }
+  }
+
   /** The bell, the wain and the stone, while they are moving fast enough to frighten anyone. */
   private rollers(): Array<{ x: number; d: number; by: "bell" | "wain" | "stone"; fright: number; v: Vec3 }> {
     const out: Array<{ x: number; d: number; by: "bell" | "wain" | "stone"; fright: number; v: Vec3 }> = [];
@@ -1803,6 +1937,9 @@ export class Game {
     }
     const change = Math.hypot(dx, dy, dz);
     this.jolt = change;
+    // Woolsacks all down the bottom of the square: she can lean on those as hard as she likes.
+    const square = this.course.square;
+    if (square && this.distance > square.d1 - square.taper - 1.5 && this.distance < square.d1 + 3 && this.chassis.translation().x * Math.sign(square.x) > this.course.width / 2 - 1.6) return;
     if (this.joltSkip > 0) {
       this.joltSkip -= 1;
       return;
@@ -1894,7 +2031,38 @@ export class Game {
           .setFriction(1),
         street,
       );
+      const square = this.course.square;
+      const open = square && piece.d0 >= square.d0 - 0.01 && piece.d1 <= square.d1 + 0.01 ? Math.sign(square.x) : 0;
+      if (square && open) {
+        // The square: more street, off to one side, and house fronts round the rest of it.
+        const near = open * (half - 0.2);
+        const wide = Math.abs(square.x - near);
+        this.world.createCollider(
+          RAPIER.ColliderDesc.cuboid(wide / 2 + 0.4, 0.3, length / 2)
+            .setTranslation((near + square.x) / 2 + open * 0.4, mid.y - normal.y * 0.3, mid.z - normal.z * 0.3)
+            .setRotation(rotation)
+            .setFriction(1),
+          street,
+        );
+        this.world.createCollider(RAPIER.ColliderDesc.cuboid(0.4, 2.2, length / 2).setTranslation(square.x + open * 0.4, mid.y + 1.6, mid.z).setRotation(rotation).setFriction(0.1).setCollisionGroups(WALL_GROUPS), street);
+        this.world.createCollider(RAPIER.ColliderDesc.cuboid(wide / 2, 2.2, 0.4).setTranslation((near + square.x) / 2 + open * 0.5, piece.y0 + 1.6, -piece.d0 + 0.4).setFriction(0.1).setCollisionGroups(WALL_GROUPS), street);
+        this.world.createCollider(RAPIER.ColliderDesc.cuboid(wide / 2, 2.2, 0.4).setTranslation((near + square.x) / 2 + open * 0.5, piece.y1 + 1.6, -piece.d1 - 0.4).setFriction(0.1).setCollisionGroups(WALL_GROUPS), street);
+        // Its bottom corner is cut off by a bank of woolsacks, which turn her back in to the street.
+        const from = { x: square.x + open * 0.5, z: -(square.d1 - square.taper) };
+        const to = { x: open * (half - 0.2), z: -square.d1 - 1.6 };
+        const turn = Math.atan2(to.x - from.x, to.z - from.z);
+        this.world.createCollider(
+          RAPIER.ColliderDesc.cuboid(0.5, 2.6, Math.hypot(to.x - from.x, to.z - from.z) / 2)
+            .setTranslation((from.x + to.x) / 2, heightAt(this.course, square.d1 - square.taper / 2) + 1.2, (from.z + to.z) / 2)
+            .setRotation({ x: 0, y: Math.sin(turn / 2), z: 0, w: Math.cos(turn / 2) })
+            .setFriction(0.02)
+            .setRestitution(0)
+            .setCollisionGroups(WALL_GROUPS),
+          street,
+        );
+      }
       for (const side of [-1, 1]) {
+        if (side === open) continue;
         // No kerb along a broken edge: there is nothing there to hold one.
         if ((side < 0 ? span.x0 : span.x1) * side < half) continue;
         this.world.createCollider(

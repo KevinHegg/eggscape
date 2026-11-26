@@ -2,11 +2,12 @@
 
 A mobile-first physics game. A hill village is one Rube Goldberg machine: the player sets it
 off, then has to ride the Egg King's cart through what follows, down to the Empress Hen.
-Prototype stage: five streets ridden one after the other: Bell Tower Street, Powder Row,
-Pudding Lane, Cauldron Gate and Miller's Leap. Each asks something different of the brake: wait
-for the tower, keep back from the powder, choose fire or water, come up to the see-saw slowly
-enough to be on it when the cauldron lands, and on the last keep up with the stone and have the
-brake off when the charge on the quay throws her over the gorge.
+Prototype stage: six streets ridden one after the other: Bell Tower Street, Powder Row,
+Pudding Lane, Cauldron Gate, Rolling Pin Hill and Miller's Leap. Each asks something different
+of the brake: wait for the tower, keep back from the powder, choose fire or water, come up to
+the see-saw slowly enough to be on it when the cauldron lands, never touch it with the rolling
+pin behind her unless she is out of its road, and on the last keep up with the stone and have
+the brake off when the charge on the quay throws her over the gorge.
 
 The first game (pick three machines, ride the Queen's gauntlet) is frozen on branch
 `gauntlet` (tag `gauntlet-v1`) and published beside this one at `/gauntlet/`. Do not merge
@@ -99,6 +100,20 @@ it back or change it in passing; it is kept as it was on purpose.
   way of going at it: keep the three ways (fly, send the keg, knock) all winnable, and keep
   flying the cheapest in rounds.
 - A wall with a `gate` is stone: only the gate is a target and only the gate gives.
+- The rolling pin (`pin` in `course.ts`) is state, not a body: it hangs on a gantry, is let go
+  once the cart is `PIN_LEAD` past it, falls, and rolls down the street speeding up to
+  `PIN_PACE`, which is faster than a cart runs and slower than one thrown by powder. It has the
+  whole width of the street and stops for nothing: cooks are bowled, kegs in the road burst,
+  barricades are breached, and a cart in its road is done (`rolled`). It never catches a cart
+  that neither brakes nor is stopped, so what kills on this hill is the brake and whatever is
+  standing in the road. A `square` is the one place out of its road: more street off to one
+  side along one piece, its bottom corner cut off by woolsacks (`edgeAt` gives the drivable
+  edge; `leanAt` lets the player steer out to it, and `hem` in `game.ts` has the men bring her
+  back in along the sacks whatever the lean, so nobody is steered into a corner). Wheels do
+  not take the square's walls for ground (`WALL_GROUPS`). `npx tsx scripts/pin.ts` prints
+  every way down: keep both ways winnable (wait in the square on the brake and follow the pin
+  down for nothing; or stay in front, a round for each rank and the barricade, thrown on by
+  the powder it bursts behind her), and keep braking in the street fatal.
 - The millstone (`mill` in `course.ts`) is driven, not left to roll: one ball, locked to its
   lane, held by the hill to `STONE_PACE`, which is a little more than the cart can make, so it
   always leads and what it will hit can be read from the top of the street. It bowls whoever
@@ -133,7 +148,8 @@ it back or change it in passing; it is kept as it was on purpose.
 - After changing physics constants or a street, run `npm test`, `npx tsx scripts/window.ts`
   and `npx tsx scripts/window.ts wain`; for Powder Row, `npx tsx scripts/trace.ts wagon`
   (also `train`, `rush`, `blind`); for Pudding Lane, `npx tsx scripts/lane.ts`; for Cauldron
-  Gate, `npx tsx scripts/gate.ts`; for Miller's Leap, `npx tsx scripts/leap.ts`.
+  Gate, `npx tsx scripts/gate.ts`; for Rolling Pin Hill, `npx tsx scripts/pin.ts`; for
+  Miller's Leap, `npx tsx scripts/leap.ts`.
 
 ## Commands
 

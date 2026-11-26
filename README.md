@@ -6,8 +6,8 @@ A mobile-first physics game. The Queen's village is built down a hill, and the w
 one push from falling over. Set it off, then ride the Egg King's cart through what follows,
 down to the Empress Hen, with his shell in one piece.
 
-This is an early prototype: five streets, **Bell Tower Street**, **Powder Row**,
-**Pudding Lane**, **Cauldron Gate** and **Miller's Leap**, joined by town gates. What is left of the cart at the bottom of one is what you have at the
+This is an early prototype: six streets, **Bell Tower Street**, **Powder Row**,
+**Pudding Lane**, **Cauldron Gate**, **Rolling Pin Hill** and **Miller's Leap**, joined by town gates. What is left of the cart at the bottom of one is what you have at the
 top of the next.
 
 The first version, a gauntlet of towers ridden on a cart built from three simple machines, is
@@ -21,7 +21,7 @@ npm run dev
 ```
 
 Open [http://127.0.0.1:5180](http://127.0.0.1:5180). Add `?auto` to watch the built-in
-driver play every street, or `?street=2` up to `?street=5` to start on a later one with a
+driver play every street, or `?street=2` up to `?street=6` to start on a later one with a
 fresh cart.
 
 - **Steer:** put a finger down anywhere and drag sideways. The cart goes that way and keeps
@@ -106,6 +106,21 @@ it; and over the short end the Queen's biggest cauldron hangs from a crane.
    Too late and she is under the cauldron.
 4. **Or knock.** A round at the gate's ring opens it. The shield wall behind it wants another.
 
+## Rolling Pin Hill
+
+The Queen's rolling pin, as long as the street is wide, slung from a gantry at the top of the
+hill. It is let go as he passes under it, and it does not stop.
+
+1. **It has the whole street.** Cooks, kegs and the barricade at the bottom are all the same
+   to it, and so is a cart. The gauge over the buttons shows how far behind it is.
+2. **Get out of its road.** Half way down the market square opens off the right of the street.
+   Turn in, put the brake on, and let it go by. Then brake off and follow it down: it has
+   flattened the hill for you. The cooks at the mouth of the square want an egg each.
+3. **Or stay in front.** It is a little faster than a cart, and never catches one that keeps
+   running: it is the brake, a rank of cooks or the barricade that gets him rolled. A round
+   for each, and the powder it bursts behind the cart throws her on.
+4. **The brake is for the square.** Anywhere else on this hill it is the end of him.
+
 ## Miller's Leap
 
 A windmill at the top of the hill with its millstone swung out over the road, the Queen's
@@ -139,6 +154,7 @@ npx tsx scripts/window.ts        # outcome for every shot delay and brake settin
 npx tsx scripts/lip.ts           # the jolt of crossing the fallen tower
 npx tsx scripts/lane.ts          # Pudding Lane: every way down it, by fire and by water
 npx tsx scripts/gate.ts          # Cauldron Gate: where she was when the cauldron landed, every way
+npx tsx scripts/pin.ts           # Rolling Pin Hill: how close it got and what it flattened, every way
 npx tsx scripts/leap.ts          # Miller's Leap: speed off the bridge, air and cost, every way
 npm run build
 npm run check                    # typecheck, tests and build
@@ -148,7 +164,7 @@ npm run check                    # typecheck, tests and build
 src/sim/      rules and physics, headless (Rapier 3D, fixed 60 Hz, no DOM, no Math.random)
   course.ts     the streets: the hill, the canal, the tower, the mob, the wain, the powder
   game.ts       the cart, the jolt rule, the gun, the eggs, the tower, the bell, the wain,
-                the mob, the kegs, the barricade, the see-saw, the millstone, what is carried
+                the mob, the kegs, the barricade, the see-saw, the rolling pin, the millstone, what is carried
                 through a gate
   autoplay.ts   pilots for tests and ?auto
 src/render/   PlayCanvas view; reads the sim, never writes it

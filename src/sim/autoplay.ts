@@ -1,4 +1,4 @@
-import { STREETS, type CourseDef } from "./course";
+import { STREETS, edgeAt, type CourseDef } from "./course";
 import { EGG_RANGE, Game, RAM_SPEED, STEP, type Carry, type Input } from "./game";
 
 /** Something that plays a street: given the game, what to do this step. */
@@ -21,9 +21,11 @@ const SIDLE = 4;
  * -1 (hard left) to 1 (hard right), and 0 steadies her where she is. It will not grind the kerb.
  */
 export function leanAt(game: Game, rate: number): number {
-  const edge = game.course.width / 2 - 0.9;
+  const d = game.distance;
+  // As far as there is road: the kerb, or the far side of a square where one opens off the street.
+  const edge = (side: number): number => Math.min(edgeAt(game.course, d, side), edgeAt(game.course, d + 3, side)) - 0.9;
   const asked = rate + (rate * SIDLE - game.velocity.x) * 0.3;
-  const value = Math.max(leanToward(game, -edge), Math.min(leanToward(game, edge), asked));
+  const value = Math.max(leanToward(game, -edge(-1)), Math.min(leanToward(game, edge(1)), asked));
   return Math.max(-1, Math.min(1, value));
 }
 
@@ -421,10 +423,95 @@ export function tumbler(plan: Tumbling = {}): Pilot {
   };
 }
 
+export interface Running extends Riding {
+  /**
+   * "square" turns in to the market, holds back there until the pin has gone by, and follows it
+   * down the street it has cleared. "run" stays in front of it the whole way.
+   */
+  way?: "square" | "run";
+  /** Hold her back in the square. Without it she is out of the bottom of it before the pin has come. */
+  brake?: boolean;
+  /** Hold her back on the open street as well, from this far down it: for showing what that costs. */
+  dawdle?: number;
+  /** A round into any rank with somebody still standing in his road, and one for the barricade. */
+  ranks?: boolean;
+  /** An egg at whoever is standing in his road instead. */
+  duck?: boolean;
+  /** Throw an egg at everything the cooks throw. */
+  eggs?: boolean;
+  /** The line he threads down the street: [distance, x] and so on. */
+  lane?: [number, number][];
+}
+
+/** Clear of every keg in the road, and near enough to each for it to be a push when the pin bursts it behind her. */
+const PAST_THE_KEGS: [number, number][] = [
+  [28, 0],
+  [36, -0.6],
+  [46, 0.7],
+  [58, 0],
+  [88, 0],
+  [96, -0.3],
+  [118, 0.5],
+  [130, -0.7],
+  [140, 0],
+];
+
+/** A driver for Rolling Pin Hill, reading only what a player can see, and hear coming. */
+export function runner(plan: Running = {}): Pilot {
+  return (game) => {
+    const cart = game.position;
+    const d = game.distance;
+    const course = game.course;
+    const square = course.square;
+    const pin = game.pin;
+    if (!square || !pin) return { lean: leanToward(game, 0) };
+    const way = plan.way ?? "square";
+    const half = course.width / 2;
+    const line = plan.lane ?? PAST_THE_KEGS;
+    const next = line.findIndex(([at]) => at > d);
+    let lane = next < 0 ? line[line.length - 1]![1] : next === 0 ? line[0]![1] : line[next - 1]![1] + ((line[next]![1] - line[next - 1]![1]) * (d - line[next - 1]![0])) / (line[next]![0] - line[next - 1]![0]);
+    const gone = pin.state === "gone" || pin.d > d + 2;
+    let brake = 0;
+    if (way === "square" && !gone) {
+      // Over to the right of the street, in at the top of the square, and wait.
+      const inside = square.x > 0 ? half + (square.x - half) * 0.5 : -half + (square.x + half) * 0.5;
+      if (d > square.d0 - 10) lane = d < square.d0 + 0.5 ? Math.sign(square.x) * (half - 1.2) : inside;
+      // Not until she is out of the road: the brake is what gets a cart caught.
+      if ((plan.brake ?? true) && Math.abs(cart.x) > half + 1.2) brake = 1;
+    }
+    if (plan.dawdle !== undefined && d > plan.dawdle) brake = 1;
+    const input: Input = { lean: leanToward(game, lane), brake };
+    const road = (x: number): number => (Math.abs(cart.x) > half ? cart.x : x);
+    if (plan.ranks ?? true) {
+      const wall = game.targets.find((target) => target.kind === "wall" && target.lit);
+      // Nothing is worth a round that the pin is about to see to.
+      const ahead = pin.state !== "gone" && pin.d > d;
+      const rank = game.targets.find((target) => {
+        if (target.kind !== "rank" || !target.lit || -target.at.z - d > 18 || ahead || plan.duck || game.speed >= RAM_SPEED) return false;
+        return game.mob.some((one) => one.state === "stand" && Math.abs(one.def.d + target.at.z) < 1 && Math.abs(one.def.x - (-target.at.z < square.d1 && way === "square" ? Math.max(lane, half + 2.5) : road(lane))) < 1.6);
+      });
+      if (rank) input.shoot = rank.id;
+      else if (wall && !ahead) input.shoot = wall.id;
+    }
+    const thrown = (kind: "keg" | "cook", id: number): boolean => game.eggFlights.some((egg) => kind in egg.aim && (egg.aim as Record<string, number>)[kind] === id);
+    if (way === "run") ride(game, input, plan);
+    if (!input.egg && plan.duck) {
+      const one = game.mob.find((cook) => cook.state === "stand" && cook.def.d > d + 3 && cook.def.d < d + 14 && Math.abs(cook.def.x - cart.x) < 1.6);
+      if (one && !thrown("cook", one.def.id)) input.egg = { cook: one.def.id };
+    }
+    if (!input.egg && plan.eggs) {
+      const pan = game.pans.find((one) => !one.doomed);
+      if (pan) input.egg = { pan: pan.id };
+    }
+    return input;
+  };
+}
+
 /** A fresh, sensible driver for whichever street this is. */
 export function pilotFor(course: CourseDef): Pilot {
   if (course.tower) return driver({ wain: true, eggs: true });
   if (course.seesaw) return tumbler({ eggs: true });
+  if (course.pin) return runner({ eggs: true });
   if (course.mill) return miller({ eggs: true });
   return course.cistern ? baker({ eggs: true }) : sapper({ eggs: true });
 }

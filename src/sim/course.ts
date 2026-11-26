@@ -148,6 +148,33 @@ export interface SeesawDef {
   toss: number;
 }
 
+/**
+ * The Queen's great rolling pin, slung across the street on a gantry. When the cart has gone
+ * under it, it is let go, and comes down the hill after her faster than she can roll, through
+ * whatever is in the road: her own kitchen, her own powder, her own barricade.
+ */
+export interface PinDef {
+  /** Where it hangs. */
+  d: number;
+  /** How high. */
+  up: number;
+  /** How much of the street it takes up: all of it. */
+  x0: number;
+  x1: number;
+}
+
+/**
+ * A market square opening off one side of the street: room to get out of the road. Its far
+ * side runs back in to the street over the last `taper` of it, behind a bank of woolsacks.
+ */
+export interface SquareDef {
+  d0: number;
+  d1: number;
+  /** Its far side. Positive is to the right of the street. */
+  x: number;
+  taper: number;
+}
+
 export interface CourseDef {
   name: string;
   /** Drivable width between the kerbs. */
@@ -172,6 +199,9 @@ export interface CourseDef {
   mill: MillDef | null;
   cistern: CisternDef | null;
   seesaw: SeesawDef | null;
+  pin: PinDef | null;
+  /** Must lie along exactly one piece of the street. */
+  square: SquareDef | null;
   /** Straw laid on the far side of a leap: a cart that comes down in it comes down soft. `deep` is a whole rick of it. */
   straw: { d0: number; d1: number; deep?: number } | null;
   /** Crossing this line ends the street: the town gate, or on the last street the roost yard. */
@@ -291,6 +321,8 @@ const BELL_TOWER_STREET: CourseDef = {
   mill: null,
   cistern: null,
   seesaw: null,
+  pin: null,
+  square: null,
   straw: null,
   finish: BELL.foot + 12,
   roost: null,
@@ -347,6 +379,8 @@ const POWDER_ROW: CourseDef = {
   mill: null,
   cistern: null,
   seesaw: null,
+  pin: null,
+  square: null,
   straw: null,
   finish: POWDER.foot + 12,
   roost: null,
@@ -405,6 +439,8 @@ const PUDDING_LANE: CourseDef = {
   // Its water gets as far as the charge and no further: the shield wall stays dry, and standing.
   cistern: { d: 28, x: KERB + 1.1, reach: 80 },
   seesaw: null,
+  pin: null,
+  square: null,
   straw: null,
   finish: PUDDING.foot + 12,
   roost: null,
@@ -470,8 +506,77 @@ const CAULDRON_GATE: CourseDef = {
   mill: null,
   cistern: null,
   seesaw: { d: TRESTLE, x: PLANK_X, half: 1.5, ...PLANK, drop: 5.2, toss: KITCHEN_WALL + 2.6 - (TRESTLE - 4.6) },
+  pin: null,
+  square: null,
   straw: { d0: KITCHEN_WALL + 3.5, d1: KITCHEN_WALL + 19, deep: 13 },
   finish: KITCHEN_WALL + 44,
+  roost: null,
+};
+
+// ---------------------------------------------------------------- Rolling Pin Hill
+
+const MARKET = { d0: 56, d1: 90 };
+const BARRICADE = 138;
+
+const ROLLING = lay([
+  [26, 0.03], // in under the gate, and under the thing itself, slung across the street
+  [MARKET.d0 + 14 - 26, 0.13],
+  [MARKET.d1 - MARKET.d0, 0.07], // the market square opens off the right of the street here
+  [146 - MARKET.d1, 0.13],
+  [8, 0.07],
+  [40, 0], // out through the town gate
+]);
+
+/**
+ * The Queen has had enough. Her great rolling pin hangs across the top of the street, and when
+ * the cart has gone under it her cooks let it go. It comes down the hill faster than a cart
+ * can, kerb to kerb, through everything: her kitchen, her kegs, her barricade at the bottom.
+ * There is no braking with that behind. But half way down the market square opens off the
+ * right of the street: a cart that turns in there, and holds back, can watch it go by, and then
+ * follow it down a street it has cleared. Or stay ahead of it all the way: the kegs it bursts
+ * behind her throw her on, the gilt keg throws her further, and the barricade wants a round.
+ */
+const ROLLING_PIN_HILL: CourseDef = {
+  name: "Rolling Pin Hill",
+  width: HALF * 2,
+  pieces: ROLLING.pieces,
+  tower: null,
+  windlass: null,
+  wain: null,
+  well: null,
+  sacks: null,
+  mob: ranks([
+    // Minding the way in to the square.
+    { d: MARKET.d0 + 5, xs: [6.4, 8.2, 10] },
+    { d: 102, xs: [-4, -2, 0, 2, 4] },
+    { d: 124, xs: [-4, -2, 0, 2, 4] },
+  ]),
+  clutter: numbered<ClutterDef>([pot(30, HUNG), barrel(38, -KERB), coop(48, -KERB), pot(52, -HUNG), barrel(72, -KERB), pot(96, HUNG), coop(108, KERB), pot(116, -HUNG), barrel(128, KERB), pot(134, HUNG)]),
+  pickups: numbered<PickupDef>([
+    { kind: "eggs", d: 12, x: -2.4 },
+    // In the square, for whoever has the sense to turn in.
+    { kind: "shot", d: MARKET.d0 + 13, x: 9.6 },
+    { kind: "eggs", d: MARKET.d0 + 19, x: 7.2 },
+    { kind: "shot", d: 94, x: -2.6 },
+  ]),
+  kegs: numbered<KegDef>([
+    // Nothing on the right above the square: that is her way in.
+    trap(36, 2.4),
+    trap(46, -2.4),
+    trap(96, 2.6),
+    trap(118, -2.4),
+    trap(130, 2.2),
+    // And one with a long match in it, at the top of the market, for anybody who means to stay in front.
+    charge(MARKET.d0 + 6, 0),
+  ]),
+  walls: [{ id: 0, d: BARRICADE, height: 2.8 }],
+  mill: null,
+  cistern: null,
+  seesaw: null,
+  pin: { d: 20, up: 5.6, x0: -HALF, x1: HALF },
+  square: { ...MARKET, x: HALF + 7, taper: 18 },
+  straw: null,
+  finish: ROLLING.foot + 12,
   roost: null,
 };
 
@@ -540,13 +645,15 @@ const MILLERS_LEAP: CourseDef = {
   mill: { d: 20, x: STONE_LANE, drop: 5.5 },
   cistern: null,
   seesaw: null,
+  pin: null,
+  square: null,
   straw: { d0: QUAY + STUMP + GORGE, d1: QUAY + STUMP + GORGE + 22 },
   finish: LEAP.foot + 6,
   roost: LEAP.foot + 32,
 };
 
 /** The streets of a run, in the order they are ridden. */
-export const STREETS: CourseDef[] = [BELL_TOWER_STREET, POWDER_ROW, PUDDING_LANE, CAULDRON_GATE, MILLERS_LEAP];
+export const STREETS: CourseDef[] = [BELL_TOWER_STREET, POWDER_ROW, PUDDING_LANE, CAULDRON_GATE, ROLLING_PIN_HILL, MILLERS_LEAP];
 export const COURSE: CourseDef = BELL_TOWER_STREET;
 
 /** How much of the street a piece carries, from x0 to x1. */
@@ -585,6 +692,20 @@ export function chasms(course: CourseDef): Array<{ d0: number; d1: number; y: nu
     if (after.d0 - before.d1 > 0.01) out.push({ d0: before.d1, d1: after.d0, y: Math.min(before.y1, after.y0) });
   }
   return out;
+}
+
+/**
+ * How far out from the middle of the street there is road at `d`, on one side (-1 left, 1
+ * right): the kerb, or where a square opens off that side its far wall, running back in to
+ * the kerb along the woolsacks at the bottom of it.
+ */
+export function edgeAt(course: CourseDef, d: number, side: number): number {
+  const half = course.width / 2;
+  const square = course.square;
+  if (!square || Math.sign(square.x) !== Math.sign(side) || d < square.d0 || d > square.d1) return half;
+  const far = Math.abs(square.x);
+  const turn = square.d1 - square.taper;
+  return d <= turn ? far : far - ((far - half) * (d - turn)) / square.taper;
 }
 
 export function courseEnd(course: CourseDef): number {

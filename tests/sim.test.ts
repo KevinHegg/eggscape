@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { baker, driver, idle, leanAt, leanToward, miller, pilotFor, play, sapper, steady, tumbler, type Pilot } from "../src/sim/autoplay";
+import { baker, driver, idle, leanAt, leanToward, miller, pilotFor, play, runner, sapper, steady, tumbler, type Pilot } from "../src/sim/autoplay";
 import { COURSE, STREETS, type CourseDef } from "../src/sim/course";
 import { BRAKE_FLOOR, DUCK, EGG_BASKET, Game, KEG_KICK, KICK_BRAKED, KICK_TOP, MAX_AMMO, RAM_SPEED, SHOT_PILE, START_AMMO, START_EGGS, STONE_PACE, type Carry, type GameEvent, type Input } from "../src/sim/game";
 
@@ -21,6 +21,7 @@ const POWDER_ROW = street("Powder Row");
 const PUDDING_LANE = street("Pudding Lane");
 const MILLERS_LEAP = street("Miller's Leap");
 const CAULDRON_GATE = street("Cauldron Gate");
+const ROLLING_PIN_HILL = street("Rolling Pin Hill");
 const lane = (TOWER.x0 + TOWER.x1) / 2;
 
 test("a cart nobody drives does not get home", async () => {
@@ -334,7 +335,7 @@ test("a sensible driver rides every street home without a mark", async () => {
   let carry: Carry | undefined;
   let last: Game | null = null;
   let time = 0;
-  assert.deepEqual(STREETS.map((one) => one.name), ["Bell Tower Street", "Powder Row", "Pudding Lane", "Cauldron Gate", "Miller's Leap"]);
+  assert.deepEqual(STREETS.map((one) => one.name), ["Bell Tower Street", "Powder Row", "Pudding Lane", "Cauldron Gate", "Rolling Pin Hill", "Miller's Leap"]);
   for (const course of STREETS) {
     const { game } = await run(pilotFor(course), () => false, course, carry);
     assert.ok(game.phase === "through" || game.phase === "won", `${course.name}: ${game.phase} ${game.cause} at ${Math.round(game.distance)} m`);
@@ -701,6 +702,94 @@ test("Cauldron Gate replays exactly, over the wall and through it", async () => 
       const { game, events } = await run(pilot(), () => false, CAULDRON_GATE);
       const p = game.position;
       return JSON.stringify([game.tick, p.x, p.y, p.z, game.shell, game.eggs, game.ammo, events.length]);
+    };
+    assert.equal(await sign(), await sign());
+  }
+});
+
+// ---------------------------------------------------------------- Rolling Pin Hill
+
+const MARKET = ROLLING_PIN_HILL.square!;
+const HALF_STREET = ROLLING_PIN_HILL.width / 2;
+
+test("nobody gets down Rolling Pin Hill by sitting still, and the brake is no friend with that behind her", async () => {
+  const still = await run(idle, () => false, ROLLING_PIN_HILL);
+  assert.equal(still.game.phase, "broken");
+  assert.ok(count(still.events, "pinLoose") === 1, "they let it go as soon as she was under it");
+  // Everything else done right, and the brake on in the open street.
+  const slow = await run(runner({ way: "run", eggs: true, dawdle: 100 }), () => false, ROLLING_PIN_HILL);
+  assert.equal(slow.game.phase, "broken");
+  assert.equal(slow.game.cause, "rolled");
+});
+
+test("turn in to the square and hold back: the pin goes by, and clears the street for her", async () => {
+  let beside = 0;
+  const { game, events } = await run(runner({ eggs: true }), (current) => {
+    if (!beside && current.pin!.passed) beside = current.position.x;
+    return false;
+  }, ROLLING_PIN_HILL);
+  assert.equal(count(events, "pinPast"), 1);
+  assert.ok(beside > HALF_STREET + 0.8 && beside < MARKET.x, `she was in the square when it went by: x ${beside.toFixed(1)}`);
+  assert.equal(game.phase, "through");
+  assert.equal(game.stars, 3, `shell ${game.shell} knocks ${game.knocks}`);
+  const flat = events.filter((event) => event.type === "bowled" && event.by === "pin").length;
+  assert.equal(flat, 10, "both ranks below the square, every one of them");
+  assert.ok(game.kegs.filter((keg) => keg.def.d > MARKET.d1).every((keg) => keg.state === "gone"), "it burst every keg in its road");
+  assert.equal(game.walls[0]!.state, "down", "and went through her barricade");
+  assert.ok(count(events, "shoot") <= 1, "one round at most, for the cooks at the mouth of the square");
+  assert.equal(count(events, "kick"), 0, "all of it ahead of her: nothing to push");
+});
+
+test("an egg apiece gets her past the cooks at the mouth of the square without a round", async () => {
+  const { game, events } = await run(runner({ eggs: true, duck: true }), () => false, ROLLING_PIN_HILL);
+  assert.equal(game.phase, "through");
+  assert.equal(count(events, "shoot"), 0);
+  assert.equal(game.stars, 3, `shell ${game.shell} knocks ${game.knocks}`);
+});
+
+test("the woolsacks at the bottom of the square turn her back in to the street without a mark", async () => {
+  const inside = (HALF_STREET + MARKET.x) / 2;
+  let before = -1;
+  let leaned = false;
+  // In, and never steered out again: only the sacks to do it.
+  const { game } = await run((current) => {
+    const d = current.distance;
+    const lean = d < MARKET.d0 - 9 ? leanToward(current, 0) : d < MARKET.d0 + 0.5 ? leanToward(current, HALF_STREET - 1.2) : d < MARKET.d1 + 2 ? leanToward(current, inside + 2) : leanToward(current, 0);
+    const input: Input = { lean, brake: d > MARKET.d0 && d < MARKET.d1 ? 1 : 0 };
+    const cook = current.mob.find((one) => one.state === "stand" && one.def.d > d + 3 && one.def.d < d + 14 && Math.abs(one.def.x - current.position.x) < 1.8);
+    if (cook) input.egg = { cook: cook.def.id };
+    if (before < 0 && d > MARKET.d1 - MARKET.taper - 2) before = current.shell + current.padding;
+    if (d > MARKET.d1 - MARKET.taper && d < MARKET.d1 && current.position.x < inside && current.velocity.x < -0.5) leaned = true;
+    return input;
+  }, (current) => current.distance > MARKET.d1 + 12, ROLLING_PIN_HILL);
+  assert.equal(game.phase, "run", `${game.phase} ${game.cause} at ${game.distance.toFixed(1)}`);
+  assert.ok(leaned, "it was the sacks that brought her across");
+  assert.ok(Math.abs(game.position.x) < HALF_STREET, "back in the street");
+  assert.equal(game.shell + game.padding, before, "and nothing lost by leaning on them");
+});
+
+test("staying in front of it: the powder it bursts behind her throws her on, and the barricade wants a round", async () => {
+  const { game, events } = await run(runner({ way: "run", eggs: true }), () => false, ROLLING_PIN_HILL);
+  assert.equal(game.phase, "through", `${game.phase} ${game.cause} at ${game.distance.toFixed(1)}`);
+  assert.equal(count(events, "pinPast"), 0, "it never got by");
+  assert.equal(game.pin!.state, "rolling");
+  assert.ok(game.pin!.d < game.distance, "still behind her at the gate");
+  const pushes = events.filter((event) => event.type === "kick" && event.gain > 1).length;
+  assert.ok(pushes >= 2, `thrown on by its own powder: ${pushes}`);
+  assert.equal(count(events, "brake"), 0);
+  assert.equal(game.walls[0]!.state, "down");
+  assert.ok(count(events, "shoot") >= 1, "her round, not its weight");
+  // Out of rounds at the bottom, it is the barricade or the pin.
+  const dry = await run(runner({ way: "run", eggs: true, ranks: false }), () => false, ROLLING_PIN_HILL);
+  assert.equal(dry.game.phase, "broken");
+});
+
+test("Rolling Pin Hill replays exactly, out of its road and in front of it", async () => {
+  for (const pilot of [() => runner({ eggs: true }), () => runner({ way: "run", eggs: true })]) {
+    const sign = async (): Promise<string> => {
+      const { game, events } = await run(pilot(), () => false, ROLLING_PIN_HILL);
+      const p = game.position;
+      return JSON.stringify([game.tick, p.x, p.y, p.z, game.shell, game.eggs, game.ammo, game.pin!.d, events.length]);
     };
     assert.equal(await sign(), await sign());
   }
