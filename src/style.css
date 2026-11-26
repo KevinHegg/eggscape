@@ -234,6 +234,8 @@ body {
 }
 
 #toast p.hint {
+  max-width: 92vw;
+  text-align: center;
   font-family: var(--ui);
   font-size: 18px;
   font-weight: 600;
@@ -314,7 +316,7 @@ body {
   position: relative;
   display: block;
   font-family: var(--display);
-  font-size: 28px;
+  font-size: clamp(20px, 6.2vw, 28px);
   line-height: 1;
 }
 
@@ -353,6 +355,98 @@ body {
 
 #bar button.active {
   background: var(--gold);
+  box-shadow: 0 4px 0 var(--ink), 0 0 0 3px var(--gold), 0 0 18px 4px rgb(233 172 34 / 0.8);
+}
+
+/* While a machine is working, a bar across the top of its button runs down. */
+#bar button::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 7px;
+  width: 100%;
+  transform-origin: left;
+  transform: scaleX(var(--live, 0));
+  background: var(--vermilion);
+}
+
+#bar #fire {
+  flex: 0.9;
+  border-radius: 50px 50px 14px 14px;
+  background: var(--vellum-dark);
+}
+
+#bar #fire::before,
+#bar #fire::after {
+  display: none;
+}
+
+#bar #fire.ready {
+  background: var(--vermilion);
+  color: #fff6e6;
+  animation: ready 0.5s infinite alternate;
+}
+
+@media (max-width: 600px) {
+  #bar button kbd {
+    display: none;
+  }
+}
+
+#bar #fire.empty strong {
+  opacity: 0.4;
+}
+
+@keyframes ready {
+  to {
+    box-shadow: 0 4px 0 var(--ink), 0 0 0 3px var(--gold), 0 0 16px 3px rgb(233 172 34 / 0.9);
+  }
+}
+
+#bar #rounds {
+  display: flex;
+  justify-content: center;
+  gap: 3px;
+  min-height: 15px;
+  margin-top: 6px;
+  opacity: 1;
+}
+
+#bar #rounds i {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+  background: var(--ink);
+}
+
+#bar #rounds i.keg {
+  width: 12px;
+  height: 15px;
+  margin-top: -2px;
+  border-radius: 3px;
+  background: var(--gold);
+}
+
+#sound {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  background: var(--vellum);
+  color: var(--ink);
+  font: 700 18px/1 var(--ui);
+  pointer-events: auto;
+  touch-action: none;
+}
+
+#sound.off {
+  opacity: 0.45;
+  text-decoration: line-through;
 }
 
 /* ------------------------------------------------------------------ cards */

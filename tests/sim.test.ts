@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { idle, play, steady, type Pilot } from "../src/sim/autoplay";
+import { driver, idle, play, steady, type Pilot } from "../src/sim/autoplay";
 import { COURSE } from "../src/sim/course";
 import { Game } from "../src/sim/game";
 import { PART_IDS, type PartId } from "../src/sim/parts";
 
 const CLASSIC: PartId[] = ["lever", "plane", "wedge"];
+/** Drives well but never touches the gun, so the towers get their say. */
+const unarmed = driver({ shoot: false });
 
 test("a cart left to itself does not get home", async () => {
   const out = await play(CLASSIC, idle);
@@ -55,7 +57,7 @@ test("the shield turns an arrow volley; without it a man is lost", async () => {
     }
     return seen;
   };
-  const guarded = await run(steady);
+  const guarded = await run(unarmed);
   assert.ok(guarded.blocked >= 1);
   assert.equal(guarded.lost, 0);
   // Stay right, clear of the first barricade, and never raise the shield.
@@ -67,8 +69,40 @@ test("a swatted stone brings down the tower that threw it", async () => {
   const game = await Game.create(CLASSIC);
   let down = false;
   while (!game.over && game.distance < 130 && !down) {
-    game.step(steady(game));
+    game.step(unarmed(game));
     down ||= game.takeEvents().some((event) => event.type === "towerDown" && event.tower === "m1");
   }
   assert.ok(down);
+});
+
+test("the gun brings a tower down, and a dry gun says so", async () => {
+  const game = await Game.create(CLASSIC);
+  const seen = new Set<string>();
+  assert.ok(game.ammo.length > 0);
+  while (!game.over && game.distance < 60) {
+    game.step({ lean: 0, fire: [], shoot: game.target?.kind === "tower" });
+    for (const event of game.takeEvents()) seen.add(event.type);
+  }
+  assert.ok(seen.has("shoot") && seen.has("bang") && seen.has("towerDown"), [...seen].join(","));
+  const empty = await Game.create(CLASSIC, { ...COURSE, pickups: [] });
+  let dry = false;
+  for (let step = 0; step < 600 && !empty.over; step += 1) {
+    empty.step({ lean: 0, fire: [], shoot: true });
+    dry ||= empty.takeEvents().some((event) => event.type === "dry");
+  }
+  assert.ok(dry);
+  assert.equal(empty.ammo.length, 0);
+});
+
+test("the leaps are real air, and a rolling cart lands them whole", async () => {
+  const game = await Game.create(["pulley", "screw", "wheel"], { ...COURSE, walls: [], towers: [], oil: [], pickups: [] });
+  const airs: number[] = [];
+  while (!game.over && game.time < 60) {
+    game.step({ lean: 0, fire: [] });
+    for (const event of game.takeEvents()) if (event.type === "air") airs.push(event.time);
+  }
+  assert.equal(game.phase, "won");
+  assert.equal(airs.length, 3);
+  assert.ok(Math.max(...airs) > 1.8, `longest flight ${Math.max(...airs).toFixed(2)}s`);
+  assert.ok(game.shell > 90, `shell ${game.shell}`);
 });

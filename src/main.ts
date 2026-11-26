@@ -1,6 +1,8 @@
 import "./style.css";
+import { Sound } from "./audio";
 import { View } from "./render/view";
 import { steady } from "./sim/autoplay";
+import { chasms } from "./sim/course";
 import { Game, MAX_MEN, STEP, initPhysics, type GameEvent } from "./sim/game";
 import { PARTS, PART_IDS, SLOTS, type PartId } from "./sim/parts";
 
@@ -10,14 +12,15 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getEl
 interface Saved {
   build: PartId[];
   best: number;
+  muted: boolean;
 }
 
 function load(): Saved {
-  const fallback: Saved = { build: ["lever", "plane", "wedge"], best: 0 };
+  const fallback: Saved = { build: ["lever", "plane", "wedge"], best: 0, muted: false };
   try {
     const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null") as Partial<Saved> | null;
     const build = (raw?.build ?? []).filter((part): part is PartId => PART_IDS.includes(part as PartId));
-    return { build: build.length === SLOTS ? build : fallback.build, best: Number(raw?.best) || 0 };
+    return { build: build.length === SLOTS ? build : fallback.build, best: Number(raw?.best) || 0, muted: raw?.muted === true };
   } catch {
     return fallback;
   }
@@ -34,6 +37,9 @@ function save(): void {
 const saved = load();
 const auto = new URLSearchParams(location.search).has("auto");
 const view = new View($("stage"));
+const sound = new Sound();
+sound.muted = saved.muted;
+view.onStray = (distance) => sound.thud(distance);
 let game: Game | null = null;
 let running = false;
 let resultShown = false;
@@ -41,6 +47,13 @@ let accumulator = 0;
 const held = new Map<number, number>();
 const keys = new Set<string>();
 let queue: PartId[] = [];
+/** The Fire button was pressed and the sim has not yet heard. */
+let trigger = false;
+/** Seconds the world holds its breath after a big hit. */
+let freeze = 0;
+let felled = 0;
+let flying = false;
+let rounds = "";
 const hinted = new Map<string, number>();
 let leaned = false;
 
@@ -61,6 +74,11 @@ async function stage(run: boolean): Promise<void> {
   resultShown = false;
   accumulator = 0;
   queue = [];
+  trigger = false;
+  freeze = 0;
+  felled = 0;
+  flying = false;
+  rounds = "?";
   held.clear();
   if (run) drawBar();
 }
@@ -111,11 +129,24 @@ function drawBar(): void {
       });
       return button;
     }),
+    fireButton(),
   );
   const pips = (host: HTMLElement, count: number): void => host.replaceChildren(...Array.from({ length: count }, () => document.createElement("i")));
   pips($("crew"), MAX_MEN);
   pips($("hay"), 2);
   $("lean-hint").classList.toggle("gone", leaned);
+}
+
+function fireButton(): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.id = "fire";
+  button.innerHTML = `<kbd>space</kbd><strong>Fire</strong><span id="rounds"></span>`;
+  button.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    trigger = true;
+  });
+  return button;
 }
 
 function drawHud(current: Game): void {
@@ -130,9 +161,19 @@ function drawHud(current: Game): void {
     if (!state) continue;
     const def = PARTS[state.part];
     button.style.setProperty("--cool", String(state.cooldown / def.cooldown));
-    button.classList.toggle("cooling", state.cooldown > 0);
+    button.style.setProperty("--live", String(state.active / def.active));
+    button.classList.toggle("cooling", state.cooldown > 0 && state.active <= 0);
     button.classList.toggle("active", state.active > 0);
   }
+  // The gun: what is in the rack, next round first, and whether it has anything to shoot at.
+  const rack = current.ammo.join(",");
+  if (rack !== rounds) {
+    rounds = rack;
+    $("rounds").innerHTML = current.ammo.length ? current.ammo.map((kind) => `<i class="${kind}"></i>`).join("") : "empty";
+  }
+  const fire = $("fire");
+  fire.classList.toggle("empty", current.ammo.length === 0);
+  fire.classList.toggle("ready", current.ammo.length > 0 && current.target !== null);
 }
 
 function toast(text: string, kind: "" | "hint" | "bad" = ""): void {
@@ -156,41 +197,105 @@ function hint(key: string, text: string): void {
 function narrate(event: GameEvent, current: Game): void {
   const has = (part: PartId): boolean => current.build.includes(part);
   switch (event.type) {
+    case "machine":
+      if (event.part === "plane") sound.shield();
+      else if (event.part === "wheel") sound.whoosh();
+      else if (event.part === "screw") sound.hop();
+      else if (event.part === "wedge") sound.smash();
+      else if (event.part === "pulley") sound.brace();
+      break;
+    case "shoot":
+      sound.cannon();
+      break;
+    case "bang":
+      sound.bang(false);
+      freeze = 0.05;
+      if (event.hit === "wall") toast("Breach!");
+      break;
+    case "blast":
+      sound.bang(true);
+      freeze = 0.08;
+      toast("Boom!");
+      break;
+    case "dry":
+      sound.click();
+      if (event.why === "empty") hint("dry", "No shot left: your people leave more by the road");
+      else hint("aimless", "Nothing in range: Fire when a gold ring marks a target");
+      break;
+    case "air":
+      if (event.time > 1) toast(`${event.distance.toFixed(0)} metres of air!`);
+      break;
+    case "launch":
+      sound.swat(false);
+      break;
+    case "land":
+      sound.bump(10);
+      break;
+    case "plough":
+      sound.splinter();
+      break;
+    case "manLost":
+      sound.lost();
+      break;
+    case "broken":
+      sound.splat();
+      break;
+    case "finish":
+      sound.fanfare();
+      break;
     case "windup":
+      sound.windup();
       if (has("lever")) hint("stone", "Stone coming: Swat as the ring fills");
       else if (has("plane")) hint("stone", "Stone coming: Shield as the ring fills");
       else hint("stone", "Stone coming: lean out of the red ring");
       break;
     case "aim":
+      sound.windup();
       hint("archers", has("plane") ? "Archers: raise the Shield" : "Archers: they pick off your men");
       break;
     case "swat":
+      sound.swat(true);
       toast("Swat!");
       break;
     case "whiff":
+      sound.swat(false);
       toast("Whiff");
       break;
     case "towerDown":
+      felled += 1;
+      sound.rubble(8, 0.05);
       toast("Tower down!");
       break;
     case "deflect":
+      sound.clang();
       toast("Glanced off!");
       break;
     case "volley":
-      if (event.blocked) toast("Arrows turned!");
-      else toast(event.lostMan ? "Man overboard!" : "Arrows!", "bad");
+      sound.twang();
+      if (event.blocked) {
+        sound.clang();
+        toast("Arrows turned!");
+      } else toast(event.lostMan ? "Man overboard!" : "Arrows!", "bad");
       break;
     case "pickup":
-      toast(event.kind === "hay" ? "Hay!" : event.kind === "man" ? "All aboard!" : "Boom!");
+      sound.pickup(event.kind === "shot" || event.kind === "keg");
+      toast({ hay: "Hay from the farmers!", man: "A volunteer!", shot: "Shot from the smith!", keg: "The Queen's own powder!" }[event.kind]);
+      if (event.kind === "hay") hint("hay", "Hay takes the next knock for him");
+      else if (event.kind === "man") hint("man", "More men, harder lean");
+      else if (event.kind === "shot") hint("shot", "Two more rounds: Fire at the gold ring");
+      else hint("keg", "A powder keg goes next, and goes big");
       break;
     case "hayLost":
       toast("Lost a bale");
       break;
     case "crack":
+      sound.crack(true);
       if (event.stage < 3) toast("Crack!", "bad");
       break;
     case "jolt":
+      if (event.amount + event.absorbed > 2) sound.bump(event.amount + event.absorbed);
       if (event.amount > 1) {
+        sound.crack(false);
         $("shell").classList.remove("hit");
         void $("shell").offsetWidth;
         $("shell").classList.add("hit");
@@ -224,6 +329,7 @@ function showResult(current: Game): void {
   const rows: Array<[string, string]> = [
     ["Shell", `${Math.round(current.shell)}%`],
     ["King's men aboard", `${current.men} of ${MAX_MEN}`],
+    ["Towers brought down", `${felled} of ${current.towers.length}`],
     ["Time", `${(current.time - current.after).toFixed(1)} s`],
   ];
   $("result-stats").innerHTML = rows.map(([label, value]) => `<li><span>${label}</span><span>${value}</span></li>`).join("");
@@ -262,6 +368,11 @@ window.addEventListener("keydown", (event) => {
     const part = saved.build[Number(key) - 1];
     if (part) queue.push(part);
   }
+  if (running && (key === " " || key === "f" || key === "4")) {
+    event.preventDefault();
+    trigger = true;
+  }
+  if (key === "m") toggleSound();
   if (key === "r" && (running || resultShown)) void start();
 });
 window.addEventListener("keyup", (event) => keys.delete(event.key.length === 1 ? event.key.toLowerCase() : event.key));
@@ -270,12 +381,35 @@ window.addEventListener("blur", () => {
   held.clear();
 });
 
+function toggleSound(): void {
+  saved.muted = !saved.muted;
+  save();
+  sound.setMuted(saved.muted);
+  drawSound();
+}
+
+function drawSound(): void {
+  const button = $("sound");
+  button.classList.toggle("off", saved.muted);
+  button.setAttribute("aria-pressed", String(!saved.muted));
+}
+
+$("sound").addEventListener("pointerdown", (event) => {
+  event.preventDefault();
+  sound.unlock();
+  toggleSound();
+});
+drawSound();
+
 async function start(): Promise<void> {
+  sound.unlock();
   await stage(true);
   show("run");
+  hint("start", "Friends leave gifts by the road: steer into them");
 }
 
 $("to-build").addEventListener("click", () => {
+  sound.unlock();
   drawBuild();
   show("build");
 });
@@ -293,7 +427,9 @@ function advance(current: Game, steps: number): void {
   for (let index = 0; index < steps; index += 1) {
     const fire = queue;
     queue = [];
-    const input = auto ? steady(current) : { lean: lean(), fire };
+    const shoot = trigger;
+    trigger = false;
+    const input = auto ? steady(current) : { lean: lean(), fire, shoot };
     current.step(input);
     for (const event of current.takeEvents()) {
       view.handle(event, current);
@@ -306,11 +442,21 @@ view.app.on("update", (dt: number) => {
   const current = game;
   if (!current) return;
   if (running) {
-    accumulator += Math.min(dt, 0.1);
+    // A big hit stops the clock for a few frames, so it lands.
+    freeze = Math.max(0, freeze - dt);
+    if (freeze <= 0) accumulator += Math.min(dt, 0.1);
     const steps = Math.floor(accumulator / STEP);
     accumulator -= steps * STEP;
     advance(current, Math.min(steps, 6));
     drawHud(current);
+    const airborne = current.airtime > 0.3 && current.phase === "run";
+    if (airborne && !flying) sound.air();
+    flying = airborne;
+    sound.roll(current.speed, current.grounded, current.phase === "run");
+    if (current.target && current.ammo.length > 0 && current.phase === "run") hint("fire", "Gold ring on a target: tap Fire");
+    if (chasms(current.course).some((gap) => gap.d0 > current.distance && gap.d0 - current.distance < 42)) {
+      hint("gap", current.build.includes("wheel") ? "Gap ahead: no Surge, or he overshoots the hill" : "Gap ahead: hold him straight");
+    }
     if (current.over && !resultShown && current.after > (current.phase === "won" ? 3.4 : 2.4)) showResult(current);
   }
   view.sync(current, dt);
@@ -326,11 +472,11 @@ Object.assign(window, {
     },
     view,
     start,
-    step(seconds: number, input: { lean?: number; fire?: PartId[] } = {}) {
+    step(seconds: number, input: { lean?: number; fire?: PartId[]; shoot?: boolean } = {}) {
       if (!game) return null;
       const steps = Math.round(seconds / STEP);
       for (let index = 0; index < steps; index += 1) {
-        game.step(auto ? steady(game) : { lean: input.lean ?? 0, fire: index === 0 ? (input.fire ?? []) : [] });
+        game.step(auto ? steady(game) : { lean: input.lean ?? 0, fire: index === 0 ? (input.fire ?? []) : [], shoot: input.shoot ?? false });
         for (const event of game.takeEvents()) {
           view.handle(event, game);
           narrate(event, game);

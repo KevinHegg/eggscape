@@ -1,5 +1,5 @@
 import * as pc from "playcanvas";
-import { courseEnd, heightAt, type CourseDef } from "../sim/course";
+import { chasms, courseEnd, heightAt, type CourseDef } from "../sim/course";
 import { MAX_MEN, type Game, type GameEvent, type Prop, type Tower, type Vec3 } from "../sim/game";
 import type { PartId } from "../sim/parts";
 
@@ -32,6 +32,10 @@ const INK = {
   oil: new pc.Color(0.17, 0.12, 0.16),
   danger: new pc.Color(0.9, 0.12, 0.08),
   blast: new pc.Color(1, 0.55, 0.1),
+  smoke: new pc.Color(0.2, 0.18, 0.18),
+  water: new pc.Color(0.2, 0.44, 0.62),
+  canvas: new pc.Color(0.9, 0.86, 0.76),
+  dome: new pc.Color(0.42, 0.62, 1),
 };
 
 interface Puff {
@@ -50,8 +54,38 @@ interface Arrow {
   blocked: boolean;
 }
 
+/** Someone standing by the road: the King's subjects cheer, the Queen's soldiers jeer, then run. */
+interface Folk {
+  root: pc.Entity;
+  arms: pc.Entity[];
+  at: Triple;
+  side: number;
+  phase: number;
+  tower: string | null;
+  fled: number;
+}
+
+/** A wild shot from the Queen's bombards, landing wide of the road. Spectacle only. */
+interface Stray {
+  entity: pc.Entity;
+  from: pc.Vec3;
+  to: pc.Vec3;
+  t: number;
+}
+
+interface Pulse {
+  entity: pc.Entity;
+  life: number;
+  total: number;
+  from: number;
+  to: number;
+}
+
 interface TowerLook {
   root: pc.Entity;
+  body: pc.Entity;
+  ruin: pc.Entity;
+  smoke: number;
   arm: pc.Entity | null;
   load: pc.Entity | null;
   archers: pc.Entity[];
@@ -67,6 +101,8 @@ export class View {
   private readonly camera: pc.Entity;
   private scene: pc.Entity;
   private scenery = 0;
+  private lively = 0;
+  private ringMesh: pc.Mesh | null = null;
 
   private cart: pc.Entity | null = null;
   private king: pc.Entity | null = null;
@@ -85,6 +121,25 @@ export class View {
   private puffs: Puff[] = [];
   private pool: pc.Entity[] = [];
   private arrows: Arrow[] = [];
+  private gun: pc.Entity | null = null;
+  private barrel: pc.Entity | null = null;
+  private gunKick = 0;
+  private dome: pc.Entity | null = null;
+  private domeRing: pc.Entity | null = null;
+  private domeFlash = 0;
+  private reticle: pc.Entity | null = null;
+  private shots = new Map<number, pc.Entity>();
+  private pulses: Pulse[] = [];
+  private folk: Folk[] = [];
+  private chicks: pc.Entity[] = [];
+  private sails: pc.Entity[] = [];
+  private fires: pc.Entity[] = [];
+  private strays: Stray[] = [];
+  private strayPool: pc.Entity[] = [];
+  private strayClock = 1.5;
+  private seed = 7;
+  private frame = 0;
+  private airLift = 0;
 
   private wobble = new pc.Vec3();
   private wobbleSpeed = new pc.Vec3();
@@ -93,6 +148,8 @@ export class View {
   private eye = new pc.Vec3(0, 12, 14);
   private gaze = new pc.Vec3(0, 0, -8);
   private snap = true;
+  /** Told how far from the cart each stray shot lands, so it can be heard. */
+  onStray: ((distance: number) => void) | null = null;
   /** "preview" circles the cart for the build screen; "run" chases it down the hill. */
   mode: "run" | "preview" = "run";
 
@@ -119,6 +176,7 @@ export class View {
       fog.end = 190;
     }
     this.scenery = this.app.batcher.addGroup("scenery", false, 400).id;
+    this.lively = this.app.batcher.addGroup("lively", true, 80).id;
 
     this.camera = new pc.Entity("camera");
     this.camera.addComponent("camera", { clearColor: INK.vellum, nearClip: 0.3, farClip: 260, fov: 50 });
@@ -204,6 +262,13 @@ export class View {
       dangerCore: this.paint("danger-core", INK.danger, { glow: 0.9, opacity: 0.6 }),
       blast: this.paint("blast", INK.blast, { glow: 1 }),
       dust: this.paint("dust", INK.vellum, { glow: 0.2 }),
+      smoke: this.paint("smoke", INK.smoke, { opacity: 0.55 }),
+      water: this.paint("water", INK.water, { gloss: 0.9 }),
+      canvas: this.paint("canvas", INK.canvas),
+      dome: this.paint("dome", INK.dome, { glow: 0.85, opacity: 0.42 }),
+      domeHit: this.paint("dome-hit", INK.gold, { glow: 1, opacity: 0.55 }),
+      aim: this.paint("aim", INK.gold, { glow: 1.1 }),
+      flash: this.paint("flash", new pc.Color(1, 0.86, 0.5), { glow: 1.2 }),
     };
   }
 
@@ -215,14 +280,55 @@ export class View {
     return entity;
   }
 
-  private shape(type: Shape, parent: pc.Entity, position: Triple, scale: Triple, material: pc.StandardMaterial, euler: Triple = [0, 0, 0], fixed = false): pc.Entity {
+  /** `fixed` true batches it with the still scenery; a number names another batch group. */
+  private shape(type: Shape, parent: pc.Entity, position: Triple, scale: Triple, material: pc.StandardMaterial, euler: Triple = [0, 0, 0], fixed: boolean | number = false): pc.Entity {
     const entity = new pc.Entity(type);
     entity.setLocalPosition(position[0], position[1], position[2]);
     entity.setLocalScale(scale[0], scale[1], scale[2]);
     entity.setLocalEulerAngles(euler[0], euler[1], euler[2]);
-    entity.addComponent("render", { type, material, castShadows: true, receiveShadows: true, batchGroupId: fixed ? this.scenery : -1 });
+    entity.addComponent("render", { type, material, castShadows: true, receiveShadows: true, batchGroupId: fixed === true ? this.scenery : fixed === false ? -1 : fixed });
     parent.addChild(entity);
     return entity;
+  }
+
+  /** A thin hoop lying flat, one metre across before scaling. */
+  private hoop(parent: pc.Entity, position: Triple, size: number, material: pc.StandardMaterial): pc.Entity {
+    if (!this.ringMesh) {
+      this.ringMesh = pc.Mesh.fromGeometry(this.app.graphicsDevice, new pc.TorusGeometry({ tubeRadius: 0.03, ringRadius: 0.5, segments: 40, sides: 8 }));
+      this.ringMesh.incRefCount(); // ours for good: it outlives every scene that borrows it
+    }
+    const entity = new pc.Entity("hoop");
+    entity.setLocalPosition(position[0], position[1], position[2]);
+    entity.setLocalScale(size, size, size);
+    entity.addComponent("render", { meshInstances: [new pc.MeshInstance(this.ringMesh, material)], castShadows: false, receiveShadows: false });
+    parent.addChild(entity);
+    return entity;
+  }
+
+  private person(position: Triple, coat: pc.StandardMaterial, hat: "helm" | "straw" | "hood", side: number, tower: string | null = null): Folk {
+    const m = this.m;
+    const batch = this.lively;
+    const root = this.group("person", this.scene, position);
+    root.setLocalScale(1.5, 1.5, 1.5);
+    this.shape("box", root, [0, 0.3, 0], [0.34, 0.52, 0.24], coat, [0, 0, 0], batch);
+    this.shape("sphere", root, [0, 0.7, 0], [0.28, 0.28, 0.28], m.skin, [0, 0, 0], batch);
+    if (hat === "helm") this.shape("cone", root, [0, 0.88, 0], [0.32, 0.22, 0.32], m.iron, [0, 0, 0], batch);
+    else if (hat === "straw") this.shape("cylinder", root, [0, 0.85, 0], [0.48, 0.05, 0.48], m.hay, [0, 0, 0], batch);
+    else this.shape("cone", root, [0, 0.9, 0], [0.32, 0.28, 0.32], coat, [0, 0, 0], batch);
+    const arms = [-1, 1].map((hand) => {
+      const arm = this.group("arm", root, [hand * 0.21, 0.5, 0], [0, 0, hand * -150]);
+      this.shape("box", arm, [0, 0.2, 0], [0.08, 0.4, 0.08], coat, [0, 0, 0], batch);
+      return arm;
+    });
+    const folk: Folk = { root, arms, at: position, side, phase: position[2] * 1.7 + position[0] * 3.1, tower, fled: 0 };
+    this.folk.push(folk);
+    return folk;
+  }
+
+  /** The view's own dice. Nothing here reaches the simulation. */
+  private chance(): number {
+    this.seed = (this.seed * 1664525 + 1013904223) >>> 0;
+    return this.seed / 4294967296;
   }
 
   private figure(parent: pc.Entity, position: Triple, coat: pc.StandardMaterial, fixed = false): pc.Entity {
@@ -253,6 +359,20 @@ export class View {
     this.cracks = [];
     this.kingArms = [];
     this.yolk = null;
+    this.gun = null;
+    this.barrel = null;
+    this.dome = null;
+    this.domeRing = null;
+    this.shots.clear();
+    this.pulses = [];
+    this.folk = [];
+    this.chicks = [];
+    this.sails = [];
+    this.fires = [];
+    this.strays = [];
+    this.strayPool = [];
+    this.strayClock = 1.5;
+    this.airLift = 0;
     this.wobble.set(0, 0, 0);
     this.wobbleSpeed.set(0, 0, 0);
     this.shake = 0;
@@ -269,15 +389,36 @@ export class View {
         const man = this.figure(root, [0, 0, 0], this.m.vermilion);
         man.setLocalScale(1.5, 1.5, 1.5);
         this.shape("box", man, [0.24, 0.62, 0], [0.08, 0.36, 0.08], this.m.vermilion, [0, 0, -25]);
+      } else if (pickup.kind === "shot") {
+        this.shape("box", root, [0, 0.12, 0], [1.2, 0.24, 1.2], this.m.oakDark);
+        for (const [x, y, z] of [[-0.26, 0.44, -0.24], [0.26, 0.44, -0.24], [0, 0.44, 0.26], [0, 0.82, -0.06]] as const) {
+          this.shape("sphere", root, [x, y, z], [0.5, 0.5, 0.5], this.m.iron);
+        }
       } else {
         this.shape("cylinder", root, [0, 0.55, 0], [0.95, 1.1, 0.95], this.m.oak);
-        this.shape("cylinder", root, [0, 0.55, 0], [1, 0.16, 1], this.m.vermilion);
+        this.shape("cylinder", root, [0, 0.55, 0], [1, 0.16, 1], this.m.lapis);
         this.shape("cylinder", root, [0, 1.16, 0], [0.12, 0.3, 0.12], this.m.gold);
+        this.shape("sphere", root, [0, 1.36, 0], [0.16, 0.16, 0.16], this.m.blast);
       }
       this.shape("cylinder", root, [0, 0.04, 0], [2.4, 0.03, 2.4], this.paint("pickup-ring", INK.gold, { glow: 0.6, opacity: 0.4 }));
+      this.hoop(root, [0, 0.08, 0], 2.7, this.m.aim);
       this.pickups.set(pickup.id, root);
     }
+    this.buildRoadside(game);
     this.buildCart(game);
+    // Drawn over everything, so a target is never hidden behind its own wall.
+    const sight = this.paint("sight", INK.gold, { glow: 1.1 });
+    sight.depthTest = false;
+    sight.update();
+    this.reticle = this.group("reticle", this.scene);
+    this.hoop(this.reticle, [0, 0, 0], 1, sight);
+    this.hoop(this.reticle, [0, 0, 0], 0.5, sight);
+    for (let tick = 0; tick < 4; tick += 1) {
+      const turn = (tick / 4) * Math.PI * 2;
+      const mark = this.shape("box", this.reticle, [Math.cos(turn) * 0.56, 0, Math.sin(turn) * 0.56], [0.22, 0.03, 0.05], sight, [0, (-turn * 180) / Math.PI, 0]);
+      if (mark.render) mark.render.castShadows = false;
+    }
+    this.reticle.enabled = false;
     this.app.batcher.generate();
   }
 
@@ -328,6 +469,45 @@ export class View {
       }
       this.shape("cylinder", this.scene, [x - wide * 0.12, heightAt(course, d - long * 0.1) + 0.05, -(d - long * 0.1)], [wide * 0.36, 0.02, long * 0.22], this.paint("oil-sheen", new pc.Color(0.5, 0.38, 0.56), { gloss: 0.95 }), tilt, true);
     }
+    // Each chasm is a ravine with a river in it, and what is left of the bridge.
+    for (const gap of chasms(course)) {
+      const lip = heightAt(course, gap.d0 - 0.01);
+      const far = heightAt(course, gap.d1 + 0.01);
+      const wide = gap.d1 - gap.d0;
+      this.shape("box", this.scene, [0, lip - 8.3, -(gap.d0 - 0.4)], [190, 16, 0.8], m.kerb, [0, 0, 0], true);
+      this.shape("box", this.scene, [0, far - 8.3, -(gap.d1 + 0.4)], [190, 16, 0.8], m.kerb, [0, 0, 0], true);
+      this.shape("box", this.scene, [0, Math.min(lip, far) - 9, -(gap.d0 + gap.d1) / 2], [190, 0.3, wide + 1], m.water, [0, 0, 0], true);
+      for (const side of [-1, 1]) {
+        // Splintered planks over the drop, and leaning posts with the King's colours as a warning.
+        this.shape("box", this.scene, [side * 2.6, lip - 0.02, -(gap.d0 + 0.5)], [2.2, 0.14, 1.5], m.oak, [side * 4, side * 9, 0], true);
+        this.shape("box", this.scene, [side * 1.2, lip - 0.3, -(gap.d0 + 0.9)], [1.1, 0.14, 2], m.oakDark, [-24, side * -14, 0], true);
+        this.shape("box", this.scene, [side * (half + 0.3), lip + 1.5, -(gap.d0 - 0.6)], [0.3, 3.4, 0.3], m.oakDark, [-12, 0, side * 8], true);
+        this.shape("box", this.scene, [side * (half + 0.3), far + 1.2, -(gap.d1 + 0.6)], [0.3, 3, 0.3], m.oakDark, [14, 0, side * -6], true);
+        for (const back of [10, 22]) {
+          const y = heightAt(course, gap.d0 - back);
+          this.shape("box", this.scene, [side * (half + 0.3), y + 2, -(gap.d0 - back)], [0.14, 4, 0.14], m.oakDark, [0, 0, 0], true);
+          this.shape("cone", this.scene, [side * (half + 0.3) - side * 0.5, y + 3.5, -(gap.d0 - back)], [0.6, 1.1, 0.08], back === 10 ? m.vermilion : m.gold, [0, 0, side * 90], true);
+        }
+      }
+      for (const [x, z] of [[-14, 0.3], [9, 0.6], [22, 0.45], [-30, 0.7]] as const) {
+        this.shape("sphere", this.scene, [x, Math.min(lip, far) - 8.9, -(gap.d0 + wide * z)], [2.4, 1.4, 1.8], m.stone, [0, x * 9, 0], true);
+      }
+    }
+    // Windmills on the skyline, turning.
+    for (const [d, side] of [[46, -1], [178, 1], [262, -1], [340, 1]] as const) {
+      if (d > courseEnd(course) - 20) continue;
+      const mill = this.group("mill", this.scene, [side * (half + 24), heightAt(course, d) - 0.2, -d]);
+      this.shape("cone", mill, [0, 5.2, 0], [5, 12, 5], m.canvas, [0, 0, 0], true);
+      this.shape("cone", mill, [0, 8.4, 0], [3.6, 2.6, 3.6], m.vermilion, [0, 0, 0], true);
+      const hub = this.group("sails", mill, [-side * 1.5, 7, 0]);
+      this.shape("cylinder", hub, [0, 0, 0], [0.5, 0.8, 0.5], m.oakDark, [0, 0, 90]);
+      for (let blade = 0; blade < 4; blade += 1) {
+        const arm = this.group("blade", hub, [0, 0, 0], [blade * 90, 0, 0]);
+        this.shape("box", arm, [0, 2.6, 0], [0.12, 5.2, 0.24], m.oakDark);
+        this.shape("box", arm, [0, 3.1, 0.5], [0.06, 3.6, 0.9], m.canvas);
+      }
+      this.sails.push(hub);
+    }
     // The gate he flees from.
     const gate = this.group("gate", this.scene, [0, 0, 13]);
     this.shape("box", gate, [0, 4.5, 0], [16, 9, 2.4], m.stone, [0, 0, 0], true);
@@ -368,12 +548,105 @@ export class View {
       return wing;
     });
     this.hen = { root: hen, head, wings };
+    // Her other chicks, and the whole village out to see him home.
+    for (let index = 0; index < 7; index += 1) {
+      const turn = (index / 7) * Math.PI * 1.3 - 0.2;
+      const chick = this.group("chick", roost, [Math.cos(turn) * 5.6, 0.2, 3.4 + Math.sin(turn) * 3]);
+      this.shape("sphere", chick, [0, 0.42, 0], [0.8, 0.76, 0.86], m.yolk, [0, 0, 0], this.lively);
+      this.shape("sphere", chick, [0, 0.92, 0.26], [0.5, 0.5, 0.5], m.yolk, [0, 0, 0], this.lively);
+      this.shape("cone", chick, [0, 0.9, 0.56], [0.16, 0.24, 0.16], m.vermilion, [90, 0, 0], this.lively);
+      this.chicks.push(chick);
+    }
+    const coats = [m.verdigris, m.hay, m.canvas, m.vermilion];
+    for (let index = 0; index < 10; index += 1) {
+      const side = index % 2 ? 1 : -1;
+      const d = course.finish - 6 + Math.floor(index / 2) * 5;
+      this.person([side * (half + 1.5 + (index % 3) * 0.5), heightAt(course, d) - 0.2, -d], coats[index % coats.length]!, index % 3 ? "straw" : "hood", side);
+    }
+  }
+
+  /** The verges: his subjects beside what they have left him, and the Queen's camps round her towers. */
+  private buildRoadside(game: Game): void {
+    const m = this.m;
+    const course = game.course;
+    const half = course.width / 2;
+    const coats = [m.verdigris, m.hay, m.canvas, m.oak];
+    const ground = (d: number): number => heightAt(course, d) - 0.2;
+    game.pickups.forEach((pickup, order) => {
+      const side = pickup.pos.x < 0 ? -1 : 1;
+      const d = -pickup.pos.z;
+      const edge = side * (half + 1.5);
+      for (let index = 0; index < 3; index += 1) {
+        const at = d + (index - 1) * 1.5;
+        this.person([edge + side * (index % 2) * 0.9, ground(at), -at], coats[(order + index) % coats.length]!, index === 1 ? "hood" : "straw", side);
+      }
+      // The King's pennant marks friends.
+      const y = ground(d + 3);
+      this.shape("box", this.scene, [edge + side * 0.4, y + 2, -(d + 3)], [0.12, 4, 0.12], m.oakDark, [0, 0, 0], true);
+      this.shape("box", this.scene, [edge + side * 0.4 - side * 0.6, y + 3.5, -(d + 3)], [1.1, 0.7, 0.06], m.vermilion, [0, 0, 0], true);
+      this.shape("box", this.scene, [edge + side * 0.4 - side * 0.6, y + 3.5, -(d + 3)], [1.14, 0.16, 0.08], m.gold, [0, 0, 0], true);
+      const x = edge + side * 2.8;
+      const base = ground(d);
+      if (pickup.kind === "hay") {
+        this.shape("cone", this.scene, [x, base + 1.1, -d], [2.8, 2.2, 2.8], m.hay, [0, 0, 0], true);
+        this.shape("box", this.scene, [x - side * 1.6, base + 0.35, -(d - 1.6)], [1, 0.7, 0.7], m.hay, [0, 20, 0], true);
+      } else if (pickup.kind === "man") {
+        this.shape("cone", this.scene, [x, base + 1.2, -d], [2.6, 2.4, 2.6], m.vermilion, [0, 0, 0], true);
+        this.shape("cylinder", this.scene, [x - side * 1.7, base + 0.4, -(d - 1.2)], [0.8, 0.7, 0.8], m.gold, [0, 0, 0], true);
+      } else if (pickup.kind === "shot") {
+        this.shape("box", this.scene, [x, base + 0.6, -d], [1.6, 1.2, 1.4], m.stone, [0, 0, 0], true);
+        this.shape("box", this.scene, [x, base + 1.25, -d], [1, 0.14, 0.8], m.blast, [0, 0, 0], true);
+        this.shape("box", this.scene, [x - side * 1.6, base + 0.45, -(d - 1)], [0.8, 0.3, 0.4], m.iron, [0, 0, 0], true);
+        this.shape("cylinder", this.scene, [x - side * 1.6, base + 0.15, -(d - 1)], [0.6, 0.3, 0.6], m.oak, [0, 0, 0], true);
+      } else {
+        for (const [dx, dz] of [[0, 0], [0.9, 0.5], [0.4, -0.8]] as const) {
+          this.shape("cylinder", this.scene, [x + dx, base + 0.5, -(d + dz)], [0.8, 1, 0.8], m.oak, [0, 0, 0], true);
+          this.shape("cylinder", this.scene, [x + dx, base + 0.5, -(d + dz)], [0.84, 0.14, 0.84], m.lapis, [0, 0, 0], true);
+        }
+      }
+    });
+    for (const tower of game.towers) {
+      const side = tower.def.side;
+      const d = tower.def.d;
+      const out = tower.pos.x + side * 4.4;
+      const y = ground(d);
+      // Tents, a fire, a rack of spears: the Queen's men have been here a while.
+      for (const [dx, dz, size] of [[0, 4, 1], [2.6, -3.4, 0.8]] as const) {
+        const tx = out + side * dx;
+        this.shape("cone", this.scene, [tx, y + 1.3 * size, -(d + dz)], [3.2 * size, 2.6 * size, 3.2 * size], m.canvas, [0, 0, 0], true);
+        this.shape("cone", this.scene, [tx, y + 2.3 * size, -(d + dz)], [1.3 * size, 1.1 * size, 1.3 * size], m.lapis, [0, 0, 0], true);
+      }
+      this.shape("box", this.scene, [out, y + 2.6, -(d - 1)], [0.12, 5.2, 0.12], m.oakDark, [0, 0, 0], true);
+      this.shape("box", this.scene, [out - side * 0.8, y + 4.6, -(d - 1)], [1.5, 0.9, 0.06], m.lapis, [0, 0, 0], true);
+      this.shape("box", this.scene, [out - side * 0.8, y + 4.6, -(d - 1)], [0.5, 0.94, 0.08], m.canvas, [0, 0, 0], true);
+      const fire = this.shape("sphere", this.scene, [side * (half + 2.2), y + 0.4, -(d - 4.4)], [0.7, 0.9, 0.7], m.blast);
+      if (fire.render) fire.render.castShadows = false;
+      this.fires.push(fire);
+      this.shape("cylinder", this.scene, [side * (half + 2.2), y + 0.08, -(d - 4.4)], [1.2, 0.16, 1.2], m.ink, [0, 0, 0], true);
+      if (tower.def.kind === "mangonel") {
+        for (const [dx, dy, dz] of [[0, 0.35, 0], [0.7, 0.35, 0.3], [0.3, 0.9, 0.1]] as const) {
+          this.shape("sphere", this.scene, [tower.pos.x + side * (2.6 + dx), y + dy, -(d + 2.6 + dz)], [0.8, 0.8, 0.8], m.stone, [0, 0, 0], true);
+        }
+      }
+      for (const dz of [-3, 3.2, 5]) {
+        this.person([side * (half + 1.5 + (dz > 4 ? 1.2 : 0)), ground(d + dz), -(d + dz)], m.lapis, "helm", side, tower.def.id);
+      }
+    }
   }
 
   private buildTower(tower: Tower): TowerLook {
     const m = this.m;
-    const root = this.group("tower", this.scene, [tower.pos.x, tower.pos.y - 0.2, tower.pos.z]);
+    const base = this.group("tower", this.scene, [tower.pos.x, tower.pos.y - 0.2, tower.pos.z]);
     const side = tower.def.side;
+    // What is left when it goes: a scorched footing and a few stones too heavy to fly.
+    const ruin = this.group("ruin", base);
+    this.shape("cylinder", ruin, [0, 0.06, 0], [4.6, 0.12, 4.6], m.ink);
+    for (const [x, z, turn] of [[-0.8, 0.5, 20], [0.9, -0.4, -35], [0.1, 1, 60], [-0.3, -0.9, 10]] as const) {
+      this.shape("box", ruin, [x, 0.3, z], [0.9, 0.6, 0.8], m.stone, [turn / 3, turn, turn / 2]);
+    }
+    this.shape("box", ruin, [0.2, 0.7, 0], [0.22, 0.22, 2.6], m.oakDark, [28, 40, 0]);
+    ruin.enabled = false;
+    const root = this.group("body", base);
     if (tower.def.kind === "mangonel") {
       this.shape("box", root, [0, 0.35, 0], [3, 0.7, 3], m.stone);
       for (const z of [-0.9, 0.9]) {
@@ -387,20 +660,24 @@ export class View {
       this.shape("cylinder", arm, [0, 3.2, 0], [0.9, 0.2, 0.9], m.oak);
       const load = this.shape("sphere", arm, [0, 3.55, 0], [0.84, 0.84, 0.84], m.stone);
       this.shape("box", root, [1.3 * side, 2.6, 1.2], [0.1, 4.4, 0.1], m.oakDark);
-      this.shape("box", root, [1.3 * side, 4.3, 0.7], [0.06, 0.9, 1], m.vermilion);
-      return { root, arm, load, archers: [], fallen: 0, swing: 0 };
+      this.shape("box", root, [1.3 * side, 4.3, 0.7], [0.06, 0.9, 1], m.lapis);
+      return { root: base, body: root, ruin, smoke: 0, arm, load, archers: [], fallen: 0, swing: 0 };
     }
     this.shape("cylinder", root, [0, 2.2, 0], [3, 4.4, 3], m.stone);
     this.shape("cylinder", root, [0, 4.6, 0], [3.5, 0.5, 3.5], m.kerb);
     this.shape("cone", root, [0, 7.2, 0], [1.2, 2.2, 1.2], m.lapis);
     this.shape("cylinder", root, [0, 5.6, 0], [0.16, 2, 0.16], m.oakDark);
+    this.shape("box", root, [0, 8.6, 0.5], [0.06, 0.7, 1], m.lapis);
+    for (const turn of [0, 1, 2, 3, 4, 5]) {
+      this.shape("box", root, [Math.cos(turn * 1.047) * 1.6, 5.1, Math.sin(turn * 1.047) * 1.6], [0.6, 0.6, 0.6], m.stone, [0, -turn * 60, 0]);
+    }
     const archers = [-0.8, 0, 0.8].map((z) => {
       const archer = this.figure(root, [-side * 1.1, 4.8, z], m.lapis);
       archer.setLocalScale(1.3, 1.3, 1.3);
       this.shape("box", archer, [-side * 0.2, 0.36, 0], [0.05, 0.6, 0.05], m.oakDark);
       return archer;
     });
-    return { root, arm: null, load: null, archers, fallen: 0, swing: 0 };
+    return { root: base, body: root, ruin, smoke: 0, arm: null, load: null, archers, fallen: 0, swing: 0 };
   }
 
   private buildCart(game: Game): void {
@@ -462,6 +739,28 @@ export class View {
       this.bales.push(bale);
     }
 
+    // The bombard: a swivel gun on a post at the front, laid on whatever the sim has picked.
+    this.shape("cylinder", cart, [0, 0.52, -0.62], [0.2, 0.56, 0.2], m.oakDark);
+    const gun = this.group("gun", cart, [0, 0.86, -0.62]);
+    const barrel = this.group("barrel", gun);
+    this.shape("cylinder", barrel, [0, 0, -0.3], [0.3, 1, 0.3], m.iron, [90, 0, 0]);
+    this.shape("cylinder", barrel, [0, 0, -0.8], [0.38, 0.1, 0.38], m.gold, [90, 0, 0]);
+    this.shape("cylinder", barrel, [0, 0, 0.12], [0.4, 0.16, 0.4], m.gold, [90, 0, 0]);
+    this.gun = gun;
+    this.barrel = barrel;
+
+    // The shield's reach, drawn only while it is up.
+    const dome = this.shape("sphere", cart, [0, 0.5, -0.1], [3.4, 3, 4], m.dome);
+    if (dome.render) {
+      dome.render.castShadows = false;
+      dome.render.receiveShadows = false;
+    }
+    dome.enabled = false;
+    this.dome = dome;
+    this.domeRing = this.hoop(cart, [0, -0.25, -0.1], 3.6, m.aim);
+    this.domeRing.setLocalScale(3.5, 3.5, 4.1);
+    this.domeRing.enabled = false;
+
     for (const part of game.build) {
       const root = this.group(part, cart);
       this.parts.set(part, root);
@@ -508,6 +807,7 @@ export class View {
 
   sync(game: Game, dt: number): void {
     this.clock += dt;
+    this.frame += 1;
     const p = game.position;
     const q = game.rotation;
     const cart = this.cart;
@@ -565,11 +865,24 @@ export class View {
     this.syncProps(game);
     this.syncMarkers(game);
     this.syncTowers(game, dt);
+    this.syncGun(game, dt);
+    this.syncShots(game);
+    this.syncFolk(game, dt);
+    this.syncStrays(game, dt);
+    for (const sail of this.sails) sail.rotateLocal(dt * 55, 0, 0);
+    this.fires.forEach((fire, index) => {
+      const lick = 1 + Math.sin(this.clock * 17 + index * 2.3) * 0.25;
+      fire.setLocalScale(0.7 * lick, 0.9 * (2 - lick), 0.7 * lick);
+    });
     for (const pickup of game.pickups) {
       const look = this.pickups.get(pickup.id);
       if (!look) continue;
       look.enabled = !pickup.taken;
       look.setLocalEulerAngles(0, this.clock * 50, 0);
+      look.setLocalPosition(pickup.pos.x, pickup.pos.y + 0.12 + Math.sin(this.clock * 4 + pickup.id) * 0.12, pickup.pos.z);
+    }
+    if (game.isActive("wheel") && this.frame % 2 === 0) {
+      this.puff({ x: p.x, y: p.y + 0.5, z: p.z + 1.5 }, this.frame % 4 ? this.m.blast : this.m.flash, 0.7, 0.35, [0, 1.5, 4]);
     }
     this.syncEffects(dt);
     if (this.hen) {
@@ -579,6 +892,12 @@ export class View {
       this.hen.root.setLocalPosition(0, 0.4 + (home && !settled ? Math.abs(beat) * 0.5 : 0), settled ? -0.6 : -1.6);
       this.hen.head.setLocalEulerAngles(home ? 14 + beat * 10 : beat * 14, beat * 8, 0);
       this.hen.wings.forEach((wing, index) => wing.setLocalEulerAngles(0, 0, (index === 0 ? 1 : -1) * (home ? 35 + beat * 35 : 0)));
+      const near = game.course.roost - game.distance < 70;
+      this.chicks.forEach((chick, index) => {
+        const at = chick.getLocalPosition();
+        const hop = near ? Math.abs(Math.sin(this.clock * (home ? 11 : 6) + index * 1.9)) * (home ? 0.9 : 0.35) : 0;
+        chick.setLocalPosition(at.x, 0.2 + hop, at.z);
+      });
     }
     this.follow(game, dt);
   }
@@ -597,6 +916,156 @@ export class View {
     }
   }
 
+  private syncGun(game: Game, dt: number): void {
+    const target = game.target;
+    const running = this.mode === "run" && game.phase === "run";
+    if (this.gun) {
+      if (target && running) this.gun.lookAt(target.at.x, target.at.y + 1.5, target.at.z);
+      else this.gun.setLocalEulerAngles(14, 0, 0);
+      this.gunKick = Math.max(0, this.gunKick - dt * 5);
+      this.barrel?.setLocalPosition(0, 0, this.gunKick * 0.4);
+    }
+    if (this.reticle) {
+      const show = running && !!target && game.ammo.length > 0;
+      this.reticle.enabled = show;
+      if (show && target) {
+        const size = (target.kind === "tower" ? 4.4 : 3) * (1 + Math.sin(this.clock * 9) * 0.08);
+        this.reticle.setPosition(target.at.x, target.at.y + (target.kind === "tower" ? 0.6 : 0.5), target.at.z);
+        this.reticle.setLocalScale(size, size, size);
+        this.reticle.lookAt(this.camera.getPosition());
+        this.reticle.rotateLocal(90, 0, 0);
+        this.reticle.rotateLocal(0, this.clock * 60, 0);
+      }
+    }
+    if (this.dome && this.domeRing) {
+      const left = game.machine("plane")?.active ?? 0;
+      this.domeFlash = Math.max(0, this.domeFlash - dt);
+      // Steady while it holds, flickering as it is about to drop.
+      const on = left > 0 && (left > 0.4 || Math.sin(this.clock * 44) > -0.3);
+      this.dome.enabled = on;
+      this.domeRing.enabled = on;
+      if (on) {
+        const swell = 1 + Math.sin(this.clock * 12) * 0.03 + this.domeFlash * 0.5;
+        this.dome.setLocalScale(3.4 * swell, 3 * swell, 4 * swell);
+        if (this.dome.render) this.dome.render.material = this.domeFlash > 0 ? this.m.domeHit : this.m.dome;
+      }
+    }
+  }
+
+  /** Rounds from the cart's gun, lobbed along the line the sim gave them. */
+  private syncShots(game: Game): void {
+    const m = this.m;
+    const alive = new Set<number>();
+    for (const flight of game.flights) {
+      alive.add(flight.id);
+      let look = this.shots.get(flight.id);
+      if (!look) {
+        look = this.group("shot", this.scene);
+        if (flight.kind === "keg") {
+          this.shape("cylinder", look, [0, 0, 0], [0.7, 0.9, 0.7], m.oak);
+          this.shape("cylinder", look, [0, 0, 0], [0.74, 0.14, 0.74], m.lapis);
+          this.shape("sphere", look, [0, 0.55, 0], [0.22, 0.22, 0.22], m.flash);
+        } else {
+          this.shape("sphere", look, [0, 0, 0], [0.5, 0.5, 0.5], m.iron);
+        }
+        this.shots.set(flight.id, look);
+      }
+      const k = Math.min(1, flight.t / flight.total);
+      const reach = Math.hypot(flight.to.x - flight.from.x, flight.to.z - flight.from.z);
+      const at = {
+        x: flight.from.x + (flight.to.x - flight.from.x) * k,
+        y: flight.from.y + (flight.to.y - flight.from.y) * k + Math.sin(k * Math.PI) * (0.8 + reach * 0.06),
+        z: flight.from.z + (flight.to.z - flight.from.z) * k,
+      };
+      look.setPosition(at.x, at.y, at.z);
+      look.rotateLocal(17, 9, 0);
+      this.puff(at, flight.kind === "keg" ? m.flash : m.smoke, 0.4, 0.3, [0, 0.5, 0]);
+    }
+    for (const [id, look] of this.shots) {
+      if (alive.has(id)) continue;
+      look.destroy();
+      this.shots.delete(id);
+    }
+  }
+
+  private syncFolk(game: Game, dt: number): void {
+    const d = game.distance;
+    for (const folk of this.folk) {
+      const ahead = -folk.at[2] - d;
+      if (ahead < -30 || ahead > 80) continue;
+      let x = folk.at[0];
+      let quick = 8;
+      if (folk.tower) {
+        const tower = game.towers.find((candidate) => candidate.def.id === folk.tower);
+        if (tower && !tower.alive) {
+          // The tower is gone and so is their nerve.
+          folk.fled = Math.min(4, folk.fled + dt);
+          x += folk.side * folk.fled * 5;
+          quick = 22;
+        }
+      }
+      const near = ahead < 48 && ahead > -14;
+      const beat = near ? Math.abs(Math.sin(this.clock * quick + folk.phase)) : 0;
+      folk.root.setLocalPosition(x, folk.at[1] + beat * 0.4, folk.at[2]);
+      const wave = near ? 30 + Math.sin(this.clock * (quick + 3) + folk.phase) * 28 : 150;
+      folk.arms[0]!.setLocalEulerAngles(0, 0, wave);
+      folk.arms[1]!.setLocalEulerAngles(0, 0, folk.tower && folk.fled === 0 ? -150 : -wave);
+    }
+  }
+
+  /** The Queen's far bombards fire blind. Their shot lands in the fields either side: noise, dirt and no harm. */
+  private syncStrays(game: Game, dt: number): void {
+    const m = this.m;
+    const course = game.course;
+    if (this.mode === "run" && game.phase === "run" && game.distance > 18 && game.distance < course.finish - 30) {
+      this.strayClock -= dt;
+      if (this.strayClock <= 0) {
+        this.strayClock = 0.6 + this.chance() * 1.2;
+        const side = this.chance() < 0.5 ? -1 : 1;
+        const d = game.distance + 10 + this.chance() * 42;
+        const to = new pc.Vec3(side * (course.width / 2 + 3.5 + this.chance() * 14), heightAt(course, d) - 0.2, -d);
+        const from = new pc.Vec3(side * 44, to.y + 30, to.z - 26);
+        let entity = this.strayPool.pop();
+        if (!entity) {
+          entity = this.shape("sphere", this.scene, [0, 0, 0], [0.8, 0.8, 0.8], m.iron);
+          if (entity.render) entity.render.castShadows = false;
+        }
+        entity.enabled = true;
+        this.strays.push({ entity, from, to, t: 0 });
+      }
+    }
+    for (let index = this.strays.length - 1; index >= 0; index -= 1) {
+      const stray = this.strays[index]!;
+      stray.t += dt / 0.95;
+      if (stray.t >= 1) {
+        const at = { x: stray.to.x, y: stray.to.y, z: stray.to.z };
+        this.burst(at, m.dust, 8, 1.3, 5);
+        this.burst(at, m.grassDark, 6, 0.5, 7);
+        this.puff({ x: at.x, y: at.y + 0.6, z: at.z }, m.flash, 2.6, 0.22, [0, 1, 0]);
+        this.pulse(at, m.dust, 1, 7, 0.4);
+        const cart = game.position;
+        if (Math.hypot(at.x - cart.x, at.z - cart.z) < 14) this.shake = Math.min(1.4, this.shake + 0.3);
+        this.onStray?.(Math.hypot(at.x - cart.x, at.z - cart.z));
+        stray.entity.enabled = false;
+        this.strayPool.push(stray.entity);
+        this.strays.splice(index, 1);
+        continue;
+      }
+      const at = new pc.Vec3().lerp(stray.from, stray.to, stray.t);
+      at.y += Math.sin(stray.t * Math.PI) * 5;
+      stray.entity.setPosition(at);
+      if (this.frame % 2 === 0) this.puff({ x: at.x, y: at.y, z: at.z }, m.smoke, 0.5, 0.4, [0, 0.4, 0]);
+    }
+  }
+
+  /** A hoop spreading over the ground from `at`. */
+  private pulse(at: Vec3, material: pc.StandardMaterial, from: number, to: number, life: number, parent: pc.Entity = this.scene): void {
+    const entity = this.hoop(parent, [0, 0, 0], from, material);
+    if (parent === this.scene) entity.setPosition(at.x, at.y + 0.12, at.z);
+    else entity.setLocalPosition(at.x, at.y, at.z);
+    this.pulses.push({ entity, life, total: life, from, to });
+  }
+
   private syncProps(game: Game): void {
     const alive = new Set<number>();
     for (const prop of game.props) {
@@ -610,6 +1079,7 @@ export class View {
       const q = prop.body.rotation();
       look.setPosition(p.x, p.y, p.z);
       look.setRotation(q.x, q.y, q.z, q.w);
+      if (prop.kind === "stone" && !prop.landed && this.frame % 2 === 0) this.puff(p, this.m.dust, 0.55, 0.4, [0, 0.3, 0]);
     }
     for (const [id, look] of this.props) {
       if (alive.has(id)) continue;
@@ -631,7 +1101,11 @@ export class View {
       man.setLocalScale(1, 1, 1);
     } else if (prop.kind === "hay") this.shape("box", root, [0, 0, 0], [s.x * 2, s.y * 2, s.z * 2], m.hay);
     else if (prop.kind === "beam") this.shape("box", root, [0, 0, 0], [s.x * 2, s.y * 2, s.z * 2], m.oakDark);
-    else {
+    else if (prop.kind === "block") this.shape("box", root, [0, 0, 0], [s.x * 2, s.y * 2, s.z * 2], prop.id % 3 ? m.stone : m.kerb);
+    else if (prop.kind === "archer") {
+      const archer = this.figure(root, [0, -0.4, 0], m.lapis);
+      archer.setLocalScale(1.3, 1.3, 1.3);
+    } else {
       this.shape("sphere", root, [0, 0, 0], [0.8, 0.5, 0.8], m.egg);
       this.shape("sphere", root, [0, 0.08, 0], [0.5, 0.3, 0.5], m.yolk);
     }
@@ -667,11 +1141,19 @@ export class View {
       const look = this.towers.get(tower.def.id);
       if (!look) continue;
       const side = tower.def.side;
+      // Far towers are lost in the haze anyway; don't draw them.
+      const ahead = tower.def.d - game.distance;
+      look.root.enabled = ahead < 170 && ahead > -40;
+      if (!look.root.enabled) continue;
       if (!tower.alive) {
-        look.fallen = Math.min(1, look.fallen + dt * 1.4);
-        const k = look.fallen * look.fallen;
-        look.root.setLocalEulerAngles(0, 0, -side * k * 84);
-        look.root.setLocalPosition(tower.pos.x + side * k * 1.5, tower.pos.y - 0.2 - k * 1.2, tower.pos.z);
+        // The sim has thrown its stones and timbers into the world; what stays is the footing, smoking.
+        look.body.enabled = false;
+        look.ruin.enabled = true;
+        look.smoke -= dt;
+        if (look.smoke <= 0 && Math.abs(tower.def.d - game.distance) < 90) {
+          look.smoke = 0.22;
+          this.puff({ x: tower.pos.x + Math.sin(this.clock * 3) * 0.8, y: tower.pos.y + 0.6, z: tower.pos.z }, this.m.smoke, 1.5, 1.5, [side * 0.6, 3.2, 0]);
+        }
         continue;
       }
       if (look.arm) {
@@ -702,6 +1184,18 @@ export class View {
       puff.entity.translate(puff.velocity.x * dt, puff.velocity.y * dt, puff.velocity.z * dt);
       puff.velocity.y -= 2 * dt;
       puff.entity.setLocalScale(size, size, size);
+    }
+    for (let index = this.pulses.length - 1; index >= 0; index -= 1) {
+      const pulse = this.pulses[index]!;
+      pulse.life -= dt;
+      if (pulse.life <= 0) {
+        pulse.entity.destroy();
+        this.pulses.splice(index, 1);
+        continue;
+      }
+      const k = 1 - pulse.life / pulse.total;
+      const size = pulse.from + (pulse.to - pulse.from) * (1 - (1 - k) * (1 - k));
+      pulse.entity.setLocalScale(size, size * (1 - k) + 0.2, size);
     }
     for (let index = this.arrows.length - 1; index >= 0; index -= 1) {
       const arrow = this.arrows[index]!;
@@ -736,8 +1230,13 @@ export class View {
       eye = new pc.Vec3(portrait ? 2.5 : 7, roostY + (portrait ? 7 : 5), -game.course.roost + (portrait ? 16.5 : 15));
       gaze = new pc.Vec3(0, roostY + (portrait ? 0.5 : 2.6), -game.course.roost + 3);
     } else {
-      eye = new pc.Vec3(p.x * 0.55, p.y + (portrait ? 9.4 : 6.4), p.z + (portrait ? 9.5 : 9.5));
-      gaze = new pc.Vec3(p.x * 0.75, p.y + 0.6, p.z - (portrait ? 3.5 : 7));
+      // In the air the camera hangs back and up, so the drop and the landing are both in view.
+      this.airLift += ((game.airtime > 0.15 ? 1 : 0) - this.airLift) * Math.min(1, dt * 3.5);
+      const lift = this.airLift;
+      eye = new pc.Vec3(p.x * 0.55, p.y + (portrait ? 9.4 : 6.4) + lift * 2.6, p.z + 9.5 + lift * 4);
+      gaze = new pc.Vec3(p.x * 0.75, p.y + 0.6 - lift * 1.5, p.z - (portrait ? 3.5 : 7) - lift * 4);
+      // Never let the hill behind come between the camera and the cart.
+      eye.y = Math.max(eye.y, heightAt(game.course, -eye.z) + 3.4);
     }
     const k = this.snap ? 1 : Math.min(1, dt * (game.phase === "won" ? 2.2 : 7));
     this.snap = false;
@@ -788,17 +1287,46 @@ export class View {
     if (event.type === "plough") this.burst(event.at, m.dust, 3, 0.5, 3);
     if (event.type === "swat") this.burst({ x: cart.x + 0.8, y: cart.y + 1.2, z: cart.z - 1 }, m.gold, 7, 0.3, 6);
     if (event.type === "manLost" || event.type === "hayLost") this.burst({ x: cart.x, y: cart.y + 1, z: cart.z }, event.type === "hayLost" ? m.hay : m.vermilion, 5, 0.25, 4);
-    if (event.type === "pickup" && event.kind !== "keg") this.burst({ x: event.at.x, y: event.at.y + 0.6, z: event.at.z }, event.kind === "hay" ? m.hay : m.gold, 8, 0.3, 4);
+    if (event.type === "pickup") {
+      this.burst({ x: event.at.x, y: event.at.y + 0.6, z: event.at.z }, event.kind === "hay" ? m.hay : event.kind === "man" ? m.vermilion : m.gold, 8, 0.3, 4);
+      this.pulse(event.at, m.aim, 1.5, 6, 0.35);
+    }
+    if (event.type === "machine" && this.cart) {
+      const colour = { lever: m.aim, wedge: m.flash, plane: m.aim, pulley: m.aim, screw: m.dust, wheel: m.flash }[event.part];
+      this.pulse({ x: 0, y: -0.3, z: 0 }, colour, 1.2, event.part === "plane" ? 4.4 : 5.5, 0.32, this.cart);
+      if (event.part === "screw" || event.part === "wheel") this.burst({ x: cart.x, y: cart.y - 0.3, z: cart.z + 0.8 }, m.dust, 7, 0.7, 4);
+    }
+    if (event.type === "shoot" && this.gun) {
+      const mouth = this.gun.getPosition().clone().add(this.gun.forward.clone().mulScalar(1.1));
+      const at = { x: mouth.x, y: mouth.y, z: mouth.z };
+      this.gunKick = 1;
+      this.shake = Math.min(1.4, this.shake + 0.45);
+      this.puff(at, m.flash, 1.5, 0.14, [0, 0, 0]);
+      this.burst(at, m.smoke, 5, 0.6, 2.5);
+      this.burst(at, m.blast, 4, 0.25, 5);
+    }
+    if (event.type === "bang") {
+      this.shake = Math.min(1.4, this.shake + 0.9);
+      this.puff({ x: event.at.x, y: event.at.y + 0.4, z: event.at.z }, m.flash, event.hit === "tower" ? 6 : 3.4, 0.24, [0, 1, 0]);
+      this.burst(event.at, m.blast, 10, 0.9, 8);
+      this.burst(event.at, m.dust, 9, 1.4, 6);
+      this.pulse({ x: event.at.x, y: event.at.y - (event.hit === "tower" ? 2.6 : 0.7), z: event.at.z }, m.flash, 1.5, 11, 0.45);
+    }
     if (event.type === "blast") {
       this.shake = 1.4;
-      this.puff({ x: event.at.x, y: event.at.y + 1, z: event.at.z }, m.blast, 9, 0.45, [0, 2, 0]);
-      this.burst(event.at, m.blast, 12, 1.2, 9);
+      this.puff({ x: event.at.x, y: event.at.y + 1, z: event.at.z }, m.flash, 11, 0.45, [0, 2, 0]);
+      this.puff({ x: event.at.x, y: event.at.y + 2.5, z: event.at.z }, m.smoke, 7, 1.4, [0, 4, 0]);
+      this.burst(event.at, m.blast, 14, 1.3, 10);
       this.burst(event.at, m.dust, 10, 1.6, 6);
+      this.pulse(event.at, m.flash, 2, 18, 0.55);
     }
     if (event.type === "towerDown") {
-      this.burst({ x: event.at.x, y: event.at.y + 2.5, z: event.at.z }, m.dust, 12, 1.5, 5);
+      this.shake = Math.min(1.4, this.shake + 0.6);
+      this.burst({ x: event.at.x, y: event.at.y + 2.5, z: event.at.z }, m.dust, 14, 1.8, 6);
       this.burst({ x: event.at.x, y: event.at.y + 3.5, z: event.at.z }, m.gold, 6, 0.4, 7);
+      this.puff({ x: event.at.x, y: event.at.y + 3, z: event.at.z }, m.smoke, 5, 1.6, [0, 3, 0]);
     }
+    if (event.type === "deflect") this.domeFlash = 0.25;
     if (event.type === "launch") {
       const look = this.towers.get(event.tower);
       if (look) look.swing = 1;
@@ -817,7 +1345,10 @@ export class View {
           blocked: event.blocked,
         });
       }
-      if (event.blocked) this.burst({ x: cart.x, y: cart.y + 1.6, z: cart.z - 2 }, m.gold, 6, 0.25, 5);
+      if (event.blocked) {
+        this.burst({ x: cart.x, y: cart.y + 1.6, z: cart.z - 2 }, m.gold, 6, 0.25, 5);
+        this.domeFlash = 0.35;
+      }
     }
     if (event.type === "finish") {
       const roost = { x: 0, y: heightAt(game.course, game.course.roost) + 6, z: -game.course.roost };

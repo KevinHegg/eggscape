@@ -1,5 +1,5 @@
 import RAPIER from "@dimforge/rapier3d-compat";
-import { COURSE, courseEnd, heightAt, slopeAt, type CourseDef, type PickupKind, type TowerDef } from "./course";
+import { COURSE, courseEnd, heightAt, slopeAt, type CourseDef, type PickupKind, type TowerDef, type WallDef } from "./course";
 import { PARTS, type PartId } from "./parts";
 
 /** Fixed simulation step. Slow motion changes how many steps run, never the step. */
@@ -7,10 +7,10 @@ export const STEP = 1 / 60;
 const G = 9.81;
 
 // The cart.
-const START_SPEED = 8;
+const START_SPEED = 9;
 const MIN_SPEED = 9;
 const PUSH = 4.5;
-const DRAG = 0.0068;
+const DRAG = 0.0056;
 const WHEEL_RADIUS = 0.4;
 const SUSPENSION_REST = 0.34;
 const WHEEL_AT: ReadonlyArray<readonly [number, number]> = [
@@ -31,7 +31,12 @@ const HEADING_GAIN = 1.1;
 export const MAX_MEN = 3;
 
 // The egg.
+/** Rubble, lost bales and fallen men tumble over the road and each other, but never trip the cart. */
+const CART_GROUPS = (0x0002 << 16) | 0xffff;
+const RUBBLE_GROUPS = (0x0004 << 16) | 0xfffd;
 const JOLT_FLOOR = 0.55;
+const SPRING_TRAVEL = 4.5;
+const SPRING_RETURN = 9;
 const JOLT_SCALE = 13;
 const BRACE = 0.2;
 const HAY_POINTS = 22;
@@ -55,6 +60,15 @@ const BLAST_DAMAGE = 10;
 const HOP = 4.9;
 const SURGE = 6.5;
 
+// The gun.
+export const MAX_AMMO = 6;
+const START_AMMO: readonly AmmoKind[] = ["shot", "shot"];
+const GUN_COOLDOWN = 0.4;
+const GUN_RANGE = 72;
+const WALL_RANGE = 44;
+const SHOT_SPEED = 44;
+const SHOT_HOLE = 3.3;
+
 export interface Vec3 {
   x: number;
   y: number;
@@ -69,6 +83,26 @@ export interface Quat {
 }
 
 export type Phase = "run" | "won" | "broken";
+/** Round shot knocks down one thing; a keg takes everything near it. */
+export type AmmoKind = "shot" | "keg";
+
+/** What the gun will hit if fired now. */
+export interface Target {
+  kind: "tower" | "wall";
+  id: string;
+  at: Vec3;
+}
+
+/** A round on its way. */
+export interface Flight {
+  id: number;
+  kind: AmmoKind;
+  from: Vec3;
+  to: Vec3;
+  t: number;
+  total: number;
+  target: Target;
+}
 export type BreakCause = "jolt" | "spilled" | "fell";
 
 export type GameEvent =
@@ -90,9 +124,13 @@ export type GameEvent =
   | { type: "machine"; part: PartId }
   | { type: "plough"; at: Vec3 }
   | { type: "land"; at: Vec3 }
+  | { type: "shoot"; kind: AmmoKind }
+  | { type: "bang"; at: Vec3; hit: "tower" | "wall" }
+  | { type: "dry"; why: "empty" | "aimless" }
+  | { type: "air"; time: number; distance: number }
   | { type: "finish" };
 
-export type PropKind = "stone" | "crate" | "man" | "hay" | "beam" | "shell";
+export type PropKind = "stone" | "crate" | "man" | "hay" | "beam" | "shell" | "block" | "archer";
 
 /** A loose physical thing the view draws by id. */
 export interface Prop {
@@ -103,6 +141,8 @@ export interface Prop {
   size: Vec3;
   age: number;
   flung: boolean;
+  /** Crates: the wall they were stacked in. */
+  wall?: string;
   // Stones only.
   tower?: string;
   landed?: boolean;
@@ -122,6 +162,8 @@ export interface Tower {
   volleys: number;
   target: Vec3 | null;
   marker: number;
+  /** A round is already on its way to it. */
+  doomed: boolean;
 }
 
 export interface Marker {
@@ -150,6 +192,8 @@ export interface Input {
   lean: number;
   /** Machines fired this step. */
   fire: readonly PartId[];
+  /** Fire the gun this step. */
+  shoot?: boolean;
 }
 
 let ready: Promise<void> | null = null;
@@ -201,6 +245,13 @@ export class Game {
   grounded = true;
   /** How hard he was shaken this step, for the view's wobble. */
   jolt = 0;
+  /** Seconds off the ground in the present leap. */
+  airtime = 0;
+  /** Rounds aboard, next to fire first. */
+  ammo: AmmoKind[] = [...START_AMMO];
+  /** What the gun is laid on. */
+  target: Target | null = null;
+  readonly flights: Flight[] = [];
 
   readonly machines: MachineState[];
   readonly towers: Tower[] = [];
@@ -213,8 +264,13 @@ export class Game {
   private seed = 0x9e3779b9;
   private prevVel: Vec3;
   private joltSkip = 12;
+  /** How much of a landing the springs can still take, in metres per second. */
+  private spring = SPRING_TRAVEL;
   private tipTime = 0;
   private ploughSide = 1;
+  private gunCooldown = 0;
+  private airFrom = 0;
+  private readonly doomedWalls = new Set<string>();
 
   static async create(build: readonly PartId[], course: CourseDef = COURSE): Promise<Game> {
     await initPhysics();
@@ -240,9 +296,9 @@ export class Game {
         // Ballast slung low, so the cart rights itself after a knock.
         .setAdditionalMassProperties(70, { x: 0, y: -0.5, z: 0 }, { x: 60, y: 70, z: 28 }, { x: 0, y: 0, z: 0, w: 1 }),
     );
-    this.world.createCollider(RAPIER.ColliderDesc.cuboid(0.7, 0.2, 1.15).setMass(90).setFriction(0.25).setRestitution(0.1), this.chassis);
+    this.world.createCollider(RAPIER.ColliderDesc.cuboid(0.7, 0.2, 1.15).setMass(90).setFriction(0.25).setRestitution(0.1).setCollisionGroups(CART_GROUPS), this.chassis);
     // The King himself, riding high.
-    this.world.createCollider(RAPIER.ColliderDesc.ball(0.42).setTranslation(0, 0.78, 0.15).setMass(6).setFriction(0.3), this.chassis);
+    this.world.createCollider(RAPIER.ColliderDesc.ball(0.42).setTranslation(0, 0.78, 0.15).setMass(6).setFriction(0.3).setCollisionGroups(CART_GROUPS), this.chassis);
 
     this.vehicle = this.world.createVehicleController(this.chassis);
     this.vehicle.indexUpAxis = 1;
@@ -265,16 +321,17 @@ export class Game {
       const half = course.width / 2;
       this.towers.push({
         def,
-        pos: { x: def.side * (half + 3.4), y: heightAt(course, def.d), z: -def.d },
+        pos: { x: def.side * (half + 2.9), y: heightAt(course, def.d), z: -def.d },
         alive: true,
         windup: 0,
         cooldown: 0,
         volleys: 2,
         target: null,
         marker: 0,
+        doomed: false,
       });
     }
-    for (const wall of course.barricades) this.stackCrates(wall);
+    for (const wall of course.walls) this.stackCrates(wall);
     for (const item of course.pickups) {
       this.pickups.push({ id: this.nextId++, kind: item.kind, pos: { x: item.x, y: heightAt(course, item.d), z: -item.d }, taken: false });
     }
@@ -361,6 +418,10 @@ export class Game {
       machine.cooldown = Math.max(0, machine.cooldown - STEP);
     }
     if (!this.over) for (const part of input.fire) this.fire(part);
+    this.gunCooldown = Math.max(0, this.gunCooldown - STEP);
+    this.aim();
+    if (!this.over && input.shoot) this.shoot();
+    this.stepFlights();
 
     this.checkOil();
     this.steer(this.over ? 0 : input.lean);
@@ -372,7 +433,7 @@ export class Game {
       if (this.isActive("plane")) this.shield();
     }
 
-    this.vehicle.updateVehicle(STEP);
+    this.vehicle.updateVehicle(STEP, undefined, CART_GROUPS);
     this.world.step();
 
     this.stepProps();
@@ -397,6 +458,13 @@ export class Game {
       if (this.vehicle.wheelIsInContact(wheel)) contacts += 1;
     }
     this.grounded = contacts >= 2;
+    if (!this.grounded) {
+      if (this.airtime === 0) this.airFrom = this.distance;
+      this.airtime += STEP;
+    } else {
+      if (this.airtime > 0.5 && !this.over) this.events.push({ type: "air", time: this.airtime, distance: this.distance - this.airFrom });
+      this.airtime = 0;
+    }
   }
 
   private push(): void {
@@ -518,6 +586,96 @@ export class Game {
     }
   }
 
+  // ---------------------------------------------------------------- the gun
+
+  /** Whether any of a wall's crates still stand where they were stacked. */
+  wallStands(wall: WallDef): boolean {
+    return this.props.some((prop) => prop.wall === wall.id && !prop.flung && Math.abs(-prop.body.translation().z - wall.d) < 1.2);
+  }
+
+  /** Lay the gun on whatever is next in the way: the nearest tower or standing wall ahead. */
+  private aim(): void {
+    this.target = null;
+    if (this.over) return;
+    const cart = this.chassis.translation();
+    const d = -cart.z;
+    let nearest = Infinity;
+    for (const tower of this.towers) {
+      const ahead = tower.def.d - d;
+      if (!tower.alive || tower.doomed || ahead < -3 || ahead > GUN_RANGE || ahead >= nearest) continue;
+      nearest = ahead;
+      this.target = { kind: "tower", id: tower.def.id, at: { x: tower.pos.x, y: tower.pos.y + 2.6, z: tower.pos.z } };
+    }
+    for (const wall of this.course.walls) {
+      const ahead = wall.d - d;
+      if (ahead < 7 || ahead > WALL_RANGE || ahead >= nearest || this.doomedWalls.has(wall.id) || !this.wallStands(wall)) continue;
+      nearest = ahead;
+      // Aim at the stretch of wall in front of the cart, so the hole is where it's wanted.
+      const x = clamp(cart.x, wall.x0 + 0.9, wall.x1 - 0.9);
+      this.target = { kind: "wall", id: wall.id, at: { x, y: heightAt(this.course, wall.d) + 0.8, z: -wall.d } };
+    }
+  }
+
+  private shoot(): void {
+    if (this.gunCooldown > 0) return;
+    if (this.ammo.length === 0 || !this.target) {
+      this.gunCooldown = 0.3;
+      this.events.push({ type: "dry", why: this.ammo.length === 0 ? "empty" : "aimless" });
+      return;
+    }
+    const kind = this.ammo.shift()!;
+    const target = this.target;
+    const cart = this.chassis.translation();
+    const from = { x: cart.x, y: cart.y + 1.3, z: cart.z - 0.9 };
+    const reach = Math.hypot(target.at.x - from.x, target.at.y - from.y, target.at.z - from.z);
+    this.flights.push({ id: this.nextId++, kind, from, to: { ...target.at }, t: 0, total: clamp(reach / SHOT_SPEED, 0.32, 1.2), target });
+    if (target.kind === "tower") {
+      const tower = this.towers.find((candidate) => candidate.def.id === target.id);
+      if (tower) tower.doomed = true;
+    } else {
+      this.doomedWalls.add(target.id);
+    }
+    this.gunCooldown = GUN_COOLDOWN;
+    this.events.push({ type: "shoot", kind });
+  }
+
+  private stepFlights(): void {
+    for (let index = this.flights.length - 1; index >= 0; index -= 1) {
+      const flight = this.flights[index]!;
+      flight.t += STEP;
+      if (flight.t < flight.total) continue;
+      this.flights.splice(index, 1);
+      this.doomedWalls.delete(flight.target.id);
+      if (flight.kind === "keg") {
+        this.blast(flight.to);
+        continue;
+      }
+      this.events.push({ type: "bang", at: { ...flight.to }, hit: flight.target.kind });
+      if (flight.target.kind === "tower") {
+        const tower = this.towers.find((candidate) => candidate.def.id === flight.target.id);
+        if (tower) this.destroyTower(tower);
+      } else {
+        this.scatter(flight.to, SHOT_HOLE, 8);
+      }
+    }
+  }
+
+  /** Throw every loose thing within `reach` of a point outwards. */
+  private scatter(at: Vec3, reach: number, force: number): void {
+    for (const prop of this.props) {
+      const p = prop.body.translation();
+      const dx = p.x - at.x;
+      const dz = p.z - at.z;
+      const away = Math.hypot(dx, dz);
+      if (away > reach || Math.abs(p.y - at.y) > reach + 2) continue;
+      const push = force * (1 - away / (reach * 1.5));
+      const norm = Math.max(0.5, away);
+      prop.body.setLinvel({ x: (dx / norm) * push + (this.random() * 4 - 2), y: 4.5 + this.random() * 5, z: (dz / norm) * push - 2.5 }, true);
+      prop.body.setAngvel({ x: this.random() * 10 - 5, y: this.random() * 10 - 5, z: this.random() * 10 - 5 }, true);
+      prop.flung = true;
+    }
+  }
+
   // ---------------------------------------------------------------- towers
 
   private stepTowers(): void {
@@ -594,18 +752,25 @@ export class Game {
     if (tower.target) this.dropMarker(tower.marker);
     tower.target = null;
     this.events.push({ type: "towerDown", tower: tower.def.id, at: { ...tower.pos } });
-    for (let beam = 0; beam < 4; beam += 1) {
-      this.spawn("beam", { x: 0.14, y: 0.14, z: 0.9 }, 5, { x: tower.pos.x, y: tower.pos.y + 1.2 + beam * 0.8, z: tower.pos.z + this.random() - 0.5 }, {
-        x: -tower.def.side * (1.5 + this.random() * 2.5),
-        y: 3 + this.random() * 3,
-        z: this.random() * 4 - 2,
+    // It comes apart: most of it away from the road, some of it onto it.
+    const side = tower.def.side;
+    const fling = (kind: PropKind, size: Vec3, mass: number, height: number): void => {
+      const outward = this.random() < 0.8 ? 1 : -1;
+      this.spawn(kind, size, mass, { x: tower.pos.x + this.random() * 1.6 - 0.8, y: tower.pos.y + height, z: tower.pos.z + this.random() * 1.6 - 0.8 }, {
+        x: side * outward * (1.5 + this.random() * 5),
+        y: 5 + this.random() * 7,
+        z: this.random() * 9 - 5.5,
       });
-    }
+    };
+    const stone = tower.def.kind === "archers";
+    for (let piece = 0; piece < (stone ? 9 : 4); piece += 1) fling("block", { x: 0.34, y: 0.3, z: 0.34 }, 5, 0.8 + this.random() * 3.6);
+    for (let piece = 0; piece < (stone ? 2 : 6); piece += 1) fling("beam", { x: 0.13, y: 0.13, z: 0.95 }, 4, 1.4 + this.random() * 2.6);
+    if (stone) for (let archer = 0; archer < 3; archer += 1) fling("archer", { x: 0.2, y: 0.22, z: 0.2 }, 6, 4.9);
   }
 
   // ---------------------------------------------------------------- things on the road
 
-  private stackCrates(wall: { d: number; x0: number; x1: number; rows: number }): void {
+  private stackCrates(wall: WallDef): void {
     const half = 0.45;
     const count = Math.max(1, Math.round((wall.x1 - wall.x0) / (half * 2 + 0.06)));
     const pitch = (wall.x1 - wall.x0) / count;
@@ -618,7 +783,7 @@ export class Game {
             .setSleeping(true),
         );
         this.world.createCollider(RAPIER.ColliderDesc.cuboid(half, half, half).setMass(13).setFriction(0.9).setRestitution(0.05), body);
-        this.props.push({ id: this.nextId++, kind: "crate", body, size: { x: half, y: half, z: half }, age: 0, flung: false });
+        this.props.push({ id: this.nextId++, kind: "crate", body, size: { x: half, y: half, z: half }, age: 0, flung: false, wall: wall.id });
       }
     }
   }
@@ -630,8 +795,8 @@ export class Game {
         .setLinvel(velocity.x, velocity.y, velocity.z)
         .setAngvel({ x: this.random() * 10 - 5, y: this.random() * 10 - 5, z: this.random() * 10 - 5 }),
     );
-    const shape = kind === "man" ? RAPIER.ColliderDesc.capsule(size.y, size.x) : RAPIER.ColliderDesc.cuboid(size.x, size.y, size.z);
-    this.world.createCollider(shape.setMass(mass).setFriction(0.8).setRestitution(0.2), body);
+    const shape = kind === "man" || kind === "archer" ? RAPIER.ColliderDesc.capsule(size.y, size.x) : RAPIER.ColliderDesc.cuboid(size.x, size.y, size.z);
+    this.world.createCollider(shape.setMass(mass).setFriction(0.8).setRestitution(0.2).setCollisionGroups(RUBBLE_GROUPS), body);
     const prop: Prop = { id: this.nextId++, kind, body, size, age: 0, flung: true };
     this.props.push(prop);
     return prop;
@@ -641,7 +806,9 @@ export class Game {
     const cart = this.chassis.translation();
     for (const pickup of this.pickups) {
       if (pickup.taken) continue;
-      if (Math.hypot(pickup.pos.x - cart.x, pickup.pos.z - cart.z) > 1.7 || Math.abs(pickup.pos.y - cart.y) > 2.6) continue;
+      if (Math.hypot(pickup.pos.x - cart.x, pickup.pos.z - cart.z) > 1.9 || Math.abs(pickup.pos.y - cart.y) > 2.6) continue;
+      // Munitions wait on the road until there's room in the rack.
+      if ((pickup.kind === "shot" || pickup.kind === "keg") && this.ammo.length >= MAX_AMMO) continue;
       this.take(pickup);
     }
   }
@@ -651,7 +818,9 @@ export class Game {
     this.events.push({ type: "pickup", kind: pickup.kind, at: { ...pickup.pos } });
     if (pickup.kind === "hay") this.padding = Math.min(MAX_HAY * HAY_POINTS, this.padding + HAY_POINTS);
     if (pickup.kind === "man") this.men = Math.min(MAX_MEN, this.men + 1);
-    if (pickup.kind === "keg") this.blast(pickup.pos);
+    if (pickup.kind === "shot") this.ammo.push(...(["shot", "shot"] as const).slice(0, MAX_AMMO - this.ammo.length));
+    // A keg jumps the queue: pick one up and the next shot is the big one.
+    if (pickup.kind === "keg") this.ammo.unshift("keg");
   }
 
   private blast(at: Vec3): void {
@@ -659,17 +828,7 @@ export class Game {
     for (const tower of this.towers) {
       if (Math.hypot(tower.pos.x - at.x, tower.pos.z - at.z) <= BLAST_TOWERS) this.destroyTower(tower);
     }
-    for (const prop of this.props) {
-      const p = prop.body.translation();
-      const dx = p.x - at.x;
-      const dz = p.z - at.z;
-      const reach = Math.hypot(dx, dz);
-      if (reach > BLAST_PROPS) continue;
-      const force = 9 * (1 - reach / (BLAST_PROPS * 1.4));
-      const norm = Math.max(0.5, reach);
-      prop.body.setLinvel({ x: (dx / norm) * force + (this.random() * 4 - 2), y: 5 + this.random() * 5, z: (dz / norm) * force - 2 }, true);
-      prop.flung = true;
-    }
+    this.scatter(at, BLAST_PROPS, 10);
     const cart = this.chassis.translation();
     if (Math.hypot(cart.x - at.x, cart.z - at.z) < 7) {
       const v = this.chassis.linvel();
@@ -708,7 +867,11 @@ export class Game {
           prop.landed = true;
           this.events.push({ type: "land", at: { ...p } });
           const keg = this.pickups.find((pickup) => !pickup.taken && pickup.kind === "keg" && Math.hypot(pickup.pos.x - p.x, pickup.pos.z - p.z) < 2.2);
-          if (keg) this.take(keg);
+          if (keg) {
+            // A stone on a keg lying in the road sets it off where it lies.
+            keg.taken = true;
+            this.blast(keg.pos);
+          }
         }
         if (prop.age > 9) gone = true;
       } else if (prop.kind !== "crate" && prop.age > 10) {
@@ -739,10 +902,21 @@ export class Game {
   /** Only a jolt hurts him: how sharply the cart's velocity changed this step. */
   private feelJolt(): void {
     const v = this.chassis.linvel();
-    const dx = v.x - this.prevVel.x;
-    const dy = v.y - this.prevVel.y + G * STEP;
-    const dz = v.z - this.prevVel.z;
+    let dx = v.x - this.prevVel.x;
+    let dy = v.y - this.prevVel.y + G * STEP;
+    let dz = v.z - this.prevVel.z;
     this.prevVel = { x: v.x, y: v.y, z: v.z };
+    // The cart is sprung: coming down wheels first, the springs take the blow until they bottom out.
+    this.spring = Math.min(SPRING_TRAVEL, this.spring + SPRING_RETURN * STEP);
+    const up = rotate(this.chassis.rotation(), { x: 0, y: 1, z: 0 });
+    const lift = dx * up.x + dy * up.y + dz * up.z;
+    if (lift > 0 && up.y > 0.6) {
+      const taken = Math.min(lift, this.spring);
+      this.spring -= taken;
+      dx -= up.x * taken;
+      dy -= up.y * taken;
+      dz -= up.z * taken;
+    }
     const change = Math.hypot(dx, dy, dz);
     this.jolt = change;
     if (this.joltSkip > 0) {

@@ -5,6 +5,7 @@ import type { PartId } from "../src/sim/parts";
 const mode = process.argv[2] ?? "idle";
 const build = (process.argv[3]?.split(",") ?? ["lever", "plane", "wedge"]) as PartId[];
 const game = await Game.create(build);
+const surgeAt = Number(process.argv[4] ?? 130);
 let last = -1;
 let peak = 0;
 for (let tick = 0; tick < 60 * 60 && game.after < 2; tick += 1) {
@@ -14,6 +15,7 @@ for (let tick = 0; tick < 60 * 60 && game.after < 2; tick += 1) {
   if (mode === "right" && t > 1 && t < 2) lean = 1;
   if (mode === "left" && t > 1 && t < 2) lean = -1;
   if (mode === "hop" && tick === 120) fire.push("screw");
+  if (mode === "surge" && Math.abs(game.distance - surgeAt) < 0.3) fire.push("wheel");
   game.step({ lean, fire });
   peak = Math.max(peak, game.jolt);
   for (const event of game.takeEvents()) {

@@ -1,3 +1,4 @@
+import { chasms } from "./course";
 import { Game, STEP, type Input } from "./game";
 import type { PartId } from "./parts";
 
@@ -11,7 +12,14 @@ export const idle: Pilot = () => ({ lean: 0, fire: [] });
  * A plain, sensible driver used to prove a cart can get home: it steers round what it can see
  * and fires each machine at the moment it is useful. It reads only what a player can see.
  */
-export const steady: Pilot = (game) => {
+export function driver(options: { shoot?: boolean } = {}): Pilot {
+  return (game) => drive(game, options.shoot ?? true);
+}
+
+/** The ordinary driver: steers, uses its machines, and fires the gun. */
+export const steady: Pilot = driver();
+
+function drive(game: Game, mayShoot: boolean): Input {
   const cart = game.position;
   const d = game.distance;
   const speed = Math.max(6, -game.velocity.z);
@@ -21,9 +29,8 @@ export const steady: Pilot = (game) => {
 
   // Where on the road is it safe to be over the next stretch?
   const blocked: Array<[number, number]> = [];
-  for (const wall of game.course.barricades) {
-    const standing = game.props.some((prop) => prop.kind === "crate" && !prop.flung && Math.abs(-prop.body.translation().z - wall.d) < 1.5);
-    if (standing && wall.d > d && wall.d - d < 34) blocked.push([wall.x0 - 1.3, wall.x1 + 1.3]);
+  for (const wall of game.course.walls) {
+    if (wall.d > d && wall.d - d < 34 && game.wallStands(wall)) blocked.push([wall.x0 - 1.3, wall.x1 + 1.3]);
   }
   for (const patch of game.course.oil) {
     if (patch.d1 > d && patch.d0 - d < 26) blocked.push([patch.x0 - 1, patch.x1 + 1]);
@@ -45,7 +52,7 @@ export const steady: Pilot = (game) => {
     // Greed: drift towards a pickup worth having, if the way is clear.
     for (const pickup of game.pickups) {
       const ahead = -pickup.pos.z - d;
-      if (pickup.taken || pickup.kind === "keg" || ahead < 2 || ahead > 30) continue;
+      if (pickup.taken || ahead < 2 || ahead > 30) continue;
       if (pickup.kind === "man" && game.men >= 3) continue;
       if (safe(pickup.pos.x)) goal = pickup.pos.x;
     }
@@ -62,7 +69,9 @@ export const steady: Pilot = (game) => {
   else if (nearest < 3.6 && has("plane")) fire.push("plane");
   else if (nearest < 3.2 && has("pulley")) fire.push("pulley");
   const threatened = game.markers.some((marker) => marker.t < 1.1 && Math.hypot(marker.at.x - cart.x, marker.at.z - (cart.z + game.velocity.z * marker.t)) < 1.8);
-  if (threatened && has("wheel") && !has("lever") && !has("plane")) fire.push("wheel");
+  // Never surge into a jump: the hills beyond are cut for a rolling cart, not a rocket.
+  const lipAhead = chasms(game.course).some((gap) => gap.d0 - d > -2 && gap.d0 - d < 70);
+  if (threatened && game.grounded && !lipAhead && has("wheel") && !has("lever") && !has("plane")) fire.push("wheel");
 
   for (const tower of game.towers) {
     if (tower.alive && tower.def.kind === "archers" && tower.windup > 0 && tower.windup < 0.5 && has("plane") && !fire.includes("plane")) fire.push("plane");
@@ -88,8 +97,14 @@ export const steady: Pilot = (game) => {
     const landing = piece.d0 + speed * 0.45;
     if (d > piece.d0 && landing - d < speed * 0.3 && landing - d > 0 && has("pulley") && !fire.includes("pulley")) fire.push("pulley");
   }
-  return { lean, fire };
-};
+  // The gun: towers on sight; a wall only when it's in the way and nothing else will shift it.
+  let shoot = false;
+  if (mayShoot && game.target && game.ammo.length > 0) {
+    if (game.target.kind === "tower") shoot = true;
+    else shoot = !game.build.includes("wedge") && Math.abs(game.target.at.x - cart.x) < 1.2 && !safe(cart.x);
+  }
+  return { lean, fire, shoot };
+}
 
 export interface Outcome {
   phase: Game["phase"];
@@ -119,5 +134,7 @@ export async function play(build: readonly PartId[], pilot: Pilot, limit = 90): 
     }
   }
   for (let settle = 0; settle < 60; settle += 1) game.step({ lean: 0, fire: [] });
-  return { phase: game.phase, cause: game.cause, time: game.time, shell: game.shell, men: game.men, stars: game.stars, distance: game.distance, trace: (hash >>> 0).toString(16) };
+  const outcome = { phase: game.phase, cause: game.cause, time: game.time, shell: game.shell, men: game.men, stars: game.stars, distance: game.distance, trace: (hash >>> 0).toString(16) };
+  game.dispose();
+  return outcome;
 }
