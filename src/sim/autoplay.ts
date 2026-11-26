@@ -329,9 +329,102 @@ export function baker(plan: Baking = {}): Pilot {
   };
 }
 
+export interface Tumbling {
+  /**
+   * "fly" bursts the keg off the plank, rides on to it and cuts the rope so as to be there when
+   * the cauldron lands. "keg" cuts the rope at once, lets the keg go over, and knocks at the gate.
+   * "gate" leaves the see-saw alone.
+   */
+  way?: "fly" | "keg" | "gate";
+  /** Bring her up to the plank on the brake. Without it she comes at it as the hill sends her. */
+  brake?: boolean;
+  /** Cut the rope this many seconds sooner than he should (or, negative, later). */
+  early?: number;
+  /** Leave the keg where it is, on the plank. */
+  keg?: boolean;
+  /** A round into any rank with somebody still standing in his road. */
+  ranks?: boolean;
+  /** An egg at whoever is standing in his road instead, to put his head down while she goes by. */
+  duck?: boolean;
+  /** Burst the traps in his own road from a safe distance. */
+  traps?: boolean;
+  /** Throw an egg at everything the cooks throw. */
+  eggs?: boolean;
+}
+
+/** Seconds from the rope parting to the cauldron landing on the short arm. */
+export function potFall(course: CourseDef): number {
+  const saw = course.seesaw;
+  if (!saw) return 0;
+  const tilt = Math.asin(saw.pivot / saw.near);
+  return Math.sqrt((2 * (saw.drop - saw.pivot - (saw.far - 0.9) * Math.sin(tilt))) / 9.81);
+}
+
+/** A driver for Cauldron Gate, reading only what a player can see. */
+export function tumbler(plan: Tumbling = {}): Pilot {
+  return (game) => {
+    const cart = game.position;
+    const d = game.distance;
+    const course = game.course;
+    const saw = course.seesaw;
+    const wall = game.walls[0];
+    if (!saw || !game.seesaw || !wall) return { lean: leanToward(game, 0) };
+    // If the see-saw has been wasted, there is still the gate.
+    const way = plan.way === undefined || plan.way === "fly" ? (game.seesaw.pot === "down" && game.distance < saw.d - saw.near - 0.5 && game.grounded ? "gate" : "fly") : plan.way;
+    const gate = wall.def.gate?.x ?? 0;
+    const end = saw.d - saw.near;
+    // Down the hill in the middle, then to the plank or to the gate, and beyond the wall wherever she is.
+    const flying = way === "fly" && game.seesaw.pot !== "down";
+    const lane = d > wall.def.d ? cart.x : d < end - 34 ? 0.6 : flying ? saw.x : gate;
+    const input: Input = { lean: d > wall.def.d ? 0 : leanToward(game, lane) };
+    const reach = (at: { x: number; y: number; z: number }): number => Math.hypot(at.x - cart.x, at.y - cart.y, at.z - cart.z);
+    const crane = game.targets.find((target) => target.id === "crane");
+    const door = game.targets.find((target) => target.kind === "wall");
+    if (way === "fly" && game.seesaw.pot === "hung") {
+      if ((plan.brake ?? true) && d > end - 16) input.brake = 1;
+      // Cut it so that the cauldron lands when she is a little short of half way up the long arm.
+      const spot = saw.d - saw.near * 0.55;
+      const lead = potFall(course) + Math.min(1, Math.max(0.25, reach(crane?.at ?? cart) / 44)) + (plan.early ?? 0);
+      if (crane?.lit && (spot - d) / Math.max(1, game.speed) <= lead) input.shoot = "crane";
+    } else if (way === "keg" && crane?.lit && game.seesaw.pot === "hung") {
+      input.shoot = "crane";
+    } else if (way !== "fly" && door?.lit && (way === "gate" || (game.seesaw.pot === "down" && !game.kegs.some((keg) => keg.state === "flying")))) {
+      // With the keg on its way over there is nothing to knock for: it will see to the gate.
+      input.shoot = door.id;
+    }
+    // Nothing to be had by reaching the gate before it is open and what is behind it has been seen to.
+    if (way !== "fly" && d < wall.def.d && d > wall.def.d - 20 && (wall.state === "up" || game.kegs.some((keg) => keg.state === "flying"))) input.brake = 1;
+    if (!input.shoot && (plan.ranks ?? true) && !plan.duck) {
+      // Whoever is behind the wall can wait until there is a way to them, and until the keg has had its say.
+      const shut = d < wall.def.d && (wall.state === "up" || way === "fly" || (way === "keg" && game.seesaw.pot !== "down") || game.kegs.some((keg) => keg.state === "flying"));
+      const rank = game.targets.find((target) => {
+        if (target.kind !== "rank" || !target.lit || -target.at.z - d > 18 || !game.grounded || (shut && -target.at.z > wall.def.d)) return false;
+        return game.mob.some((one) => one.state === "stand" && Math.abs(one.def.d + target.at.z) < 1 && Math.abs(one.def.x - (d > wall.def.d ? cart.x : lane)) < 1.5);
+      });
+      if (rank) input.shoot = rank.id;
+    }
+    const thrown = (kind: "keg" | "cook", id: number): boolean => game.eggFlights.some((egg) => kind in egg.aim && (egg.aim as Record<string, number>)[kind] === id);
+    if (plan.traps ?? true) {
+      const onPlank = (keg: Game["kegs"][number]): boolean => Math.abs(keg.def.x - saw.x) <= saw.half && keg.def.d > end && keg.def.d < saw.d;
+      const trap = game.kegs.find((keg) => keg.def.trap && keg.state === "set" && keg.def.d > d + 7 && reach(keg.at) < 26 && (onPlank(keg) ? way === "fly" && !plan.keg : Math.abs(keg.def.x - lane) < 2.9));
+      if (trap && !thrown("keg", trap.def.id)) input.egg = { keg: trap.def.id };
+    }
+    if (!input.egg && plan.duck) {
+      const one = game.mob.find((cook) => cook.state === "stand" && cook.def.d > d + 3 && cook.def.d < d + 14 && Math.abs(cook.def.x - cart.x) < 1.6);
+      if (one && !thrown("cook", one.def.id)) input.egg = { cook: one.def.id };
+    }
+    if (!input.egg && plan.eggs) {
+      const pan = game.pans.find((one) => !one.doomed);
+      if (pan) input.egg = { pan: pan.id };
+    }
+    return input;
+  };
+}
+
 /** A fresh, sensible driver for whichever street this is. */
 export function pilotFor(course: CourseDef): Pilot {
   if (course.tower) return driver({ wain: true, eggs: true });
+  if (course.seesaw) return tumbler({ eggs: true });
   if (course.mill) return miller({ eggs: true });
   return course.cistern ? baker({ eggs: true }) : sapper({ eggs: true });
 }

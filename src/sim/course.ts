@@ -122,6 +122,30 @@ export interface WallDef {
   id: number;
   d: number;
   height: number;
+  /** A wall of stone with a gate in it: only the gate gives, and the rest stands whatever is done to it. */
+  gate?: { x: number; half: number };
+}
+
+/**
+ * A see-saw in the road: a long plank over a trestle, its long arm down on the cobbles, and the
+ * Queen's biggest cauldron hung from a crane over the short one. Shoot the rope, and whatever is
+ * on the long arm when the cauldron lands goes over the wall: a keg, or a cart.
+ */
+export interface SeesawDef {
+  /** The trestle it turns on. */
+  d: number;
+  x: number;
+  /** Half the plank's width. */
+  half: number;
+  /** The long arm, uphill of the trestle, and the short one beyond it. */
+  near: number;
+  far: number;
+  /** How high the trestle holds it. */
+  pivot: number;
+  /** How high over the road the cauldron hangs. */
+  drop: number;
+  /** How far down the street a keg goes when it is thrown. */
+  toss: number;
 }
 
 export interface CourseDef {
@@ -147,8 +171,9 @@ export interface CourseDef {
   walls: WallDef[];
   mill: MillDef | null;
   cistern: CisternDef | null;
-  /** Straw laid deep on the far side of a leap: a cart that comes down in it comes down soft. */
-  straw: { d0: number; d1: number } | null;
+  seesaw: SeesawDef | null;
+  /** Straw laid on the far side of a leap: a cart that comes down in it comes down soft. `deep` is a whole rick of it. */
+  straw: { d0: number; d1: number; deep?: number } | null;
   /** Crossing this line ends the street: the town gate, or on the last street the roost yard. */
   finish: number;
   /** Where the Empress Hen sits. Null when a gate leads on to the next street. */
@@ -265,6 +290,7 @@ const BELL_TOWER_STREET: CourseDef = {
   walls: [],
   mill: null,
   cistern: null,
+  seesaw: null,
   straw: null,
   finish: BELL.foot + 12,
   roost: null,
@@ -320,6 +346,7 @@ const POWDER_ROW: CourseDef = {
   walls: [{ id: 0, d: WAGON + 3.2, height: 2.8 }],
   mill: null,
   cistern: null,
+  seesaw: null,
   straw: null,
   finish: POWDER.foot + 12,
   roost: null,
@@ -377,8 +404,74 @@ const PUDDING_LANE: CourseDef = {
   mill: null,
   // Its water gets as far as the charge and no further: the shield wall stays dry, and standing.
   cistern: { d: 28, x: KERB + 1.1, reach: 80 },
+  seesaw: null,
   straw: null,
   finish: PUDDING.foot + 12,
+  roost: null,
+};
+
+// ---------------------------------------------------------------- Cauldron Gate
+
+const YARD = 94;
+const TRESTLE = YARD + 20;
+const PLANK = { near: 6.5, far: 2.5, pivot: 0.7 };
+const PLANK_X = -2.6;
+const KITCHEN_WALL = TRESTLE + 4.6;
+
+const CAULDRON = lay([
+  [24, 0.03], // in under the gate: the wall across the bottom, and the crane standing over it
+  [YARD + 14 - 24 - 10, 0.13],
+  [10, 0.06],
+  [74, 0], // the yard, the wall, the haymarket beyond it, and out through the town gate
+]);
+
+/**
+ * The kitchen wall runs across the bottom of the hill, stone, with the gate shut and a shield
+ * wall braced behind it. In the yard in front of it the Queen's people were hoisting her biggest
+ * cauldron over the wall with a crane, and have left it hanging over one end of the plank they
+ * were rolling kegs up. A plank over a trestle is a see-saw. Shoot the rope, and whatever is on
+ * the long end when the cauldron comes down on the short one goes over the wall: the keg that
+ * is sitting on it now, into the kitchen behind the gate; or, with the keg burst out of the way
+ * and the brake on to be there at the right moment, the cart, into the hayricks beyond.
+ */
+const CAULDRON_GATE: CourseDef = {
+  name: "Cauldron Gate",
+  width: HALF * 2,
+  pieces: CAULDRON.pieces,
+  tower: null,
+  windlass: null,
+  wain: null,
+  well: null,
+  sacks: null,
+  mob: ranks([
+    { d: 58, xs: [-4, -2, 0, 2, 4] },
+    // Shoulder to shoulder behind the gate, and holding it shut.
+    { d: KITCHEN_WALL + 2.2, xs: [-4.4, -2.6, -0.9, 0.9, 2.6, 4.4], shield: true },
+    // And the rest of the kitchen, well back: beyond where anything coming over the wall will land.
+    { d: KITCHEN_WALL + 24, xs: [-3.5, -1.75, 0, 1.75, 3.5] },
+  ]),
+  clutter: numbered<ClutterDef>([pot(28, HUNG), barrel(36, -KERB), coop(46, KERB), pot(58, -HUNG), barrel(66, KERB), pot(78, HUNG), coop(88, -KERB), barrel(YARD + 8, KERB), pot(KITCHEN_WALL + 24, HUNG), barrel(KITCHEN_WALL + 30, -KERB)]),
+  pickups: numbered<PickupDef>([
+    // Nobody is sent at the wall with an empty gun: the rope wants a round, and so does the gate.
+    { kind: "shot", d: 8, x: 0.6 },
+    { kind: "eggs", d: 34, x: -2.4 },
+    // For whoever means to knock.
+    { kind: "shot", d: YARD + 3, x: 3 },
+    { kind: "eggs", d: KITCHEN_WALL + 15, x: 2.6 },
+  ]),
+  kegs: numbered<KegDef>([
+    trap(42, 2.2),
+    trap(72, -1.6),
+    trap(84, 2.6),
+    // The one they were rolling up the plank when they dropped everything and ran.
+    { d: TRESTLE - 4.6, x: PLANK_X, up: PLANK.pivot * (1 - 4.6 / PLANK.near), trap: true, big: false },
+  ]),
+  walls: [{ id: 0, d: KITCHEN_WALL, height: 3.2, gate: { x: 0.9, half: 1.9 } }],
+  mill: null,
+  cistern: null,
+  seesaw: { d: TRESTLE, x: PLANK_X, half: 1.5, ...PLANK, drop: 5.2, toss: KITCHEN_WALL + 2.6 - (TRESTLE - 4.6) },
+  straw: { d0: KITCHEN_WALL + 3.5, d1: KITCHEN_WALL + 19, deep: 13 },
+  finish: KITCHEN_WALL + 44,
   roost: null,
 };
 
@@ -446,13 +539,14 @@ const MILLERS_LEAP: CourseDef = {
   walls: [{ id: 0, d: 92, height: 2.8 }],
   mill: { d: 20, x: STONE_LANE, drop: 5.5 },
   cistern: null,
+  seesaw: null,
   straw: { d0: QUAY + STUMP + GORGE, d1: QUAY + STUMP + GORGE + 22 },
   finish: LEAP.foot + 6,
   roost: LEAP.foot + 32,
 };
 
 /** The streets of a run, in the order they are ridden. */
-export const STREETS: CourseDef[] = [BELL_TOWER_STREET, POWDER_ROW, PUDDING_LANE, MILLERS_LEAP];
+export const STREETS: CourseDef[] = [BELL_TOWER_STREET, POWDER_ROW, PUDDING_LANE, CAULDRON_GATE, MILLERS_LEAP];
 export const COURSE: CourseDef = BELL_TOWER_STREET;
 
 /** How much of the street a piece carries, from x0 to x1. */

@@ -158,6 +158,17 @@ const SHIELD_BASH = 22;
 const SHIELD_THROW = 4.5;
 const WAIN_SHOVE = 7;
 
+/** What the long arm of the see-saw gives a cart that is on it when the cauldron lands: up, and along. */
+const FLING_UP = 9.6;
+const FLING_ALONG = 9.5;
+/** How fast the plank goes over when she crosses the trestle, in radians a second. */
+const SAW_TIP = 1.6;
+/** Being under the cauldron instead. */
+const POT_DAMAGE = 50;
+const POT_REACH = 1.8;
+/** Seconds a keg is in the air when the see-saw throws it. */
+const TOSS_TIME = 1.5;
+
 /** Standing still this long, the Queen's cooks catch up. */
 const CAUGHT_AFTER = 4;
 
@@ -176,8 +187,8 @@ export interface Quat {
 
 /** "through" is a street finished with another to come; "won" is home. */
 export type Phase = "run" | "won" | "through" | "broken";
-export type BreakCause = "jolt" | "spilled" | "fell" | "mob" | "caught" | "blast";
-export type TargetKind = "windlass" | "wain" | "rank" | "wall" | "hoist" | "cistern";
+export type BreakCause = "jolt" | "spilled" | "fell" | "mob" | "caught" | "blast" | "crushed";
+export type TargetKind = "windlass" | "wain" | "rank" | "wall" | "hoist" | "cistern" | "crane";
 
 /** What the cart takes with it from one street into the next. */
 export interface Carry {
@@ -241,6 +252,10 @@ export type GameEvent =
   | { type: "flood"; at: Vec3 }
   | { type: "doused"; id: number; at: Vec3 }
   | { type: "ebb" }
+  | { type: "tip"; at: Vec3 }
+  | { type: "potLoose"; at: Vec3 }
+  | { type: "wham"; at: Vec3; flung: "cart" | "keg" | "none"; hit: boolean }
+  | { type: "tossed"; id: number; to: Vec3 }
   | { type: "stoneLoose"; at: Vec3 }
   | { type: "thud"; at: Vec3 }
   | { type: "plunge"; at: Vec3 }
@@ -267,6 +282,20 @@ export interface Stone {
   body: RAPIER.RigidBody | null;
   /** Where it hangs. */
   at: Vec3;
+}
+
+/** The plank over the trestle, and the cauldron hung over its short end. */
+export interface Seesaw {
+  /** Long arm down in the road; gone over the other way under her wheels; or sprung, and in two. */
+  state: "set" | "tipped" | "sprung";
+  /** How far its downhill end is tilted up, in radians. */
+  angle: number;
+  body: RAPIER.RigidBody | null;
+  /** The cauldron: on its rope, on its way, or down. */
+  pot: "hung" | "falling" | "down";
+  /** Where its foot is, and how fast it is coming down. */
+  potAt: Vec3;
+  potV: number;
 }
 
 /** A loose physical thing the view draws by id. */
@@ -340,8 +369,10 @@ export interface EggShot {
 export interface Keg {
   def: KegDef;
   at: Vec3;
-  /** Sitting there, fuse burning, soaked and good for nothing, or gone up. */
-  state: "set" | "lit" | "wet" | "gone";
+  /** Sitting there, fuse burning, thrown and in the air, soaked and good for nothing, or gone up. */
+  state: "set" | "lit" | "flying" | "wet" | "gone";
+  /** Where a thrown one is going, and how far along it is. */
+  flight: { from: Vec3; to: Vec3; t: number } | null;
   /** When a lit one goes, and how long its fuse was when it was lit. */
   until: number;
   burn: number;
@@ -476,6 +507,7 @@ export class Game {
   readonly wain: Wain | null;
   readonly stone: Stone | null;
   readonly flood: Flood | null;
+  readonly seesaw: Seesaw | null;
   readonly mob: Mobster[] = [];
   readonly pans: Pan[] = [];
   readonly eggFlights: EggShot[] = [];
@@ -558,7 +590,7 @@ export class Game {
     this.tower = this.raiseTower();
     this.wain = this.parkWain();
     for (const def of course.kegs) {
-      this.kegs.push({ def, at: { x: def.x, y: heightAt(course, def.d) + def.up + (def.big ? 0.9 : 0.55), z: -def.d }, state: "set", until: 0, burn: 0, tripped: false });
+      this.kegs.push({ def, at: { x: def.x, y: heightAt(course, def.d) + def.up + (def.big ? 0.9 : 0.55), z: -def.d }, state: "set", flight: null, until: 0, burn: 0, tripped: false });
     }
     for (const def of course.pickups) {
       this.pickups.push({ def, at: { x: def.x, y: heightAt(course, def.d) + 0.5, z: -def.d }, taken: false });
@@ -581,6 +613,7 @@ export class Game {
     const cistern = course.cistern;
     this.flood = cistern ? { state: "held", front: cistern.d } : null;
     if (cistern) this.targets.push({ id: "cistern", kind: "cistern", at: { x: cistern.x, y: heightAt(course, cistern.d) + 4.4, z: -cistern.d }, lit: false, done: false, doomed: false });
+    this.seesaw = this.setSeesaw();
     this.raiseWalls();
     for (const rank of new Set(course.mob.map((def) => def.rank))) {
       this.targets.push({ id: `rank${rank}`, kind: "rank", at: { x: 0, y: 0, z: 0 }, lit: false, done: false, doomed: false });
@@ -686,6 +719,7 @@ export class Game {
     this.steer(this.over ? 0 : input.lean);
     this.push(this.over ? 0 : clamp(input.brake ?? 0, 0, 1));
     this.stepTower();
+    this.stepSeesaw();
 
     this.vehicle.updateVehicle(STEP, undefined, CART_GROUPS);
     this.world.step();
@@ -833,6 +867,9 @@ export class Game {
       } else if (target.kind === "cistern") {
         target.done = true;
         this.burst();
+      } else if (target.kind === "crane") {
+        target.done = true;
+        this.cutRope(flight.to);
       } else if (target.kind === "wall") {
         const wall = this.walls.find((one) => `wall${one.def.id}` === target.id);
         if (wall) this.breach(wall);
@@ -1028,9 +1065,10 @@ export class Game {
     for (const other of this.kegs) {
       if (other.state === "set" && Math.hypot(other.at.x - at.x, other.at.z - at.z) <= size.chain) this.light(other, KEG_FUSE);
     }
-    if (big) {
+    // The wagon shifts a barricade. So does a keg that comes over the wall and lands behind the gate.
+    if (big || keg.flight) {
       for (const wall of this.walls) {
-        if (wall.state === "up" && Math.abs(wall.def.d + at.z) <= WAGON_BREACH) this.breach(wall);
+        if (wall.state === "up" && Math.abs(wall.def.d + at.z) <= (big ? WAGON_BREACH : 4)) this.breach(wall);
       }
     }
     if (this.over) return;
@@ -1111,6 +1149,15 @@ export class Game {
     const rollers = this.rollers();
     for (const keg of this.kegs) {
       if (keg.state === "gone" || keg.state === "wet") continue;
+      if (keg.state === "flying" && keg.flight) {
+        // Thrown: it comes down where the see-saw sent it, and goes off there.
+        const flight = keg.flight;
+        flight.t += STEP;
+        const k = clamp(flight.t / TOSS_TIME, 0, 1);
+        keg.at = { x: flight.from.x + (flight.to.x - flight.from.x) * k, y: flight.from.y + (flight.to.y - flight.from.y) * k + Math.sin(k * Math.PI) * 6.5, z: flight.from.z + (flight.to.z - flight.from.z) * k };
+        if (k >= 1) this.explode(keg);
+        continue;
+      }
       if (keg.state === "lit") {
         if (this.time >= keg.until) this.explode(keg);
         continue;
@@ -1130,10 +1177,19 @@ export class Game {
   private raiseWalls(): void {
     const half = this.course.width / 2;
     for (const def of this.course.walls) {
-      const body = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, heightAt(this.course, def.d) + def.height / 2, -def.d));
-      this.world.createCollider(RAPIER.ColliderDesc.cuboid(half + 0.6, def.height / 2, 0.45).setFriction(0.6), body);
+      const y = heightAt(this.course, def.d);
+      const gate = def.gate;
+      const body = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(gate?.x ?? 0, y + def.height / 2, -def.d));
+      this.world.createCollider(RAPIER.ColliderDesc.cuboid(gate ? gate.half : half + 0.6, def.height / 2, 0.45).setFriction(0.6), body);
+      if (gate) {
+        // Stone, either side of the gate. Nothing she has will shift that.
+        const piers = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, y + def.height / 2, -def.d));
+        for (const [x0, x1] of [[-half - 0.6, gate.x - gate.half], [gate.x + gate.half, half + 0.6]] as const) {
+          this.world.createCollider(RAPIER.ColliderDesc.cuboid((x1 - x0) / 2, def.height / 2, 0.6).setTranslation((x0 + x1) / 2, 0, 0).setFriction(0.4), piers);
+        }
+      }
       this.walls.push({ def, state: "up", body });
-      this.targets.push({ id: `wall${def.id}`, kind: "wall", at: { x: 0, y: heightAt(this.course, def.d) + def.height * 0.6, z: -def.d }, lit: false, done: false, doomed: false });
+      this.targets.push({ id: `wall${def.id}`, kind: "wall", at: { x: gate?.x ?? 0, y: y + (gate ? 1.5 : def.height * 0.6), z: -def.d }, lit: false, done: false, doomed: false });
     }
   }
 
@@ -1143,9 +1199,11 @@ export class Game {
     wall.state = "down";
     this.world.removeRigidBody(wall.body);
     const y = heightAt(this.course, wall.def.d);
-    const half = this.course.width / 2;
+    const gate = wall.def.gate;
+    const half = gate ? gate.half : this.course.width / 2;
+    const middle = gate?.x ?? 0;
     for (let piece = 0; piece < 16; piece += 1) {
-      const x = -half + (piece + 0.5) * ((half * 2) / 16);
+      const x = middle - half + (piece + 0.5) * ((half * 2) / 16);
       this.spawn(piece % 3 ? "beam" : "block", piece % 3 ? { x: 0.12, y: 0.12, z: 0.9 } : { x: 0.3, y: 0.26, z: 0.3 }, 5, { x, y: y + 0.6 + this.random() * 1.6, z: -wall.def.d }, {
         x: this.random() * 8 - 4,
         y: 5 + this.random() * 8,
@@ -1154,7 +1212,146 @@ export class Game {
     }
     const target = this.targets.find((one) => one.id === `wall${wall.def.id}`);
     if (target) target.done = true;
-    this.events.push({ type: "breach", id: wall.def.id, at: { x: 0, y: y + 1, z: -wall.def.d } });
+    this.events.push({ type: "breach", id: wall.def.id, at: { x: middle, y: y + 1, z: -wall.def.d } });
+  }
+
+  // ---------------------------------------------------------------- the see-saw
+
+  /** Where the plank lies, for a given tilt: its top runs through the head of the trestle. */
+  private plankPose(def: NonNullable<CourseDef["seesaw"]>, angle: number): { at: Vec3; turn: Quat } {
+    const along = (def.far - def.near) / 2;
+    const thick = 0.07;
+    const d = def.d + along * Math.cos(angle) + thick * Math.sin(angle);
+    const y = heightAt(this.course, def.d) + def.pivot + along * Math.sin(angle) - thick * Math.cos(angle);
+    return { at: { x: def.x, y, z: -d }, turn: { x: Math.sin(angle / 2), y: 0, z: 0, w: Math.cos(angle / 2) } };
+  }
+
+  /** The tilt that puts the long arm's end on the cobbles, and the one that puts the short arm's there. */
+  private plankRest(def: NonNullable<CourseDef["seesaw"]>, which: "set" | "tipped"): number {
+    const head = heightAt(this.course, def.d) + def.pivot;
+    if (which === "set") return Math.asin(clamp((head - heightAt(this.course, def.d - def.near)) / def.near, -1, 1));
+    return -Math.asin(clamp((head - heightAt(this.course, def.d + def.far)) / def.far, -1, 1));
+  }
+
+  private setSeesaw(): Seesaw | null {
+    const def = this.course.seesaw;
+    if (!def) return null;
+    const angle = this.plankRest(def, "set");
+    const pose = this.plankPose(def, angle);
+    const body = this.world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(pose.at.x, pose.at.y, pose.at.z).setRotation(pose.turn));
+    this.world.createCollider(RAPIER.ColliderDesc.cuboid(def.half, 0.07, (def.near + def.far) / 2).setFriction(1), body);
+    const under = def.d + def.far - 0.9;
+    const potAt = { x: def.x, y: heightAt(this.course, under) + def.drop, z: -under };
+    this.targets.push({ id: "crane", kind: "crane", at: { x: potAt.x, y: potAt.y + 2.9, z: potAt.z }, lit: false, done: false, doomed: false });
+    return { state: "set", angle, body, pot: "hung", potAt, potV: 0 };
+  }
+
+  /** The rope parts and the cauldron starts down. Nothing can be done about it after that. */
+  private cutRope(at: Vec3): void {
+    const saw = this.seesaw;
+    if (!saw || saw.pot !== "hung") return;
+    saw.pot = "falling";
+    for (let piece = 0; piece < 4; piece += 1) {
+      this.spawn("beam", { x: 0.06, y: 0.06, z: 0.5 }, 1, { x: at.x, y: at.y, z: at.z }, { x: this.random() * 4 - 2, y: 1 + this.random() * 3, z: this.random() * 4 - 2 });
+    }
+    this.events.push({ type: "potLoose", at: { ...saw.potAt } });
+  }
+
+  private stepSeesaw(): void {
+    const saw = this.seesaw;
+    const def = this.course.seesaw;
+    if (!saw || !def) return;
+    const cart = this.chassis.translation();
+    const d = -cart.z;
+    const road = heightAt(this.course, def.d);
+    const on = Math.abs(cart.x - def.x) <= def.half + 0.35 && Math.abs(cart.y - road) < 3;
+    // Her own weight takes it over, once she is past the trestle.
+    if (saw.state === "set" && !this.over && on && d > def.d + 0.2 && d < def.d + def.far + 1.5) {
+      saw.state = "tipped";
+      this.events.push({ type: "tip", at: { x: def.x, y: road + def.pivot, z: -def.d } });
+    }
+    if (saw.state === "tipped" && saw.body) {
+      const rest = this.plankRest(def, "tipped");
+      if (saw.angle > rest) {
+        saw.angle = Math.max(rest, saw.angle - SAW_TIP * STEP);
+        const pose = this.plankPose(def, saw.angle);
+        saw.body.setNextKinematicTranslation(pose.at);
+        saw.body.setNextKinematicRotation(pose.turn);
+      }
+    }
+    if (saw.pot !== "falling") return;
+    saw.potV += G * STEP;
+    saw.potAt.y -= saw.potV * STEP;
+    // It lands on the short arm, wherever that has got to.
+    const under = -saw.potAt.z;
+    const floor = heightAt(this.course, under) + (saw.state === "sprung" ? 0 : Math.max(0, def.pivot + (under - def.d) * Math.sin(saw.angle)));
+    if (saw.potAt.y <= floor) this.wham(floor);
+  }
+
+  /**
+   * The cauldron lands. If the long arm was down, whatever is on it is thrown: a keg over the
+   * wall, a cart over the wall. Whoever is under the cauldron itself is not thrown anywhere.
+   */
+  private wham(floor: number): void {
+    const saw = this.seesaw;
+    const def = this.course.seesaw;
+    if (!saw || !def || saw.pot !== "falling") return;
+    saw.pot = "down";
+    const under = -saw.potAt.z;
+    const road = heightAt(this.course, under);
+    const cart = this.chassis.translation();
+    const d = -cart.z;
+    let flung: "cart" | "keg" | "none" = "none";
+    if (saw.state === "set") {
+      for (const keg of this.kegs) {
+        if ((keg.state !== "set" && keg.state !== "lit") || Math.abs(keg.def.x - def.x) > def.half || keg.def.d > def.d || keg.def.d < def.d - def.near) continue;
+        const to = { x: keg.at.x, y: heightAt(this.course, keg.def.d + def.toss) + 0.5, z: -(keg.def.d + def.toss) };
+        keg.state = "flying";
+        keg.flight = { from: { ...keg.at }, to, t: 0 };
+        flung = "keg";
+        this.events.push({ type: "tossed", id: keg.def.id, to });
+      }
+      const aboard = !this.over && Math.abs(cart.x - def.x) <= def.half + 0.35 && d >= def.d - def.near - 0.4 && d <= def.d - 0.3 && Math.abs(cart.y - heightAt(this.course, d)) < 2.5;
+      if (aboard) {
+        // The lever does the rest. It is a throw and not a blow: nothing in it for the shell to feel.
+        const v = this.chassis.linvel();
+        const thrown = { x: v.x * 0.3, y: FLING_UP, z: -FLING_ALONG };
+        this.chassis.setLinvel(thrown, true);
+        this.chassis.setAngvel({ x: 0, y: 0, z: 0 }, true);
+        this.joltSkip = Math.max(this.joltSkip, 10);
+        this.prevVel = thrown;
+        flung = "cart";
+      }
+    }
+    const hit = !this.over && flung !== "cart" && Math.hypot(cart.x - def.x, d - under) <= POT_REACH && Math.abs(cart.y - road) < 3;
+    // The plank does not survive it, either way.
+    if (saw.body) this.world.removeRigidBody(saw.body);
+    saw.body = null;
+    saw.state = "sprung";
+    saw.potAt.y = road;
+    saw.potV = 0;
+    for (let piece = 0; piece < 8; piece += 1) {
+      const along = def.d - def.near + (piece + 0.5) * ((def.near + def.far) / 8);
+      this.spawn("beam", { x: 0.16, y: 0.05, z: 0.55 }, 4, { x: def.x + this.random() * 2 - 1, y: heightAt(this.course, along) + 0.5 + (along < def.d ? 1.2 : 0), z: -along }, {
+        x: this.random() * 6 - 3,
+        y: (along < def.d ? 7 : 2) + this.random() * 4,
+        z: -1 - this.random() * 4,
+      });
+    }
+    // And there it sits, in the road, full of soup.
+    if (!hit) {
+      const sat = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(def.x, road + 0.7, -under));
+      this.world.createCollider(RAPIER.ColliderDesc.cylinder(0.7, 1.05).setFriction(0.4), sat);
+    }
+    this.events.push({ type: "wham", at: { x: def.x, y: road + 0.4, z: -under }, flung, hit });
+    if (hit) {
+      this.knocks += 1;
+      const mass = this.chassis.mass();
+      this.chassis.applyImpulse({ x: Math.sign(cart.x - def.x || 1) * 3 * mass, y: 2 * mass, z: 0 }, true);
+      this.joltSkip = Math.max(this.joltSkip, 8);
+      this.prevVel = { ...this.chassis.linvel() };
+      this.damage(POT_DAMAGE, "crushed");
+    }
   }
 
   // ---------------------------------------------------------------- what his people left him
@@ -1593,7 +1790,8 @@ export class Game {
     // The cart is sprung: coming down wheels first, the springs take the blow until they bottom out.
     const straw = this.course.straw;
     const soft = straw !== null && this.distance >= straw.d0 && this.distance <= straw.d1;
-    this.spring = Math.min(soft ? STRAW_TRAVEL : SPRING_TRAVEL, this.spring + (soft ? STRAW_TRAVEL / STEP : SPRING_RETURN * STEP));
+    const give = soft ? (straw.deep ?? STRAW_TRAVEL) : SPRING_TRAVEL;
+    this.spring = Math.min(give, this.spring + (soft ? give / STEP : SPRING_RETURN * STEP));
     const up = rotate(this.chassis.rotation(), { x: 0, y: 1, z: 0 });
     const lift = dx * up.x + dy * up.y + dz * up.z;
     if (lift > 0 && up.y > 0.6) {

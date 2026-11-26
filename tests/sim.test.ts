@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { baker, driver, idle, leanAt, leanToward, miller, pilotFor, play, sapper, steady, type Pilot } from "../src/sim/autoplay";
+import { baker, driver, idle, leanAt, leanToward, miller, pilotFor, play, sapper, steady, tumbler, type Pilot } from "../src/sim/autoplay";
 import { COURSE, STREETS, type CourseDef } from "../src/sim/course";
 import { BRAKE_FLOOR, DUCK, EGG_BASKET, Game, KEG_KICK, KICK_BRAKED, KICK_TOP, MAX_AMMO, RAM_SPEED, SHOT_PILE, START_AMMO, START_EGGS, STONE_PACE, type Carry, type GameEvent, type Input } from "../src/sim/game";
 
@@ -20,6 +20,7 @@ const street = (name: string): CourseDef => STREETS.find((one) => one.name === n
 const POWDER_ROW = street("Powder Row");
 const PUDDING_LANE = street("Pudding Lane");
 const MILLERS_LEAP = street("Miller's Leap");
+const CAULDRON_GATE = street("Cauldron Gate");
 const lane = (TOWER.x0 + TOWER.x1) / 2;
 
 test("a cart nobody drives does not get home", async () => {
@@ -333,7 +334,7 @@ test("a sensible driver rides every street home without a mark", async () => {
   let carry: Carry | undefined;
   let last: Game | null = null;
   let time = 0;
-  assert.deepEqual(STREETS.map((one) => one.name), ["Bell Tower Street", "Powder Row", "Pudding Lane", "Miller's Leap"]);
+  assert.deepEqual(STREETS.map((one) => one.name), ["Bell Tower Street", "Powder Row", "Pudding Lane", "Cauldron Gate", "Miller's Leap"]);
   for (const course of STREETS) {
     const { game } = await run(pilotFor(course), () => false, course, carry);
     assert.ok(game.phase === "through" || game.phase === "won", `${course.name}: ${game.phase} ${game.cause} at ${Math.round(game.distance)} m`);
@@ -344,7 +345,7 @@ test("a sensible driver rides every street home without a mark", async () => {
   }
   assert.equal(last!.phase, "won");
   assert.equal(last!.stars, 3, `shell ${last!.shell} knocks ${last!.knocks}`);
-  assert.ok(time < 95, `${STREETS.length} streets in ${time.toFixed(1)} s`);
+  assert.ok(time < STREETS.length * 25, `${STREETS.length} streets in ${time.toFixed(1)} s`);
 });
 
 // ---------------------------------------------------------------- Miller's Leap
@@ -583,6 +584,123 @@ test("Pudding Lane replays exactly, by fire and by water", async () => {
       const { game, events } = await run(baker({ way, eggs: true }), () => false, PUDDING_LANE);
       const p = game.position;
       return JSON.stringify([game.tick, p.x, p.y, p.z, game.shell, events.length, game.props.map((prop) => prop.body.translation().x)]);
+    };
+    assert.equal(await sign(), await sign());
+  }
+});
+
+// ---------------------------------------------------------------- Cauldron Gate
+
+const SAW = CAULDRON_GATE.seesaw!;
+const KITCHEN_WALL = CAULDRON_GATE.walls[0]!;
+const count = (events: GameEvent[], type: GameEvent["type"]): number => events.filter((event) => event.type === type).length;
+
+test("nobody gets through the kitchen wall by sitting still, or by driving at the gate", async () => {
+  for (const pilot of [idle, (game: Game): Input => ({ lean: leanToward(game, KITCHEN_WALL.gate!.x) })]) {
+    const { game } = await run(pilot, () => false, CAULDRON_GATE);
+    assert.equal(game.phase, "broken");
+    assert.ok(game.distance < KITCHEN_WALL.d, `stopped at the wall: ${game.distance.toFixed(1)}`);
+    assert.equal(game.walls[0]!.state, "up");
+  }
+});
+
+test("on the long arm when the cauldron lands, she goes over the wall and comes down in the hay", async () => {
+  let crossed = 0;
+  let was = 0;
+  const { game, events } = await run(tumbler({ eggs: true }), (current) => {
+    if (was < KITCHEN_WALL.d && current.distance >= KITCHEN_WALL.d) crossed = current.position.y - current.walls[0]!.body.translation().y;
+    was = current.distance;
+    return false;
+  }, CAULDRON_GATE);
+  const wham = events.find((event) => event.type === "wham");
+  assert.ok(wham?.type === "wham" && wham.flung === "cart" && !wham.hit, JSON.stringify(wham));
+  assert.equal(game.walls[0]!.state, "up", "the gate never opened");
+  assert.ok(crossed > KITCHEN_WALL.height / 2 + 1, `well clear of the top of it: ${crossed.toFixed(1)}`);
+  const air = events.find((event) => event.type === "air" && event.time > 1.5);
+  assert.ok(air, "a second and a half in the air");
+  assert.equal(game.phase, "through");
+  assert.equal(game.stars, 3, `shell ${game.shell} knocks ${game.knocks}`);
+  assert.equal(game.shell, 100);
+  assert.equal(game.hay, 2, "the hay took the landing");
+  assert.ok(count(events, "shoot") <= 3, "a round for the rope, and one for each rank in her road");
+});
+
+test("the brake is what makes the see-saw easy: braked or not, there is a moment that works", async () => {
+  for (const [brake, early] of [[true, -0.6], [true, 0.3], [false, -0.3], [false, 0]] as const) {
+    const { game, events } = await run(tumbler({ eggs: true, brake, early }), () => false, CAULDRON_GATE);
+    const wham = events.find((event) => event.type === "wham");
+    assert.ok(wham?.type === "wham" && wham.flung === "cart", `brake ${brake} early ${early}: ${JSON.stringify(wham)}`);
+    assert.equal(game.stars, 3, `brake ${brake} early ${early}`);
+  }
+  // Without it the same slip that the brake forgives puts her under the cauldron, or leaves her short of the plank.
+  const late = await run(tumbler({ eggs: true, brake: false, early: -0.6 }), () => false, CAULDRON_GATE);
+  const hit = late.events.find((event) => event.type === "wham");
+  assert.ok(hit?.type === "wham" && hit.hit && hit.flung === "none", JSON.stringify(hit));
+  assert.ok(late.game.knocks > 0);
+  const soon = await run(tumbler({ eggs: true, brake: false, early: 0.3 }), () => false, CAULDRON_GATE);
+  const missed = soon.events.find((event) => event.type === "wham");
+  assert.ok(missed?.type === "wham" && !missed.hit && missed.flung === "none", JSON.stringify(missed));
+});
+
+test("cut the rope too soon and the see-saw is wasted: there is still the gate", async () => {
+  let sprungAt = -1;
+  const { game, events } = await run(tumbler({ eggs: true, early: 0.9 }), (current) => {
+    if (sprungAt < 0 && current.seesaw!.state === "sprung") sprungAt = current.distance;
+    return false;
+  }, CAULDRON_GATE);
+  assert.ok(sprungAt > 0 && sprungAt < SAW.d - SAW.near, `she was not on it: ${sprungAt.toFixed(1)}`);
+  assert.equal(game.seesaw!.body, null, "the plank is in two and out of the road");
+  assert.equal(game.walls[0]!.state, "down");
+  assert.equal(game.phase, "through");
+  assert.ok(count(events, "shoot") >= 3, "the rope, the gate, and the shield wall behind it");
+});
+
+test("what is on the plank goes over the wall: left there, the keg lands in the kitchen behind the gate", async () => {
+  const { game, events } = await run(tumbler({ way: "keg", eggs: true }), () => false, CAULDRON_GATE);
+  const wham = events.find((event) => event.type === "wham");
+  assert.ok(wham?.type === "wham" && wham.flung === "keg", JSON.stringify(wham));
+  const boom = events.find((event) => event.type === "boom" && -event.at.z > KITCHEN_WALL.d);
+  assert.ok(boom, "it came down beyond the wall");
+  const blown = events.filter((event) => event.type === "bowled" && event.by === "blast").length;
+  assert.ok(blown >= 3, `it went off among the shield wall: ${blown}`);
+  assert.equal(game.walls[0]!.state, "down", "and took the gate off its hinges from behind");
+  assert.equal(count(events, "shoot"), 3, "the rope, and a rank up the hill and down it: nothing for the gate");
+  assert.equal(game.phase, "through");
+  assert.equal(game.stars, 3);
+  // Ride on to the plank without bursting it first, and it goes off under her instead.
+  const under = await run(tumbler({ eggs: true, keg: true }), () => false, CAULDRON_GATE);
+  assert.ok(under.game.knocks > 0);
+  assert.ok(under.game.stars < 3);
+});
+
+test("knocking at the gate gets her through, at a price: more rounds than flying, or a beating", async () => {
+  const fly = await run(tumbler({ eggs: true }), () => false, CAULDRON_GATE);
+  const knock = await run(tumbler({ way: "gate", eggs: true }), () => false, CAULDRON_GATE);
+  assert.equal(knock.game.phase, "through");
+  assert.equal(knock.game.seesaw!.pot, "hung", "the cauldron is still up there");
+  assert.ok(count(knock.events, "shoot") > count(fly.events, "shoot"), `${count(knock.events, "shoot")} rounds against ${count(fly.events, "shoot")}`);
+  const cheap = await run(tumbler({ way: "gate", eggs: true, duck: true }), () => false, CAULDRON_GATE);
+  assert.ok(cheap.game.knocks > 0, "with one round and eggs, the shield wall gets its licks in");
+});
+
+test("only the gate gives: the stone either side of it stands", async () => {
+  const knock = tumbler({ way: "gate", eggs: true });
+  const { game } = await run((current) => {
+    const input = knock(current);
+    // Once the gate is open, make for the wall beside it instead.
+    return current.walls[0]!.state === "down" ? { ...input, lean: leanToward(current, 4.2), brake: 0 } : input;
+  }, () => false, CAULDRON_GATE);
+  assert.equal(game.walls[0]!.state, "down");
+  assert.equal(game.phase, "broken");
+  assert.ok(game.distance < KITCHEN_WALL.d + 1, `stopped by the wall: ${game.distance.toFixed(1)}`);
+});
+
+test("Cauldron Gate replays exactly, over the wall and through it", async () => {
+  for (const pilot of [() => tumbler({ eggs: true }), () => tumbler({ way: "keg", eggs: true })]) {
+    const sign = async (): Promise<string> => {
+      const { game, events } = await run(pilot(), () => false, CAULDRON_GATE);
+      const p = game.position;
+      return JSON.stringify([game.tick, p.x, p.y, p.z, game.shell, game.eggs, game.ammo, events.length]);
     };
     assert.equal(await sign(), await sign());
   }

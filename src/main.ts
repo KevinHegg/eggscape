@@ -87,6 +87,8 @@ let towerAtEnd: NonNullable<Game["tower"]>["state"] = "held";
 let lastBoom = { big: false, time: -1 };
 /** How the charge with the long match went: unlit, thrown by it, held by the brake, in his face, or long past it. */
 let charge: "unlit" | "lit" | "thrown" | "braked" | "early" | "late" | "wet" = "unlit";
+/** What became of the see-saw: still set, she went over on it, the keg did, nobody did, or she was under the cauldron. */
+let seesaw: "set" | "flown" | "keg" | "wasted" | "under" = "set";
 
 // ---------------------------------------------------------------- screens
 
@@ -118,6 +120,7 @@ function enter(run: boolean, index: number, carry?: Carry): void {
   setSlow(false);
   lastBoom = { big: false, time: -1 };
   charge = "unlit";
+  seesaw = "set";
   freeze = 0;
   flying = false;
   rounds = -1;
@@ -260,7 +263,7 @@ function narrate(event: GameEvent, current: Game): void {
       break;
     case "breach":
       sound.rubble(9, 0.1);
-      toast("The barricade's down!");
+      toast(current.walls.find((wall) => wall.def.id === event.id)?.def.gate ? "The gate's open!" : "The barricade's down!");
       break;
     case "pickup":
       sound.pickup(event.kind === "shot");
@@ -285,6 +288,31 @@ function narrate(event: GameEvent, current: Game): void {
       } else {
         sound.crack(true);
         sound.rubble(3);
+      }
+      break;
+    case "potLoose":
+      sound.twang();
+      sound.groan();
+      break;
+    case "tip":
+      sound.thud(4);
+      break;
+    case "tossed":
+      sound.whoosh();
+      break;
+    case "wham":
+      sound.bang(true);
+      sound.clang();
+      freeze = 0.08;
+      seesaw = event.flung === "cart" ? "flown" : event.hit ? "under" : event.flung === "keg" ? "keg" : "wasted";
+      if (event.flung === "cart") {
+        sound.whoosh();
+        toast("Over she goes!");
+      } else if (event.hit) toast("Under the cauldron!", "bad");
+      else if (event.flung === "keg") toast("There goes her powder!");
+      else {
+        toast("Nobody on the plank!", "bad");
+        hint("knock", "The see-saw is spent. There is still the gate: a round at its ring");
       }
       break;
     case "letGo":
@@ -404,6 +432,14 @@ function verdict(current: Game): { title: string; line: string } {
     const wall = current.walls.find((one) => one.state === "up");
     const held = wall !== undefined && wall.def.d - current.distance < 9;
     const stump = course.pieces.find((piece) => piece.x0 !== undefined);
+    if (course.seesaw) {
+      // The kitchen wall: over it on the see-saw, or through its gate.
+      const title = current.cause === "caught" ? "Omelette" : "Scrambled";
+      if (current.cause === "crushed") return { title: "Coddled", line: "Under the Queen's cauldron when it came down. Cut the rope as she crosses the gold bar, and come at the plank on the brake." };
+      if (held && seesaw === "wasted") return { title, line: "The cauldron came down with nobody on the plank. After that there is only the gate: a round at its gold ring." };
+      if (held) return { title, line: "The kitchen wall, and the gate shut. Be on the plank when the cauldron lands and she goes over it. Or put a round into the gate." };
+      if (current.cause === "mob") return { title: "Beaten", line: "The shield wall behind the gate had him. Over the wall misses them altogether. So does sending the keg over first." };
+    }
     if (course.mill && stump) {
       // The hill with the mill on it: a stone, a barricade, and a bridge with most of it missing.
       const hung = current.stone?.state === "hung";
@@ -646,6 +682,7 @@ const OPENING: Record<string, string> = {
   "Bell Tower Street": "The bridge is out. That tower would reach.",
   "Powder Row": "The Queen's powder. Red rings are traps: egg them from well back.",
   "Pudding Lane": "Kegs all down the lane, and a cistern over it. Fire, or water?",
+  "Cauldron Gate": "A wall, a see-saw, and the Queen's cauldron on a rope over it.",
   "Miller's Leap": "The miller's stone hangs over the road. Shoot the hoist.",
 };
 const opening = (index: number): string => OPENING[STREETS[index]?.name ?? ""] ?? "";
@@ -712,6 +749,18 @@ function advance(current: Game, steps: number): void {
 /** The teaching lines that wait on the street rather than on an event. */
 function coach(current: Game): void {
   if (current.phase !== "run") return;
+  // The see-saw: what it is, what is on it, and when to cut the rope.
+  const saw = current.course.seesaw;
+  if (saw && current.seesaw) {
+    const gap = saw.d - saw.near - current.distance;
+    const gate = current.walls.find((one) => one.state === "up");
+    if (current.seesaw.pot === "hung" && current.seesaw.state === "set") {
+      const loaded = current.kegs.some((keg) => keg.state === "set" && Math.abs(keg.def.x - saw.x) <= saw.half && keg.def.d < saw.d && keg.def.d > saw.d - saw.near);
+      if (gap < 62 && gap > 42) hint("seesaw", "A see-saw! What's on the plank when the cauldron lands goes over the wall");
+      else if (gap < 38 && gap > 18 && loaded) hint("loaded", "Egg the keg off the plank and ride it yourself. Or leave it, and send it over");
+      else if (gap < 16 && gap > 4) hint("cue", slow ? "Cut the rope as she crosses the gold bar" : "Brake! Then cut the rope as she crosses the gold bar");
+    } else if (current.seesaw.pot === "down" && gate && current.grounded && !current.kegs.some((keg) => keg.state === "flying") && gate.def.d - current.distance > 4 && gate.def.d - current.distance < 24) hint("gate", "The gate's gold ring: a round opens it");
+  }
   // The powder: said once the train is in sight, and again when the barricade is close.
   const wall = current.walls.find((one) => one.state === "up");
   if (wall) {

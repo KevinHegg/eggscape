@@ -2,10 +2,11 @@
 
 A mobile-first physics game. A hill village is one Rube Goldberg machine: the player sets it
 off, then has to ride the Egg King's cart through what follows, down to the Empress Hen.
-Prototype stage: four streets ridden one after the other: Bell Tower Street, Powder Row,
-Pudding Lane and Miller's Leap. Each asks something different of the brake: wait for the
-tower, keep back from the powder, choose fire or water, and on the last keep up with the stone
-and have the brake off when the charge on the quay throws her over the gorge.
+Prototype stage: five streets ridden one after the other: Bell Tower Street, Powder Row,
+Pudding Lane, Cauldron Gate and Miller's Leap. Each asks something different of the brake: wait
+for the tower, keep back from the powder, choose fire or water, come up to the see-saw slowly
+enough to be on it when the cauldron lands, and on the last keep up with the stone and have the
+brake off when the charge on the quay throws her over the gorge.
 
 The first game (pick three machines, ride the Queen's gauntlet) is frozen on branch
 `gauntlet` (tag `gauntlet-v1`) and published beside this one at `/gauntlet/`. Do not merge
@@ -85,6 +86,19 @@ it back or change it in passing; it is kept as it was on purpose.
   throws nothing and is a wall: a slow cart is thrown back off it until a round opens it, an
   egg apiece ducks the cooks in the way, or she comes through on a blast.
   `npx tsx scripts/lane.ts` prints every way down it.
+- The see-saw (`seesaw` in `course.ts`) is a lever and a rule, not a simulation of one. The
+  plank is a kinematic slab over a trestle with its long arm down in the road; the cauldron is
+  state that falls under gravity once its rope is shot (`crane` target). When it lands
+  (`wham`), whatever is on the long arm is thrown: a keg goes `toss` metres down the street and
+  bursts where it lands, taking a gate with it if it lands behind one; a cart is given
+  `FLING_UP` and `FLING_ALONG` outright, which carries her over the kitchen wall into straw
+  laid `deep`. A cart past the trestle tips the plank and is under the cauldron instead
+  (`POT_DAMAGE`). After that the plank is firewood, either way. The gold bar across the road
+  is drawn where cutting the rope works at any speed; on the brake the window is about 1.3 s,
+  off it about 0.7 s. `npx tsx scripts/gate.ts` prints where she was when it landed for every
+  way of going at it: keep the three ways (fly, send the keg, knock) all winnable, and keep
+  flying the cheapest in rounds.
+- A wall with a `gate` is stone: only the gate is a target and only the gate gives.
 - The millstone (`mill` in `course.ts`) is driven, not left to roll: one ball, locked to its
   lane, held by the hill to `STONE_PACE`, which is a little more than the cart can make, so it
   always leads and what it will hit can be read from the top of the street. It bowls whoever
@@ -118,8 +132,8 @@ it back or change it in passing; it is kept as it was on purpose.
   (`@dimforge/rapier3d-deterministic-compat`).
 - After changing physics constants or a street, run `npm test`, `npx tsx scripts/window.ts`
   and `npx tsx scripts/window.ts wain`; for Powder Row, `npx tsx scripts/trace.ts wagon`
-  (also `train`, `rush`, `blind`); for Pudding Lane, `npx tsx scripts/lane.ts`; for Miller's
-  Leap, `npx tsx scripts/leap.ts`.
+  (also `train`, `rush`, `blind`); for Pudding Lane, `npx tsx scripts/lane.ts`; for Cauldron
+  Gate, `npx tsx scripts/gate.ts`; for Miller's Leap, `npx tsx scripts/leap.ts`.
 
 ## Commands
 

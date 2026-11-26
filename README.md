@@ -6,8 +6,8 @@ A mobile-first physics game. The Queen's village is built down a hill, and the w
 one push from falling over. Set it off, then ride the Egg King's cart through what follows,
 down to the Empress Hen, with his shell in one piece.
 
-This is an early prototype: four streets, **Bell Tower Street**, **Powder Row**,
-**Pudding Lane** and **Miller's Leap**, joined by town gates. What is left of the cart at the bottom of one is what you have at the
+This is an early prototype: five streets, **Bell Tower Street**, **Powder Row**,
+**Pudding Lane**, **Cauldron Gate** and **Miller's Leap**, joined by town gates. What is left of the cart at the bottom of one is what you have at the
 top of the next.
 
 The first version, a gauntlet of towers ridden on a cart built from three simple machines, is
@@ -21,8 +21,8 @@ npm run dev
 ```
 
 Open [http://127.0.0.1:5180](http://127.0.0.1:5180). Add `?auto` to watch the built-in
-driver play every street, or `?street=2`, `?street=3` or `?street=4` to start on a later one
-with a fresh cart.
+driver play every street, or `?street=2` up to `?street=5` to start on a later one with a
+fresh cart.
 
 - **Steer:** put a finger down anywhere and drag sideways. The cart goes that way and keeps
   going until you lift the finger or bring it back (or **←/→**, **A/D**).
@@ -90,6 +90,22 @@ answer.
 4. **The shield wall** throws nothing and does not move. A slow cart is thrown back off it. A
    round opens it, an egg apiece puts the heads in the way down, or she comes through on a blast.
 
+## Cauldron Gate
+
+A stone wall across the bottom of the hill, its gate shut and a shield wall braced behind it.
+In the yard in front of it a plank lies over a log, long end down in the road, with a keg on
+it; and over the short end the Queen's biggest cauldron hangs from a crane.
+
+1. **A plank over a log is a see-saw.** Shoot the rope, and whatever is on the long end when
+   the cauldron lands on the short one goes over the wall.
+2. **Send the keg.** Leave it where it is and cut the rope: it comes down in the kitchen behind
+   the gate, and takes the gate off its hinges. Brake until it has, then go through.
+3. **Or go yourself.** Burst the keg off the plank with an egg, ride on to the long arm, and
+   cut the rope as she crosses the gold bar. She goes over the wall, the shield wall and all,
+   and comes down in the hayricks. On the brake there is time to spare; without it, very little.
+   Too late and she is under the cauldron.
+4. **Or knock.** A round at the gate's ring opens it. The shield wall behind it wants another.
+
 ## Miller's Leap
 
 A windmill at the top of the hill with its millstone swung out over the road, the Queen's
@@ -122,6 +138,7 @@ npx tsx scripts/trace.ts         # one run, event by event (steady, idle, nowain
 npx tsx scripts/window.ts        # outcome for every shot delay and brake setting (add: wain)
 npx tsx scripts/lip.ts           # the jolt of crossing the fallen tower
 npx tsx scripts/lane.ts          # Pudding Lane: every way down it, by fire and by water
+npx tsx scripts/gate.ts          # Cauldron Gate: where she was when the cauldron landed, every way
 npx tsx scripts/leap.ts          # Miller's Leap: speed off the bridge, air and cost, every way
 npm run build
 npm run check                    # typecheck, tests and build
@@ -131,7 +148,8 @@ npm run check                    # typecheck, tests and build
 src/sim/      rules and physics, headless (Rapier 3D, fixed 60 Hz, no DOM, no Math.random)
   course.ts     the streets: the hill, the canal, the tower, the mob, the wain, the powder
   game.ts       the cart, the jolt rule, the gun, the eggs, the tower, the bell, the wain,
-                the mob, the kegs, the barricade, the millstone, what is carried through a gate
+                the mob, the kegs, the barricade, the see-saw, the millstone, what is carried
+                through a gate
   autoplay.ts   pilots for tests and ?auto
 src/render/   PlayCanvas view; reads the sim, never writes it
 src/audio.ts  every sound, synthesised; presentation only
