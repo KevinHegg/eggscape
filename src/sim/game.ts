@@ -1,19 +1,18 @@
 import RAPIER from "@dimforge/rapier3d-deterministic-compat";
-import { COURSE, courseEnd, heightAt, slopeAt, type CourseDef, type PickupKind, type TowerDef, type WallDef } from "./course";
-import { PARTS, type PartId } from "./parts";
+import { COURSE, courseEnd, heightAt, slopeAt, type CourseDef, type MobDef } from "./course";
 
 /** Fixed simulation step. Slow motion changes how many steps run, never the step. */
 export const STEP = 1 / 60;
 const G = 9.81;
 
-// The cart.
-const START_SPEED = 8;
-const MIN_SPEED = 7;
+// The cart. Gravity is her engine: the men only keep her from standing still.
+const START_SPEED = 5;
+const MIN_SPEED = 5;
 const PUSH = 4.5;
 const DRAG = 0.011;
-/** The brake man's shoe on the wheel: it slows the cart but will not stop it. */
-const BRAKE = 5.5;
-const BRAKE_FLOOR = 7;
+/** The brake man's shoe on the wheel: it slows the cart to a walk but will not stop it. */
+const BRAKE = 6;
+export const BRAKE_FLOOR = 5;
 const WHEEL_RADIUS = 0.4;
 const SUSPENSION_REST = 0.34;
 const WHEEL_AT: ReadonlyArray<readonly [number, number]> = [
@@ -23,62 +22,64 @@ const WHEEL_AT: ReadonlyArray<readonly [number, number]> = [
   [0.85, 1.0],
 ];
 const GRIP = 2.2;
-const SLICK_GRIP = 0.18;
 
 // Leaning.
 const LEAN_LAG = 0.1;
 const LEAN_MAX = 0.52;
-/** Above this speed the lean is eased off, so she crosses the road no faster at a gallop than at a trot. */
+/** Above this speed the lean is eased off, so she crosses the street no faster at a gallop than at a trot. */
 const LEAN_EASE = 10;
-const LEAN_BASE = 0.46;
-const LEAN_PER_MAN = 0.18;
-const GREAT_WHEELS = 1.3;
+const LEAN_POWER = 1;
 const HEADING_GAIN = 1.1;
-export const MAX_MEN = 3;
+export const MEN = 3;
+
+// Who may touch whom. Rubble never trips the cart or turns the bell; the fences along the far
+// street are there only for the bell and the wain.
+const CART_GROUPS = (0x0002 << 16) | 0xffff;
+const RUBBLE_GROUPS = (0x0004 << 16) | 0xfff5;
+const ROLLER_GROUPS = (0x0008 << 16) | 0xfffb;
+const FENCE_GROUPS = (0x0010 << 16) | 0x0008;
 
 // The egg.
-/** Rubble, lost bales and fallen men tumble over the road and each other, but never trip the cart. */
-const CART_GROUPS = (0x0002 << 16) | 0xffff;
-const RUBBLE_GROUPS = (0x0004 << 16) | 0xfffd;
 const JOLT_FLOOR = 0.55;
 const SPRING_TRAVEL = 4.5;
 const SPRING_RETURN = 9;
 const JOLT_SCALE = 13;
 const HAY_POINTS = 22;
-const HAY_PRESSED = 1.6;
-export const MAX_HAY = 4;
-const START_HAY = 2;
-
-// Threats.
-const WINDUP = 0.85;
-const FLIGHT = 1.3;
-const RELOAD = 3.2;
-/** Seconds after one tower starts before another may: one threat to read at a time. */
-const LULL = 1.5;
-const STONE_MASS = 16;
-const STONE_RADIUS = 0.42;
-const ARCHER_WINDUP = 1.3;
-const ARCHER_RELOAD = 2.2;
-const ARROW_DAMAGE = 12;
-const ARROW_REACH = 2.1;
-const STONE_REACH = 1.25;
-const SWAT_RANGE = 5.5;
-const SWAT_FLIGHT = 0.9;
-const SHIELD_RANGE = 2.9;
-const BLAST_TOWERS = 17;
-const BLAST_PROPS = 11;
-const BLAST_DAMAGE = 10;
-const PICKUP_REACH = 1.9;
-const HOIST_REACH = 4.4;
+export const START_HAY = 2;
 
 // The gun.
-export const MAX_AMMO = 6;
-const START_AMMO: readonly AmmoKind[] = ["shot", "shot"];
+export const START_AMMO = 3;
 const GUN_COOLDOWN = 0.4;
-const GUN_RANGE = 72;
-const WALL_RANGE = 44;
+/** She can only hit what is this close: a target lights when it comes into range. */
+export const GUN_RANGE = 25;
 const SHOT_SPEED = 44;
-const SHOT_HOLE = 3.3;
+const SHOT_SCATTER = 2.4;
+
+// The bell.
+/** The tower lets go of the bell when it has fallen this far, in radians from upright. */
+const BELL_AWAY = 1.08;
+const BELL_RADIUS = 0.9;
+const BELL_MASS = 240;
+/** A bell is no ball: it rolls badly and soon lies still. */
+const BELL_ROLL = 0.3;
+
+// The mob.
+/** Seconds a townsman stays in the gutter after diving out of the way. */
+export const PANIC = 5.5;
+const SEES_IT_COMING = 9;
+const BOWL_REACH = 1.7;
+const BELL_FRIGHT = 3.6;
+const WAIN_FRIGHT = 3;
+const THROW_REACH = 18;
+const THROW_EVERY = 1.6;
+const PAN_FLIGHT = 0.7;
+const PAN_REACH = 1.4;
+const PAN_DAMAGE = 7;
+const WHACK_DAMAGE = 12;
+const WAIN_SHOVE = 7;
+
+/** Standing still this long, the Queen's cooks catch up. */
+const CAUGHT_AFTER = 4;
 
 export interface Vec3 {
   x: number;
@@ -94,54 +95,55 @@ export interface Quat {
 }
 
 export type Phase = "run" | "won" | "broken";
-/** Round shot knocks down one thing; a keg takes everything near it. */
-export type AmmoKind = "shot" | "keg";
+export type BreakCause = "jolt" | "spilled" | "fell" | "mob" | "caught";
+export type TargetKind = "windlass" | "wain" | "rank";
 
-/** What the gun will hit if fired now. */
+/** Something the gun can be laid on. It lights when it comes into range. */
 export interface Target {
-  kind: "tower" | "wall";
   id: string;
+  kind: TargetKind;
   at: Vec3;
+  lit: boolean;
+  /** Hit already, or past shooting at. */
+  done: boolean;
+  /** A round is on its way to it. */
+  doomed: boolean;
 }
 
 /** A round on its way. */
 export interface Flight {
   id: number;
-  kind: AmmoKind;
   from: Vec3;
   to: Vec3;
   t: number;
   total: number;
-  target: Target;
+  target: string;
 }
-export type BreakCause = "jolt" | "spilled" | "fell";
 
 export type GameEvent =
-  | { type: "windup"; tower: string }
-  | { type: "launch"; tower: string }
-  | { type: "aim"; tower: string }
-  | { type: "volley"; tower: string; at: Vec3; hit: boolean; blocked: boolean; lostMan: boolean }
-  | { type: "swat"; count: number }
+  | { type: "shoot" }
+  | { type: "bang"; at: Vec3; target: TargetKind }
+  | { type: "dry"; why: "empty" | "aimless" }
   | { type: "brake" }
-  | { type: "deflect"; at: Vec3 }
-  | { type: "towerDown"; tower: string; at: Vec3 }
-  | { type: "pickup"; kind: PickupKind; at: Vec3 }
-  | { type: "blast"; at: Vec3 }
+  | { type: "letGo"; at: Vec3 }
+  | { type: "bellLoose"; at: Vec3 }
+  | { type: "slam"; at: Vec3 }
+  | { type: "toll"; at: Vec3; hard: number }
+  | { type: "panic"; id: number; rank: number }
+  | { type: "bowled"; id: number; at: Vec3; by: "bell" | "wain" | "shot" | "cart" }
+  | { type: "regroup"; rank: number }
+  | { type: "throw"; id: number }
+  | { type: "pan"; at: Vec3; hit: boolean }
+  | { type: "wainOff"; at: Vec3 }
+  | { type: "wainCrash"; at: Vec3 }
   | { type: "jolt"; amount: number; absorbed: number }
   | { type: "crack"; stage: number }
   | { type: "broken"; cause: BreakCause }
-  | { type: "manLost" }
   | { type: "hayLost" }
-  | { type: "machine"; part: PartId }
-  | { type: "plough"; at: Vec3 }
-  | { type: "land"; at: Vec3 }
-  | { type: "shoot"; kind: AmmoKind }
-  | { type: "bang"; at: Vec3; hit: "tower" | "wall" }
-  | { type: "dry"; why: "empty" | "aimless" }
   | { type: "air"; time: number; distance: number }
   | { type: "finish" };
 
-export type PropKind = "stone" | "crate" | "man" | "hay" | "beam" | "shell" | "block" | "archer";
+export type PropKind = "hay" | "beam" | "shell" | "block" | "folk";
 
 /** A loose physical thing the view draws by id. */
 export interface Prop {
@@ -151,56 +153,49 @@ export interface Prop {
   /** Half extents, or radius in x for round things. */
   size: Vec3;
   age: number;
-  flung: boolean;
-  /** Crates: the wall they were stacked in. */
-  wall?: string;
-  // Stones only.
-  tower?: string;
-  landed?: boolean;
-  deflected?: boolean;
-  /** Seconds until a swatted stone reaches the tower it came from. */
-  returning?: number;
 }
 
-export interface Tower {
-  def: TowerDef;
-  /** Foot of the tower, beside the road. */
+export interface BellTower {
+  /** Held by its rope, on its way down, or lying across the water as the bridge. */
+  state: "held" | "falling" | "down";
+  /** Radians from upright. */
+  angle: number;
+  /** Radians a second. */
+  speed: number;
+  body: RAPIER.RigidBody;
+}
+
+export interface Bell {
+  /** Still in the belfry, rolling loose, or come to rest. */
+  state: "hung" | "loose" | "still";
+  body: RAPIER.RigidBody | null;
+  landed: boolean;
+  quiet: number;
+}
+
+export interface Wain {
+  state: "chocked" | "away" | "wrecked";
+  body: RAPIER.RigidBody;
+}
+
+export interface Mobster {
+  def: MobDef;
   pos: Vec3;
-  alive: boolean;
-  /** Seconds left of the wind-up; 0 when idle. */
-  windup: number;
-  cooldown: number;
-  volleys: number;
-  target: Vec3 | null;
-  marker: number;
-  /** A round is already on its way to it. */
-  doomed: boolean;
+  /** Standing in the street, dived into the gutter, or out of it for good. */
+  state: "stand" | "down" | "out";
+  /** When a dived one gets up again. */
+  until: number;
+  /** When they next throw; -1 until the cart first comes in reach. */
+  next: number;
 }
 
-export interface Marker {
+/** A pan, a rolling pin, an egg beater: on its way to where the cart was going to be. */
+export interface Pan {
   id: number;
-  at: Vec3;
-  /** Seconds until the stone or the arrows land. */
+  by: number;
+  from: Vec3;
+  to: Vec3;
   t: number;
-  total: number;
-  kind: "stone" | "arrows";
-  /** Stand inside this and it hits. */
-  radius: number;
-}
-
-export interface Pickup {
-  id: number;
-  kind: PickupKind;
-  pos: Vec3;
-  taken: boolean;
-}
-
-export interface MachineState {
-  part: PartId;
-  active: number;
-  cooldown: number;
-  /** Times it can still act; Infinity for a machine that never wears out. */
-  charges: number;
 }
 
 export interface Input {
@@ -208,8 +203,8 @@ export interface Input {
   lean: number;
   /** 0 lets her run, 1 is the brake hard on. */
   brake?: number;
-  /** Fire the gun this step. */
-  shoot?: boolean;
+  /** Fire this step: at the named target, or with `true` at whatever is next in range. */
+  shoot?: string | boolean;
 }
 
 let ready: Promise<void> | null = null;
@@ -235,9 +230,27 @@ function rotate(q: Quat, v: Vec3): Vec3 {
 
 const clamp = (value: number, low: number, high: number): number => Math.min(high, Math.max(low, value));
 
+/** A tower pivoting at its foot, `angle` radians from upright, falling away down the street. */
+const tipped = (angle: number): Quat => ({ x: Math.sin(-angle / 2), y: 0, z: 0, w: Math.cos(angle / 2) });
+
+/** How hard a tower of this height is pulled over at `angle`: a rod falling about its foot. */
+const topple = (height: number, angle: number): number => ((1.5 * G) / height) * Math.sin(angle);
+
+/** Seconds until a falling tower lies down, from where it is now. What a watcher would judge by eye. */
+export function fallTime(height: number, rest: number, angle: number, speed: number): number {
+  let a = angle;
+  let s = speed;
+  let t = 0;
+  while (a < rest && t < 20) {
+    s += topple(height, a) * STEP;
+    a += s * STEP;
+    t += STEP;
+  }
+  return t;
+}
+
 export class Game {
   readonly course: CourseDef;
-  readonly build: readonly PartId[];
   readonly world: RAPIER.World;
   readonly chassis: RAPIER.RigidBody;
   private readonly vehicle: RAPIER.DynamicRayCastVehicleController;
@@ -252,32 +265,33 @@ export class Game {
   /** The King's shell, 100 down to 0. */
   shell = 100;
   stage = 0;
-  men = MAX_MEN;
-  /** Hay padding left, in points of jolt it will soak up. */
-  padding = 0;
-  /** What one bale soaks up. */
-  readonly bale: number;
+  readonly men = MEN;
+  /** Hay padding left, in points of knock it will soak up. */
+  padding = START_HAY * HAY_POINTS;
   /** How hard the brake is on, 0..1. */
   braking = 0;
   /** Smoothed lean, -1..1. */
   lean = 0;
-  slick = false;
   grounded = true;
   /** How hard he was shaken this step, for the view's wobble. */
   jolt = 0;
   /** Seconds off the ground in the present leap. */
   airtime = 0;
-  /** Rounds aboard, next to fire first. */
-  ammo: AmmoKind[] = [...START_AMMO];
-  /** What the gun is laid on. */
+  /** Rounds left in the rack. */
+  ammo = START_AMMO;
+  /** Pans that landed and townsfolk run into: none is a clean street. */
+  knocks = 0;
+
+  readonly targets: Target[] = [];
+  /** What the Fire button would hit: the next thing in range. */
   target: Target | null = null;
   readonly flights: Flight[] = [];
-
-  readonly machines: MachineState[];
-  readonly towers: Tower[] = [];
-  readonly markers: Marker[] = [];
+  readonly tower: BellTower;
+  readonly bell: Bell = { state: "hung", body: null, landed: false, quiet: 0 };
+  readonly wain: Wain;
+  readonly mob: Mobster[] = [];
+  readonly pans: Pan[] = [];
   readonly props: Prop[] = [];
-  readonly pickups: Pickup[] = [];
 
   private events: GameEvent[] = [];
   private nextId = 1;
@@ -287,28 +301,23 @@ export class Game {
   /** How much of a landing the springs can still take, in metres per second. */
   private spring = SPRING_TRAVEL;
   private tipTime = 0;
-  private ploughSide = 1;
+  private stalled = 0;
   private gunCooldown = 0;
-  private lull = 0;
   private airFrom = 0;
-  private readonly doomedWalls = new Set<string>();
+  private readonly regrouped = new Map<number, number>();
 
-  static async create(build: readonly PartId[], course: CourseDef = COURSE): Promise<Game> {
+  static async create(course: CourseDef = COURSE): Promise<Game> {
     await initPhysics();
-    return new Game(build, course);
+    return new Game(course);
   }
 
-  constructor(build: readonly PartId[], course: CourseDef = COURSE) {
+  constructor(course: CourseDef = COURSE) {
     this.course = course;
-    this.build = [...build];
-    this.machines = this.build.map((part) => ({ part, active: 0, cooldown: 0, charges: PARTS[part].charges ?? Infinity }));
-    this.bale = HAY_POINTS * (this.has("screw") ? HAY_PRESSED : 1);
-    this.padding = START_HAY * this.bale;
     this.world = new RAPIER.World({ x: 0, y: -G, z: 0 });
     this.world.timestep = STEP;
-    this.layRoad();
+    this.layStreet();
 
-    const startD = 2;
+    const startD = 0;
     this.chassis = this.world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
         .setTranslation(0, heightAt(course, startD) + 0.8, -startD)
@@ -340,24 +349,19 @@ export class Game {
     }
     this.prevVel = { ...this.chassis.linvel() };
 
-    for (const def of course.towers) {
-      const half = course.width / 2;
-      this.towers.push({
-        def,
-        pos: { x: def.side * (half + 2.9), y: heightAt(course, def.d), z: -def.d },
-        alive: true,
-        windup: 0,
-        cooldown: 0,
-        volleys: 3,
-        target: null,
-        marker: 0,
-        doomed: false,
-      });
+    this.tower = this.raiseTower();
+    this.wain = this.parkWain();
+    for (const def of course.mob) {
+      this.mob.push({ def, pos: { x: def.x, y: heightAt(course, def.d), z: -def.d }, state: "stand", until: 0, next: -1 });
     }
-    for (const wall of course.walls) this.stackCrates(wall);
-    for (const item of course.pickups) {
-      this.pickups.push({ id: this.nextId++, kind: item.kind, pos: { x: item.x, y: heightAt(course, item.d), z: -item.d }, taken: false });
+    const windlass = course.windlass;
+    this.targets.push({ id: "windlass", kind: "windlass", at: { x: windlass.x, y: heightAt(course, windlass.d) + 1.1, z: -windlass.d }, lit: false, done: false, doomed: false });
+    const wain = this.wain.body.translation();
+    this.targets.push({ id: "wain", kind: "wain", at: { x: wain.x, y: wain.y - 0.3, z: wain.z - 1.5 }, lit: false, done: false, doomed: false });
+    for (const rank of new Set(course.mob.map((def) => def.rank))) {
+      this.targets.push({ id: `rank${rank}`, kind: "rank", at: { x: 0, y: 0, z: 0 }, lit: false, done: false, doomed: false });
     }
+    this.aim();
   }
 
   // ---------------------------------------------------------------- reading the state
@@ -374,7 +378,7 @@ export class Game {
     return this.chassis.linvel();
   }
 
-  /** Distance travelled from the gate. */
+  /** Distance travelled from the crest. */
   get distance(): number {
     return -this.chassis.translation().z;
   }
@@ -384,35 +388,36 @@ export class Game {
     return Math.hypot(v.x, v.y, v.z);
   }
 
-  /** 0 at the gate, 1 at the roost. */
+  /** 0 at the crest, 1 at the roost. */
   get progress(): number {
     return clamp(this.distance / this.course.finish, 0, 1);
   }
 
   get hay(): number {
-    return Math.ceil(this.padding / this.bale - 1e-6);
+    return Math.ceil(this.padding / HAY_POINTS - 1e-6);
   }
 
   get over(): boolean {
     return this.phase !== "run";
   }
 
-  /** Stars for a finished run: home, an unbroken shell, and every man still aboard. */
+  /** Stars for a finished street: home, an unbroken shell, and not a pan landed on him. */
   get stars(): number {
     if (this.phase !== "won") return 0;
-    return 1 + (this.stage === 0 ? 1 : 0) + (this.men >= MAX_MEN ? 1 : 0);
+    return 1 + (this.stage === 0 ? 1 : 0) + (this.knocks === 0 ? 1 : 0);
   }
 
-  machine(part: PartId): MachineState | undefined {
-    return this.machines.find((machine) => machine.part === part);
+  /** Seconds until the tower lies across the water: 0 once it does, Infinity while the rope holds. */
+  get bridgeIn(): number {
+    const tower = this.tower;
+    if (tower.state === "down") return 0;
+    if (tower.state === "held") return Infinity;
+    return fallTime(this.course.tower.height, this.course.tower.rest, tower.angle, tower.speed);
   }
 
-  has(part: PartId): boolean {
-    return this.build.includes(part);
-  }
-
-  isActive(part: PartId): boolean {
-    return (this.machine(part)?.active ?? 0) > 0;
+  /** How many of the mob are on their feet. */
+  get standing(): number {
+    return this.mob.filter((one) => one.state === "stand").length;
   }
 
   /** A wheel in the cart's own frame, for drawing. */
@@ -440,31 +445,23 @@ export class Game {
     this.time += STEP;
     if (this.over) this.after += STEP;
 
-    for (const machine of this.machines) {
-      machine.active = Math.max(0, machine.active - STEP);
-      machine.cooldown = Math.max(0, machine.cooldown - STEP);
-    }
     this.gunCooldown = Math.max(0, this.gunCooldown - STEP);
     this.aim();
-    if (!this.over && input.shoot) this.shoot();
+    if (!this.over && input.shoot) this.shoot(input.shoot);
     this.stepFlights();
 
-    this.checkOil();
     this.steer(this.over ? 0 : input.lean);
     this.push(this.over ? 0 : clamp(input.brake ?? 0, 0, 1));
-    if (!this.over) {
-      this.stepTowers();
-      this.stepPickups();
-      if (this.has("wedge")) this.plough();
-      if (this.has("lever")) this.bat();
-      if (this.has("plane")) this.roof();
-    }
+    this.stepTower();
 
     this.vehicle.updateVehicle(STEP, undefined, CART_GROUPS);
     this.world.step();
 
+    this.stepBell();
+    this.stepWain();
+    this.stepMob();
+    this.stepPans();
     this.stepProps();
-    this.stepMarkers();
     this.feelJolt();
     if (!this.over) this.judge();
   }
@@ -473,16 +470,13 @@ export class Game {
     this.lean += (clamp(leanInput, -1, 1) - this.lean) * Math.min(1, STEP / LEAN_LAG);
     const forward = rotate(this.chassis.rotation(), { x: 0, y: 0, z: -1 });
     const yaw = Math.atan2(forward.x, -forward.z); // positive: nose to the right
-    const power = this.slick ? 0.2 : (LEAN_BASE + LEAN_PER_MAN * this.men) * (this.has("wheel") ? GREAT_WHEELS : 1);
-    const assist = this.slick ? 0 : HEADING_GAIN;
     // A positive steering angle turns the nose left, hence the sign.
     const ease = Math.min(1, LEAN_EASE / Math.max(1, -this.chassis.linvel().z));
-    const angle = clamp(-(this.lean * LEAN_MAX * power * ease - assist * yaw), -0.4, 0.4);
+    const angle = clamp(-(this.lean * LEAN_MAX * LEAN_POWER * ease - HEADING_GAIN * yaw), -0.4, 0.4);
     this.vehicle.setWheelSteering(0, angle);
     this.vehicle.setWheelSteering(1, angle);
     let contacts = 0;
     for (let wheel = 0; wheel < WHEEL_AT.length; wheel += 1) {
-      this.vehicle.setWheelFrictionSlip(wheel, this.slick ? SLICK_GRIP : GRIP);
       if (this.vehicle.wheelIsInContact(wheel)) contacts += 1;
     }
     this.grounded = contacts >= 2;
@@ -513,7 +507,7 @@ export class Game {
       this.braking = this.phase === "run" && this.grounded ? brake : 0;
       if (this.braking > 0 && was === 0) this.events.push({ type: "brake" });
       if (this.braking > 0 && -v.z > BRAKE_FLOOR) {
-        // The shoe bites the wheel. It will slow her to a trot, never to a stand.
+        // The shoe bites the wheel. It will slow her to a walk, never to a stand.
         const bite = (Math.min(BRAKE * this.braking * STEP, -v.z - BRAKE_FLOOR) * mass) / Math.max(1, speed);
         impulse.x -= v.x * bite;
         impulse.y -= v.y * bite;
@@ -531,136 +525,52 @@ export class Game {
     this.chassis.applyImpulse(impulse, true);
   }
 
-  private checkOil(): void {
-    const p = this.chassis.translation();
-    const d = -p.z;
-    this.slick = !this.has("wheel") && this.grounded && this.course.oil.some((patch) => d >= patch.d0 && d <= patch.d1 && p.x >= patch.x0 && p.x <= patch.x1);
-  }
-
-  // ---------------------------------------------------------------- machines
-
-  /** The batting arm swings by itself at the first stone to come close, then has to be cocked again. */
-  private bat(): void {
-    const arm = this.machine("lever");
-    if (!arm || arm.cooldown > 0) return;
-    const cart = this.chassis.translation();
-    for (const prop of this.props) {
-      if (prop.kind !== "stone" || prop.landed || prop.deflected || prop.returning !== undefined) continue;
-      const p = prop.body.translation();
-      if (Math.hypot(p.x - cart.x, p.y - cart.y, p.z - cart.z) > SWAT_RANGE) continue;
-      const tower = this.towers.find((candidate) => candidate.def.id === prop.tower);
-      if (!tower) continue;
-      const to = { x: tower.pos.x, y: tower.pos.y + 3.2, z: tower.pos.z };
-      prop.body.setLinvel(
-        { x: (to.x - p.x) / SWAT_FLIGHT, y: (to.y - p.y) / SWAT_FLIGHT + 0.5 * G * SWAT_FLIGHT, z: (to.z - p.z) / SWAT_FLIGHT },
-        true,
-      );
-      prop.returning = SWAT_FLIGHT;
-      this.dropMarker(prop.id);
-      arm.active = PARTS.lever.active;
-      arm.cooldown = PARTS.lever.cooldown;
-      this.events.push({ type: "machine", part: "lever" }, { type: "swat", count: 1 });
-      return;
-    }
-  }
-
-  /** The prow flings loose things out of the road before they are struck. */
-  private plough(): void {
-    const cart = this.chassis.translation();
-    const v = this.chassis.linvel();
-    for (const prop of this.props) {
-      if (prop.flung || prop.kind === "man" || prop.kind === "shell") continue;
-      if (prop.kind === "stone" && !prop.landed) continue;
-      const p = prop.body.translation();
-      const ahead = cart.z - p.z;
-      if (ahead < -0.4 || ahead > 4.2 || Math.abs(p.x - cart.x) > 1.75 || Math.abs(p.y - cart.y) > 1.9) continue;
-      let side = Math.sign(p.x - cart.x);
-      if (Math.abs(p.x - cart.x) < 0.25) {
-        side = this.ploughSide;
-        this.ploughSide = -this.ploughSide;
-      }
-      prop.body.setLinvel({ x: side * (6 + this.random() * 4), y: 5 + this.random() * 3, z: v.z * 1.1 }, true);
-      prop.body.setAngvel({ x: this.random() * 8 - 4, y: this.random() * 8 - 4, z: this.random() * 8 - 4 }, true);
-      prop.flung = true;
-      const prow = this.machine("wedge");
-      if (prow) prow.active = PARTS.wedge.active;
-      this.events.push({ type: "plough", at: { ...p } });
-    }
-  }
-
-  /** The sloped roof turns a stone aside before it lands a blow, and loses a plank doing it. */
-  private roof(): void {
-    const roof = this.machine("plane");
-    if (!roof) return;
-    const cart = this.chassis.translation();
-    const v = this.chassis.linvel();
-    for (const prop of this.props) {
-      if (prop.kind !== "stone" || prop.landed || prop.deflected || prop.returning !== undefined) continue;
-      const p = prop.body.translation();
-      if (roof.charges <= 0) return;
-      if (Math.hypot(p.x - cart.x, p.y - cart.y, p.z - cart.z) > SHIELD_RANGE) continue;
-      roof.charges -= 1;
-      roof.active = PARTS.plane.active;
-      const side = p.x >= cart.x ? 1 : -1;
-      prop.body.setLinvel({ x: side * 8, y: 7, z: v.z * 0.6 }, true);
-      prop.deflected = true;
-      this.dropMarker(prop.id);
-      this.events.push({ type: "deflect", at: { ...p } });
-    }
-  }
-
   // ---------------------------------------------------------------- the gun
 
-  /** Whether any of a wall's crates still stand where they were stacked. */
-  wallStands(wall: WallDef): boolean {
-    return this.props.some((prop) => prop.wall === wall.id && !prop.flung && Math.abs(-prop.body.translation().z - wall.d) < 1.2);
-  }
-
-  /** Lay the gun on whatever is next in the way: the nearest tower or standing wall ahead. */
+  /** Light what is in range, and lay the gun on the next thing worth a round. */
   private aim(): void {
-    this.target = null;
-    if (this.over) return;
     const cart = this.chassis.translation();
     const d = -cart.z;
-    let nearest = Infinity;
-    for (const tower of this.towers) {
-      const ahead = tower.def.d - d;
-      if (!tower.alive || tower.doomed || ahead < -3 || ahead > GUN_RANGE || ahead >= nearest) continue;
-      nearest = ahead;
-      this.target = { kind: "tower", id: tower.def.id, at: { x: tower.pos.x, y: tower.pos.y + 2.6, z: tower.pos.z } };
+    for (const target of this.targets) {
+      if (target.kind === "rank") {
+        // A rank is aimed at through whoever stands nearest the cart's own line down the street.
+        const rank = Number(target.id.slice(4));
+        let best: Mobster | null = null;
+        for (const one of this.mob) {
+          if (one.def.rank !== rank || one.state !== "stand") continue;
+          if (!best || Math.abs(one.pos.x - cart.x) < Math.abs(best.pos.x - cart.x)) best = one;
+        }
+        target.done = !best && !this.mob.some((one) => one.def.rank === rank && one.state === "down");
+        if (best) target.at = { x: best.pos.x, y: best.pos.y + 1, z: best.pos.z };
+        else target.lit = false;
+        if (!best) continue;
+      }
+      const ahead = -target.at.z - d;
+      const reach = Math.hypot(target.at.x - cart.x, target.at.y - cart.y, target.at.z - cart.z);
+      if (ahead < 2) target.done = true;
+      target.lit = !this.over && !target.done && !target.doomed && reach <= GUN_RANGE;
     }
-    // A cart with a plough has no quarrel with a barricade: keep the gun for the towers.
-    for (const wall of this.has("wedge") ? [] : this.course.walls) {
-      const ahead = wall.d - d;
-      if (ahead < 7 || ahead > WALL_RANGE || ahead >= nearest || this.doomedWalls.has(wall.id) || !this.wallStands(wall)) continue;
-      nearest = ahead;
-      // Aim at the stretch of wall in front of the cart, so the hole is where it's wanted.
-      const x = clamp(cart.x, wall.x0 + 0.9, wall.x1 - 0.9);
-      this.target = { kind: "wall", id: wall.id, at: { x, y: heightAt(this.course, wall.d) + 0.8, z: -wall.d } };
-    }
+    // The winch first, then the wain, then whichever rank is nearest.
+    this.target = this.targets.find((target) => target.lit) ?? null;
   }
 
-  private shoot(): void {
+  private shoot(choice: string | true): void {
     if (this.gunCooldown > 0) return;
-    if (this.ammo.length === 0 || !this.target) {
+    const target = choice === true ? this.target : (this.targets.find((candidate) => candidate.id === choice && candidate.lit) ?? null);
+    if (this.ammo <= 0 || !target) {
       this.gunCooldown = 0.3;
-      this.events.push({ type: "dry", why: this.ammo.length === 0 ? "empty" : "aimless" });
+      this.events.push({ type: "dry", why: this.ammo <= 0 ? "empty" : "aimless" });
       return;
     }
-    const kind = this.ammo.shift()!;
-    const target = this.target;
+    this.ammo -= 1;
+    target.doomed = true;
+    target.lit = false;
     const cart = this.chassis.translation();
     const from = { x: cart.x, y: cart.y + 1.3, z: cart.z - 0.9 };
     const reach = Math.hypot(target.at.x - from.x, target.at.y - from.y, target.at.z - from.z);
-    this.flights.push({ id: this.nextId++, kind, from, to: { ...target.at }, t: 0, total: clamp(reach / SHOT_SPEED, 0.32, 1.2), target });
-    if (target.kind === "tower") {
-      const tower = this.towers.find((candidate) => candidate.def.id === target.id);
-      if (tower) tower.doomed = true;
-    } else {
-      this.doomedWalls.add(target.id);
-    }
+    this.flights.push({ id: this.nextId++, from, to: { ...target.at }, t: 0, total: clamp(reach / SHOT_SPEED, 0.25, 1), target: target.id });
     this.gunCooldown = GUN_COOLDOWN;
-    this.events.push({ type: "shoot", kind });
+    this.events.push({ type: "shoot" });
   }
 
   private stepFlights(): void {
@@ -669,166 +579,318 @@ export class Game {
       flight.t += STEP;
       if (flight.t < flight.total) continue;
       this.flights.splice(index, 1);
-      this.doomedWalls.delete(flight.target.id);
-      if (flight.kind === "keg") {
-        this.blast(flight.to);
-        continue;
-      }
-      this.events.push({ type: "bang", at: { ...flight.to }, hit: flight.target.kind });
-      if (flight.target.kind === "tower") {
-        const tower = this.towers.find((candidate) => candidate.def.id === flight.target.id);
-        if (tower) this.destroyTower(tower);
+      const target = this.targets.find((candidate) => candidate.id === flight.target);
+      if (!target) continue;
+      target.doomed = false;
+      this.events.push({ type: "bang", at: { ...flight.to }, target: target.kind });
+      if (target.kind === "windlass") {
+        target.done = true;
+        this.letGo(flight.to);
+      } else if (target.kind === "wain") {
+        target.done = true;
+        this.unchock();
       } else {
-        this.scatter(flight.to, SHOT_HOLE, 8);
+        this.scatter(Number(target.id.slice(4)), flight.to);
       }
     }
   }
 
-  /** Throw every loose thing within `reach` of a point outwards. */
-  private scatter(at: Vec3, reach: number, force: number): void {
-    for (const prop of this.props) {
-      const p = prop.body.translation();
-      const dx = p.x - at.x;
-      const dz = p.z - at.z;
-      const away = Math.hypot(dx, dz);
-      if (away > reach || Math.abs(p.y - at.y) > reach + 2) continue;
-      const push = force * (1 - away / (reach * 1.5));
-      const norm = Math.max(0.5, away);
-      prop.body.setLinvel({ x: (dx / norm) * push + (this.random() * 4 - 2), y: 4.5 + this.random() * 5, z: (dz / norm) * push - 2.5 }, true);
-      prop.body.setAngvel({ x: this.random() * 10 - 5, y: this.random() * 10 - 5, z: this.random() * 10 - 5 }, true);
-      prop.flung = true;
+  /** A round in among a rank: whoever it lands by is out of it, and the rest of the rank dive. */
+  private scatter(rank: number, at: Vec3): void {
+    for (const one of this.mob) {
+      if (one.def.rank !== rank || one.state === "out") continue;
+      if (Math.hypot(one.pos.x - at.x, one.pos.z - at.z) <= SHOT_SCATTER) this.bowl(one, "shot", { x: (one.pos.x - at.x) * 3, y: 7, z: -3 });
+      else this.dive(one);
     }
   }
 
-  // ---------------------------------------------------------------- towers
+  // ---------------------------------------------------------------- the bell tower
 
-  private stepTowers(): void {
-    const d = this.distance;
-    this.lull = Math.max(0, this.lull - STEP);
-    for (const tower of this.towers) {
-      if (!tower.alive) continue;
-      tower.cooldown = Math.max(0, tower.cooldown - STEP);
-      if (tower.windup > 0) {
-        tower.windup -= STEP;
-        if (tower.windup <= 0) {
-          tower.windup = 0;
-          if (tower.def.kind === "mangonel") this.launch(tower);
-          else this.volley(tower);
-        }
-        continue;
-      }
-      if (tower.cooldown > 0 || this.lull > 0 || d < tower.def.from || d > tower.def.to) continue;
-      const cart = this.chassis.translation();
-      const v = this.chassis.linvel();
-      if (tower.def.kind === "mangonel") {
-        const lead = WINDUP + FLIGHT;
-        const targetD = -(cart.z + v.z * lead);
-        const reach = this.course.width / 2 - 0.7;
-        tower.target = { x: clamp(cart.x + v.x * lead, -reach, reach), y: heightAt(this.course, targetD) + 0.55, z: -targetD };
-        tower.marker = this.nextId++;
-        this.markers.push({ id: tower.marker, at: { x: tower.target.x, y: heightAt(this.course, targetD) + 0.06, z: -targetD }, t: lead, total: lead, kind: "stone", radius: STONE_REACH });
-        tower.windup = WINDUP;
-        this.lull = LULL;
-        this.events.push({ type: "windup", tower: tower.def.id });
-      } else if (tower.volleys > 0) {
-        // Archers shoot at where the cart is going to be. Be somewhere else.
-        const targetD = -(cart.z + v.z * ARCHER_WINDUP);
-        const reach = this.course.width / 2 - 1;
-        tower.target = { x: clamp(cart.x + v.x * ARCHER_WINDUP, -reach, reach), y: heightAt(this.course, targetD) + 0.06, z: -targetD };
-        tower.marker = this.nextId++;
-        this.markers.push({ id: tower.marker, at: { ...tower.target }, t: ARCHER_WINDUP, total: ARCHER_WINDUP, kind: "arrows", radius: ARROW_REACH });
-        tower.windup = ARCHER_WINDUP;
-        this.lull = LULL;
-        this.events.push({ type: "aim", tower: tower.def.id });
-      }
+  private raiseTower(): BellTower {
+    const def = this.course.tower;
+    const wide = def.x1 - def.x0;
+    const body = this.world.createRigidBody(
+      RAPIER.RigidBodyDesc.kinematicPositionBased()
+        .setTranslation((def.x0 + def.x1) / 2, heightAt(this.course, def.d - 0.01), -def.d)
+        .setRotation(tipped(def.lean)),
+    );
+    // In its own frame the tower stands up +Y, with the water behind its uphill face (z = 0).
+    this.world.createCollider(RAPIER.ColliderDesc.cuboid(wide / 2, def.height / 2, def.thick / 2).setTranslation(0, def.height / 2, -def.thick / 2).setFriction(1), body);
+    // The corner stones stand proud of the wall. Lying down, they are the bridge's kerbs.
+    for (const side of [-1, 1]) {
+      this.world.createCollider(RAPIER.ColliderDesc.cuboid(0.18, def.height / 2, 0.2).setTranslation(side * (wide / 2 - 0.18), def.height / 2, 0.2).setFriction(0.15), body);
     }
+    // The capstan its rope is made fast to, on the edge of the quay.
+    const post = this.course.windlass;
+    const quay = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    this.world.createCollider(RAPIER.ColliderDesc.cuboid(0.4, 0.6, 0.4).setTranslation(post.x, heightAt(this.course, post.d) + 0.6, -post.d), quay);
+    return { state: "held", angle: def.lean, speed: 0, body };
   }
 
-  private launch(tower: Tower): void {
-    const target = tower.target;
-    if (!target) return;
-    const from = { x: tower.pos.x - tower.def.side * 0.6, y: tower.pos.y + 4.2, z: tower.pos.z };
+  /** The rope is gone. The tower begins, very slowly, to go. */
+  private letGo(at: Vec3): void {
+    if (this.tower.state !== "held") return;
+    this.tower.state = "falling";
+    for (let piece = 0; piece < 6; piece += 1) {
+      this.spawn("beam", { x: 0.1, y: 0.1, z: 0.7 }, 4, { x: at.x, y: at.y + 0.3, z: at.z }, { x: this.random() * 6 - 1, y: 4 + this.random() * 5, z: this.random() * 6 - 3 });
+    }
+    this.events.push({ type: "letGo", at: { ...at } });
+  }
+
+  private stepTower(): void {
+    const tower = this.tower;
+    if (tower.state !== "falling") return;
+    const def = this.course.tower;
+    tower.speed += topple(def.height, tower.angle) * STEP;
+    tower.angle += tower.speed * STEP;
+    if (this.bell.state === "hung" && tower.angle >= BELL_AWAY) this.looseBell();
+    if (tower.angle >= def.rest) {
+      // Down. It lies from bank to bank and from now on it is the street.
+      tower.angle = def.rest;
+      tower.speed = 0;
+      tower.state = "down";
+      tower.body.setBodyType(RAPIER.RigidBodyType.Fixed, true);
+      tower.body.setRotation(tipped(def.rest), true);
+      const far = def.d + Math.sin(def.rest) * def.height;
+      const at = { x: (def.x0 + def.x1) / 2, y: heightAt(this.course, far + 0.1), z: -far };
+      for (let piece = 0; piece < 10; piece += 1) {
+        this.spawn("block", { x: 0.3, y: 0.26, z: 0.3 }, 5, { x: at.x + this.random() * 5 - 2.5, y: at.y + 0.6, z: at.z - this.random() * 2 }, {
+          x: this.random() * 8 - 4,
+          y: 3 + this.random() * 6,
+          z: -2 - this.random() * 7,
+        });
+      }
+      this.events.push({ type: "slam", at });
+      return;
+    }
+    tower.body.setNextKinematicRotation(tipped(tower.angle));
+  }
+
+  /** The belfry gives way and the bell goes on by itself, as fast as the tower's top was moving. */
+  private looseBell(): void {
+    const def = this.course.tower;
+    const tower = this.tower;
+    const foot = tower.body.translation();
+    const reach = def.height + BELL_RADIUS + 0.4;
+    const up = Math.cos(tower.angle);
+    const out = Math.sin(tower.angle);
+    // The middle of the belfry, a little above the eaves.
+    const at = { x: foot.x, y: foot.y + up * reach + out * (def.thick / 2), z: foot.z - out * reach + up * (def.thick / 2) };
+    const ry = at.y - foot.y;
+    const rz = at.z - foot.z;
     const body = this.world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
-        .setTranslation(from.x, from.y, from.z)
-        .setLinvel((target.x - from.x) / FLIGHT, (target.y - from.y) / FLIGHT + 0.5 * G * FLIGHT, (target.z - from.z) / FLIGHT)
-        .setAngvel({ x: this.random() * 6 - 3, y: this.random() * 6 - 3, z: this.random() * 6 - 3 })
-        .setCcdEnabled(true),
+        .setTranslation(at.x, at.y, at.z)
+        .setLinvel(0, tower.speed * rz, -tower.speed * ry)
+        .setAngvel({ x: -tower.speed * 2, y: 0, z: 0 })
+        .setAngularDamping(BELL_ROLL)
+        .setCcdEnabled(true)
+        .setCanSleep(false),
     );
-    this.world.createCollider(RAPIER.ColliderDesc.ball(STONE_RADIUS).setMass(STONE_MASS).setFriction(0.7).setRestitution(0.25), body);
-    this.props.push({ id: tower.marker, kind: "stone", body, size: { x: STONE_RADIUS, y: STONE_RADIUS, z: STONE_RADIUS }, age: 0, flung: false, tower: tower.def.id, landed: false, deflected: false });
-    tower.cooldown = RELOAD;
-    tower.target = null;
-    this.events.push({ type: "launch", tower: tower.def.id });
-  }
-
-  private volley(tower: Tower): void {
-    tower.volleys -= 1;
-    tower.cooldown = ARCHER_RELOAD;
-    const cart = this.chassis.translation();
-    const at = tower.target ?? { ...cart };
-    tower.target = null;
-    const hit = Math.hypot(cart.x - at.x, cart.z - at.z) <= ARROW_REACH;
-    let blocked = false;
-    let lostMan = false;
-    if (hit) {
-      const roof = this.machine("plane");
-      if (roof && roof.charges > 0) {
-        roof.charges -= 1;
-        roof.active = PARTS.plane.active;
-        blocked = true;
-      } else if (this.men > 0) {
-        this.loseMan(tower.def.side);
-        lostMan = true;
-      } else {
-        this.damage(ARROW_DAMAGE);
-      }
-    }
-    this.events.push({ type: "volley", tower: tower.def.id, at, hit, blocked, lostMan });
-  }
-
-  private destroyTower(tower: Tower): void {
-    if (!tower.alive) return;
-    tower.alive = false;
-    tower.windup = 0;
-    if (tower.target) this.dropMarker(tower.marker);
-    tower.target = null;
-    this.events.push({ type: "towerDown", tower: tower.def.id, at: { ...tower.pos } });
-    // It comes apart: most of it away from the road, some of it onto it.
-    const side = tower.def.side;
-    const fling = (kind: PropKind, size: Vec3, mass: number, height: number): void => {
-      const outward = this.random() < 0.8 ? 1 : -1;
-      this.spawn(kind, size, mass, { x: tower.pos.x + this.random() * 1.6 - 0.8, y: tower.pos.y + height, z: tower.pos.z + this.random() * 1.6 - 0.8 }, {
-        x: side * outward * (1.5 + this.random() * 5),
-        y: 5 + this.random() * 7,
-        z: this.random() * 9 - 5.5,
+    this.world.createCollider(RAPIER.ColliderDesc.ball(BELL_RADIUS).setMass(BELL_MASS).setFriction(0.9).setRestitution(0.12).setCollisionGroups(ROLLER_GROUPS), body);
+    this.bell.body = body;
+    this.bell.state = "loose";
+    for (let piece = 0; piece < 7; piece += 1) {
+      this.spawn(piece % 2 ? "beam" : "block", piece % 2 ? { x: 0.1, y: 0.1, z: 0.8 } : { x: 0.3, y: 0.26, z: 0.3 }, 4, { x: at.x + this.random() * 3 - 1.5, y: at.y + this.random() * 1.5, z: at.z }, {
+        x: this.random() * 6 - 3,
+        y: tower.speed * rz * 0.6 + this.random() * 3,
+        z: -tower.speed * ry * (0.5 + this.random() * 0.5),
       });
-    };
-    const stone = tower.def.kind === "archers";
-    for (let piece = 0; piece < (stone ? 9 : 4); piece += 1) fling("block", { x: 0.34, y: 0.3, z: 0.34 }, 5, 0.8 + this.random() * 3.6);
-    for (let piece = 0; piece < (stone ? 2 : 6); piece += 1) fling("beam", { x: 0.13, y: 0.13, z: 0.95 }, 4, 1.4 + this.random() * 2.6);
-    if (stone) for (let archer = 0; archer < 3; archer += 1) fling("archer", { x: 0.2, y: 0.22, z: 0.2 }, 6, 4.9);
+    }
+    this.events.push({ type: "bellLoose", at });
   }
 
-  // ---------------------------------------------------------------- things on the road
+  private stepBell(): void {
+    const bell = this.bell;
+    if (bell.state !== "loose" || !bell.body) return;
+    const p = bell.body.translation();
+    const v = bell.body.linvel();
+    const road = heightAt(this.course, -p.z);
+    if (!bell.landed && p.y <= road + BELL_RADIUS + 0.2) {
+      bell.landed = true;
+      this.events.push({ type: "toll", at: { ...p }, hard: 1 });
+    }
+    if (p.y < road - 12) {
+      // Into the water: it tolls no more.
+      bell.state = "still";
+      return;
+    }
+    const speed = Math.hypot(v.x, v.y, v.z);
+    bell.quiet = bell.landed && speed < 0.35 ? bell.quiet + STEP : 0;
+    if (bell.quiet > 0.6) {
+      bell.state = "still";
+      bell.body.setBodyType(RAPIER.RigidBodyType.Fixed, true);
+    }
+  }
 
-  private stackCrates(wall: WallDef): void {
-    const half = 0.45;
-    const count = Math.max(1, Math.round((wall.x1 - wall.x0) / (half * 2 + 0.06)));
-    const pitch = (wall.x1 - wall.x0) / count;
-    const base = heightAt(this.course, wall.d);
-    for (let row = 0; row < wall.rows; row += 1) {
-      for (let index = 0; index < count; index += 1) {
-        const body = this.world.createRigidBody(
-          RAPIER.RigidBodyDesc.dynamic()
-            .setTranslation(wall.x0 + pitch * (index + 0.5), base + half + 0.02 + row * half * 2, -wall.d)
-            .setSleeping(true),
-        );
-        this.world.createCollider(RAPIER.ColliderDesc.cuboid(half, half, half).setMass(13).setFriction(0.9).setRestitution(0.05), body);
-        this.props.push({ id: this.nextId++, kind: "crate", body, size: { x: half, y: half, z: half }, age: 0, flung: false, wall: wall.id });
+  // ---------------------------------------------------------------- the wain
+
+  private parkWain(): Wain {
+    const def = this.course.wain;
+    const slope = Math.atan(slopeAt(this.course, def.d));
+    const body = this.world.createRigidBody(
+      RAPIER.RigidBodyDesc.fixed()
+        .setTranslation(def.x, heightAt(this.course, def.d) + 0.62 * Math.cos(slope), -def.d - 0.62 * Math.sin(slope))
+        // Tilted to the street, and kept so: it runs down its own side like a thing on rails.
+        .setRotation({ x: Math.sin(-slope / 2), y: 0, z: 0, w: Math.cos(slope / 2) })
+        .lockRotations()
+        .enabledTranslations(false, true, true)
+        .setCanSleep(false),
+    );
+    this.world.createCollider(
+      RAPIER.ColliderDesc.cuboid(0.85, 0.6, 1.3)
+        .setMass(180)
+        .setFriction(0.02)
+        .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min)
+        .setRestitution(0)
+        .setCollisionGroups(ROLLER_GROUPS),
+      body,
+    );
+    // The well at the bottom of its side of the street.
+    const well = this.course.well;
+    const ground = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    this.world.createCollider(RAPIER.ColliderDesc.cuboid(1.15, 0.8, 1.15).setTranslation(well.x, heightAt(this.course, well.d) + 0.6, -well.d).setRestitution(0), ground);
+    // And the woolsacks at the bottom of the bell's side.
+    const sacks = this.course.sacks;
+    this.world.createCollider(RAPIER.ColliderDesc.cuboid(1.2, 1, 1.1).setTranslation(sacks.x, heightAt(this.course, sacks.d) + 0.8, -sacks.d).setRestitution(0).setFriction(1), ground);
+    return { state: "chocked", body };
+  }
+
+  /** The chock is shot out and the wain is away down the hill. */
+  private unchock(): void {
+    const wain = this.wain;
+    if (wain.state !== "chocked") return;
+    wain.state = "away";
+    const slope = slopeAt(this.course, this.course.wain.d);
+    const norm = Math.hypot(1, slope);
+    wain.body.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+    wain.body.setLinvel({ x: 0, y: (-slope / norm) * WAIN_SHOVE, z: (-1 / norm) * WAIN_SHOVE }, true);
+    this.events.push({ type: "wainOff", at: { ...wain.body.translation() } });
+  }
+
+  private stepWain(): void {
+    const wain = this.wain;
+    if (wain.state !== "away") return;
+    const p = wain.body.translation();
+    const v = wain.body.linvel();
+    if (-p.z - this.course.wain.d > 6 && Math.hypot(v.y, v.z) < 0.6) {
+      wain.state = "wrecked";
+      wain.body.setBodyType(RAPIER.RigidBodyType.Fixed, true);
+      for (let piece = 0; piece < 8; piece += 1) {
+        this.spawn(piece % 2 ? "beam" : "block", piece % 2 ? { x: 0.1, y: 0.1, z: 0.7 } : { x: 0.28, y: 0.2, z: 0.28 }, 4, { x: p.x + this.random() * 2 - 1, y: p.y + 0.8, z: p.z - 1 }, {
+          x: this.random() * 8 - 4,
+          y: 4 + this.random() * 5,
+          z: -2 - this.random() * 5,
+        });
+      }
+      this.events.push({ type: "wainCrash", at: { ...p } });
+    }
+  }
+
+  // ---------------------------------------------------------------- the mob
+
+  /** The bell and the wain, while they are moving fast enough to frighten anyone. */
+  private rollers(): Array<{ x: number; d: number; by: "bell" | "wain"; fright: number; v: Vec3 }> {
+    const out: Array<{ x: number; d: number; by: "bell" | "wain"; fright: number; v: Vec3 }> = [];
+    if (this.bell.state === "loose" && this.bell.body && this.bell.landed) {
+      const p = this.bell.body.translation();
+      const v = this.bell.body.linvel();
+      if (-v.z > 1.5) out.push({ x: p.x, d: -p.z, by: "bell", fright: BELL_FRIGHT, v });
+    }
+    if (this.wain.state === "away") {
+      const p = this.wain.body.translation();
+      const v = this.wain.body.linvel();
+      if (-v.z > 1.5) out.push({ x: p.x, d: -p.z, by: "wain", fright: WAIN_FRIGHT, v });
+    }
+    return out;
+  }
+
+  private stepMob(): void {
+    const cart = this.chassis.translation();
+    const v = this.chassis.linvel();
+    const d = -cart.z;
+    const rollers = this.rollers();
+    for (const one of this.mob) {
+      if (one.state === "out") continue;
+      // Whatever comes rolling down the street: those in its way go flying, those beside it dive.
+      for (const roller of rollers) {
+        const ahead = one.def.d - roller.d;
+        const beside = Math.abs(one.pos.x - roller.x);
+        if (ahead > SEES_IT_COMING || ahead < -1.5) continue;
+        if (beside < BOWL_REACH) {
+          if (ahead < 1) this.bowl(one, roller.by, { x: (one.pos.x - roller.x) * 4, y: 6.5, z: roller.v.z * 0.8 });
+        } else if (beside < roller.fright && one.state === "stand") {
+          this.dive(one);
+        }
+      }
+      if (one.state === "down") {
+        if (this.time < one.until) continue;
+        one.state = "stand";
+        one.next = this.time + 0.9;
+        if (this.time - (this.regrouped.get(one.def.rank) ?? -9) > 1.5) {
+          this.regrouped.set(one.def.rank, this.time);
+          this.events.push({ type: "regroup", rank: one.def.rank });
+        }
+      }
+      if (one.state !== "stand" || this.over) continue;
+      // Run into one of them and it costs him a clout on the way through.
+      if (Math.abs(one.pos.x - cart.x) < 1.15 && Math.abs(one.pos.z - cart.z) < 1.3 && Math.abs(one.pos.y - cart.y) < 2.5) {
+        this.knocks += 1;
+        this.bowl(one, "cart", { x: Math.sign(one.pos.x - cart.x || 1) * 4, y: 5, z: v.z * 0.9 });
+        this.damage(WHACK_DAMAGE, "mob");
+        continue;
+      }
+      const ahead = one.def.d - d;
+      if (ahead > THROW_REACH || ahead < -3) continue;
+      if (one.next < 0) one.next = this.time + 0.25 + this.random() * 0.9;
+      if (this.time < one.next) continue;
+      one.next = this.time + THROW_EVERY + this.random() * 0.4;
+      // Thrown at where he will be if nothing changes. Change something.
+      const reach = this.course.width / 2 - 0.5;
+      const toD = -(cart.z + v.z * PAN_FLIGHT);
+      this.pans.push({
+        id: this.nextId++,
+        by: one.def.id,
+        from: { x: one.pos.x, y: one.pos.y + 1.6, z: one.pos.z },
+        to: { x: clamp(cart.x + v.x * PAN_FLIGHT, -reach, reach), y: heightAt(this.course, toD) + 0.9, z: -toD },
+        t: 0,
+      });
+      this.events.push({ type: "throw", id: one.def.id });
+    }
+  }
+
+  private dive(one: Mobster): void {
+    if (one.state === "out") return;
+    const fresh = one.state === "stand";
+    one.state = "down";
+    one.until = this.time + PANIC;
+    if (fresh) this.events.push({ type: "panic", id: one.def.id, rank: one.def.rank });
+  }
+
+  private bowl(one: Mobster, by: "bell" | "wain" | "shot" | "cart", velocity: Vec3): void {
+    if (one.state === "out") return;
+    one.state = "out";
+    this.spawn("folk", { x: 0.26, y: 0.3, z: 0.26 }, 8, { x: one.pos.x, y: one.pos.y + 1, z: one.pos.z }, velocity);
+    this.events.push({ type: "bowled", id: one.def.id, at: { ...one.pos }, by });
+  }
+
+  private stepPans(): void {
+    const cart = this.chassis.translation();
+    for (let index = this.pans.length - 1; index >= 0; index -= 1) {
+      const pan = this.pans[index]!;
+      pan.t += STEP;
+      if (pan.t < PAN_FLIGHT) continue;
+      this.pans.splice(index, 1);
+      const hit = !this.over && Math.hypot(cart.x - pan.to.x, cart.z - pan.to.z) <= PAN_REACH && Math.abs(cart.y - pan.to.y) < 2.5;
+      this.events.push({ type: "pan", at: { ...pan.to }, hit });
+      if (hit) {
+        this.knocks += 1;
+        this.damage(PAN_DAMAGE, "mob");
       }
     }
   }
+
+  // ---------------------------------------------------------------- loose things
 
   private spawn(kind: PropKind, size: Vec3, mass: number, at: Vec3, velocity: Vec3): Prop {
     const body = this.world.createRigidBody(
@@ -837,117 +899,28 @@ export class Game {
         .setLinvel(velocity.x, velocity.y, velocity.z)
         .setAngvel({ x: this.random() * 10 - 5, y: this.random() * 10 - 5, z: this.random() * 10 - 5 }),
     );
-    const shape = kind === "man" || kind === "archer" ? RAPIER.ColliderDesc.capsule(size.y, size.x) : RAPIER.ColliderDesc.cuboid(size.x, size.y, size.z);
+    const shape = kind === "folk" ? RAPIER.ColliderDesc.capsule(size.y, size.x) : RAPIER.ColliderDesc.cuboid(size.x, size.y, size.z);
     this.world.createCollider(shape.setMass(mass).setFriction(0.8).setRestitution(0.2).setCollisionGroups(RUBBLE_GROUPS), body);
-    const prop: Prop = { id: this.nextId++, kind, body, size, age: 0, flung: true };
+    const prop: Prop = { id: this.nextId++, kind, body, size, age: 0 };
     this.props.push(prop);
     return prop;
   }
 
-  private stepPickups(): void {
-    const cart = this.chassis.translation();
-    for (const pickup of this.pickups) {
-      if (pickup.taken) continue;
-      const away = Math.hypot(pickup.pos.x - cart.x, pickup.pos.z - cart.z);
-      const hoist = this.machine("pulley");
-      if (away > (hoist ? HOIST_REACH : PICKUP_REACH) || Math.abs(pickup.pos.y - cart.y) > 2.6) continue;
-      // Munitions wait on the road until there's room in the rack.
-      if ((pickup.kind === "shot" || pickup.kind === "keg") && this.ammo.length >= MAX_AMMO) continue;
-      if (hoist && away > PICKUP_REACH) {
-        hoist.active = PARTS.pulley.active;
-        this.events.push({ type: "machine", part: "pulley" });
-      }
-      this.take(pickup);
-    }
-  }
-
-  private take(pickup: Pickup): void {
-    pickup.taken = true;
-    this.events.push({ type: "pickup", kind: pickup.kind, at: { ...pickup.pos } });
-    if (pickup.kind === "hay") this.padding = Math.min(MAX_HAY * this.bale, this.padding + this.bale);
-    if (pickup.kind === "man") this.men = Math.min(MAX_MEN, this.men + 1);
-    if (pickup.kind === "shot") this.ammo.push(...(["shot", "shot"] as const).slice(0, MAX_AMMO - this.ammo.length));
-    // A keg jumps the queue: pick one up and the next shot is the big one.
-    if (pickup.kind === "keg") this.ammo.unshift("keg");
-  }
-
-  private blast(at: Vec3): void {
-    this.events.push({ type: "blast", at: { ...at } });
-    for (const tower of this.towers) {
-      if (Math.hypot(tower.pos.x - at.x, tower.pos.z - at.z) <= BLAST_TOWERS) this.destroyTower(tower);
-    }
-    this.scatter(at, BLAST_PROPS, 10);
-    const cart = this.chassis.translation();
-    if (Math.hypot(cart.x - at.x, cart.z - at.z) < 7) {
-      const v = this.chassis.linvel();
-      this.chassis.setLinvel({ x: v.x, y: Math.max(v.y, 0) + 2.4, z: v.z - 3 }, true);
-      this.joltSkip = 3;
-      this.damage(BLAST_DAMAGE);
-    }
-  }
-
-  private loseMan(side: number): void {
-    if (this.men <= 0) return;
-    this.men -= 1;
-    const cart = this.chassis.translation();
-    const v = this.chassis.linvel();
-    this.spawn("man", { x: 0.2, y: 0.22, z: 0.2 }, 8, { x: cart.x - side * 0.6, y: cart.y + 1, z: cart.z + 0.6 }, { x: -side * 3.5, y: 4.2, z: v.z * 0.5 });
-    this.events.push({ type: "manLost" });
-  }
-
   private stepProps(): void {
-    const cart = this.chassis.translation();
     for (let index = this.props.length - 1; index >= 0; index -= 1) {
       const prop = this.props[index]!;
       prop.age += STEP;
       const p = prop.body.translation();
-      const road = heightAt(this.course, -p.z);
-      let gone = p.z > cart.z + 26 || p.y < road - 25;
-      if (prop.kind === "stone") {
-        if (prop.returning !== undefined) {
-          prop.returning -= STEP;
-          if (prop.returning <= 0) {
-            const tower = this.towers.find((candidate) => candidate.def.id === prop.tower);
-            if (tower) this.destroyTower(tower);
-            gone = true;
-          }
-        } else if (!prop.landed && (p.y <= road + STONE_RADIUS + 0.12 || prop.age > FLIGHT + 0.25)) {
-          prop.landed = true;
-          this.events.push({ type: "land", at: { ...p } });
-          const keg = this.pickups.find((pickup) => !pickup.taken && pickup.kind === "keg" && Math.hypot(pickup.pos.x - p.x, pickup.pos.z - p.z) < 2.2);
-          if (keg) {
-            // A stone on a keg lying in the road sets it off where it lies.
-            keg.taken = true;
-            this.blast(keg.pos);
-          }
-        }
-        if (prop.age > 9) gone = true;
-      } else if (prop.kind !== "crate" && prop.age > 10) {
-        gone = true;
-      }
-      if (gone) {
+      if (prop.age > 9 || p.y < heightAt(this.course, -p.z) - 25) {
         this.world.removeRigidBody(prop.body);
         this.props.splice(index, 1);
       }
     }
   }
 
-  private stepMarkers(): void {
-    for (let index = this.markers.length - 1; index >= 0; index -= 1) {
-      const marker = this.markers[index]!;
-      marker.t -= STEP;
-      if (marker.t <= -0.15) this.markers.splice(index, 1);
-    }
-  }
-
-  private dropMarker(id: number): void {
-    const index = this.markers.findIndex((marker) => marker.id === id);
-    if (index >= 0) this.markers.splice(index, 1);
-  }
-
   // ---------------------------------------------------------------- the egg
 
-  /** Only a jolt hurts him: how sharply the cart's velocity changed this step. */
+  /** A jolt hurts him: how sharply the cart's velocity changed this step. */
   private feelJolt(): void {
     const v = this.chassis.linvel();
     let dx = v.x - this.prevVel.x;
@@ -972,10 +945,10 @@ export class Game {
       return;
     }
     if (this.phase !== "run" || change <= JOLT_FLOOR) return;
-    this.damage((change - JOLT_FLOOR) * JOLT_SCALE);
+    this.damage((change - JOLT_FLOOR) * JOLT_SCALE, "jolt");
   }
 
-  private damage(raw: number): void {
+  private damage(raw: number, cause: BreakCause): void {
     if (this.phase !== "run") return;
     let amount = raw;
     let absorbed = 0;
@@ -998,7 +971,7 @@ export class Game {
       this.stage = stage;
       this.events.push({ type: "crack", stage });
     }
-    if (this.shell <= 0) this.shatter("jolt");
+    if (this.shell <= 0) this.shatter(cause);
   }
 
   private shatter(cause: BreakCause): void {
@@ -1007,7 +980,6 @@ export class Game {
     this.cause = cause;
     this.shell = 0;
     this.stage = 3;
-    this.markers.length = 0;
     const cart = this.chassis.translation();
     const v = this.chassis.linvel();
     for (const side of [-1, 1]) {
@@ -1023,18 +995,19 @@ export class Game {
     this.tipTime = up.y < 0.2 ? this.tipTime + STEP : 0;
     if (this.tipTime > 0.7) return this.shatter("spilled");
     if (p.y < heightAt(this.course, d) - 5 || d > courseEnd(this.course) + 4) return this.shatter("fell");
-    if (this.time > 120) return this.shatter("spilled");
+    // She cannot stand still for long: the Queen's cooks are coming down the hill behind her.
+    this.stalled = this.speed < 1.2 ? this.stalled + STEP : 0;
+    if (this.stalled > CAUGHT_AFTER || this.time > 90) return this.shatter("caught");
     if (d >= this.course.finish) {
       this.phase = "won";
-      this.markers.length = 0;
       this.events.push({ type: "finish" });
     }
   }
 
   // ---------------------------------------------------------------- the world
 
-  private layRoad(): void {
-    const road = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+  private layStreet(): void {
+    const street = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
     const half = this.course.width / 2;
     for (const piece of this.course.pieces) {
       const run = piece.d1 - piece.d0;
@@ -1044,32 +1017,34 @@ export class Game {
       const rotation = { x: Math.sin(angle / 2), y: 0, z: 0, w: Math.cos(angle / 2) };
       const normal = { y: Math.cos(angle), z: Math.sin(angle) };
       const mid = { y: (piece.y0 + piece.y1) / 2, z: -(piece.d0 + piece.d1) / 2 };
-      // A bridge that has lost a side is only as wide as what is left of it, with no kerb on the broken edge.
-      const left = piece.x0 ?? -half;
-      const right = piece.x1 ?? half;
-      const low = left <= -half ? left - 0.6 : left;
-      const high = right >= half ? right + 0.6 : right;
       this.world.createCollider(
-        RAPIER.ColliderDesc.cuboid((high - low) / 2, 0.3, length / 2)
-          .setTranslation((low + high) / 2, mid.y - normal.y * 0.3, mid.z - normal.z * 0.3)
+        RAPIER.ColliderDesc.cuboid(half + 0.6, 0.3, length / 2)
+          .setTranslation(0, mid.y - normal.y * 0.3, mid.z - normal.z * 0.3)
           .setRotation(rotation)
           .setFriction(1),
-        road,
+        street,
       );
       for (const side of [-1, 1]) {
-        if (side < 0 ? left > -half : right < half) continue;
         this.world.createCollider(
           RAPIER.ColliderDesc.cuboid(0.3, 0.45, length / 2)
             .setTranslation(side * (half + 0.3), mid.y + normal.y * 0.3, mid.z + normal.z * 0.3)
             .setRotation(rotation)
             .setFriction(0.15),
-          road,
+          street,
+        );
+        // House fronts, as far as the bell and the wain are concerned.
+        this.world.createCollider(
+          RAPIER.ColliderDesc.cuboid(0.3, 2, length / 2)
+            .setTranslation(side * (half + 0.9), mid.y + normal.y * 1.8, mid.z + normal.z * 1.8)
+            .setRotation(rotation)
+            .setCollisionGroups(FENCE_GROUPS),
+          street,
         );
       }
     }
     // The back of the roost yard.
     const end = courseEnd(this.course);
-    this.world.createCollider(RAPIER.ColliderDesc.cuboid(half + 0.6, 2, 0.5).setTranslation(0, heightAt(this.course, end) + 2, -end - 0.5), road);
+    this.world.createCollider(RAPIER.ColliderDesc.cuboid(half + 0.6, 2, 0.5).setTranslation(0, heightAt(this.course, end) + 2, -end - 0.5), street);
   }
 
   private random(): number {

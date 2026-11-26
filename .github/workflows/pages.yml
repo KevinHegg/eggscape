@@ -33,6 +33,14 @@ jobs:
         run: npm ci && npm run typecheck && npm test && npm run build
         env:
           GITHUB_ACTIONS: true
+      # The first game, the Queen's gauntlet, is kept as it was and served beside the new one.
+      - name: Check out the first game
+        uses: actions/checkout@v4
+        with:
+          ref: gauntlet-v1
+          path: gauntlet-src
+      - name: Build the first game into /gauntlet/
+        run: cd gauntlet-src && npm ci && npx vite build --base=/eggscape/gauntlet/ --outDir ../dist/gauntlet --emptyOutDir
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Upload Pages artifact

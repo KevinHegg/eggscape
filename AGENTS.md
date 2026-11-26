@@ -1,39 +1,44 @@
 # The Great Eggscape: working rules
 
-A mobile-first physics game. The player bolts three simple machines to the Egg King's cart
-and rides it down a defended hill to the Empress Hen. Prototype stage.
+A mobile-first physics game. A hill village is one Rube Goldberg machine: the player sets it
+off, then has to ride the Egg King's cart through what follows, down to the Empress Hen.
+Prototype stage: one street, Bell Tower Street.
+
+The first game (pick three machines, ride the Queen's gauntlet) is frozen on branch
+`gauntlet` (tag `gauntlet-v1`) and published beside this one at `/gauntlet/`. Do not merge
+it back or change it in passing; it is kept as it was on purpose.
 
 ## Core promises
 
+- A street is one contraption: something to set off, a chain that follows, and a moment to
+  arrive. Start, shot, chain, crossing and verdict fit in about twenty seconds, and a failed
+  go restarts at once.
+- Setting off the chain is easy. Arriving at the right moment is the game. The bell tower
+  takes about three seconds to fall; a cart that never brakes reaches the bank before it is
+  down, and a cart that brakes arrives as it lands. `npx tsx scripts/window.ts` prints the
+  outcome for every shot delay and brake setting; keep that window neither trivial nor a
+  needle's eye.
+- Each link is a simple, robust event, not a pile of free bodies. The tower is a kinematic
+  body turned about its foot by a rod-pendulum rule and frozen where it lands; the bell is one
+  dynamic ball; the wain is one body on a locked line; the mob, the pans and the whacks are
+  state, not colliders. Loose rubble and flung cooks are spectacle in their own collision
+  group and never touch the cart.
+- The fallen tower must lie flush from bank to bank (`height` and `rest` in `course.ts` are
+  derived from the canal, not typed in). `npx tsx scripts/lip.ts` measures the jolt of
+  crossing it; it should stay under half a metre a second.
 - Only a jolt hurts the King: shell damage comes from a sharp change in the cart's velocity
-  (`feelJolt`), plus the few fixed costs named in `game.ts` (arrows with no men left, a keg).
-  The cart is sprung: coming down wheels first, the springs take the first of a landing.
-- Hay is the cushion. The King rides packed in bales (two to start, four at most); every
-  knock comes out of the hay before it reaches the shell, and the bales visibly go.
-- Three verbs, two thumbs. One finger drags like a stick: drag sideways and the cart goes that
-  way and keeps going until the finger lifts or comes back (`leanAt`), and pulling down puts
-  the brake on. A tap, a second finger, or the one Fire
-  button shoots. There are no other buttons in a run.
-- The brake slows her and never stops her (`BRAKE_FLOOR`). There is no accelerator: a cart
-  has a brake, not an engine.
-- The machines are the build, not buttons. Three of six (`src/sim/parts.ts`), each working by
-  itself and each showing its state on the cart: the roof loses a plank per blow, the batting
-  arm hangs slack until it is cocked again.
-- No build may play itself. Each bridge has lost a side, so every cart must be steered onto
-  what is left of it; `npm test` checks that an idle cart never gets home.
-- The gun is fed from the road. It fires only what the rack holds, at the one target the sim
-  has laid it on (`Game.target`: the nearest tower ahead, or a standing wall unless the cart
-  has a plough). Shot comes from pickups; a keg goes to the front of the rack.
-- One threat to read at a time: after one tower starts, the next waits (`LULL`). Every threat
-  is the same thing to the player, a red ring on the road that fills: stones a small one,
-  arrows a wide one. Be out of it, or brake and let it land ahead.
-- The story is on the verges: the King's subjects stand by what they left him, the Queen's
-  men camp round her towers. Roadside figures, stray shots and rubble are spectacle and never
-  touch the cart (rubble is in its own collision group).
-- Jumps are cut to the flight of a free-rolling cart (`leap()` in `course.ts`), with the hill
-  starting close under the lip, so a slower, braked cart drops onto it early and softly.
-  Nothing makes a cart faster than free-rolling. Change a run-in or the drag and the hills
-  must be re-cut; `npx tsx scripts/jumps.ts` shows air time and damage at three brake settings.
+  (`feelJolt`), plus the fixed costs named in `game.ts` (a pan that lands, a whack from a
+  cook he runs into). Hay takes every knock before the shell does, and the bales visibly go.
+- Three verbs, two thumbs. One finger drags like a stick: sideways and the cart goes that way
+  and keeps going until the finger lifts or comes back (`leanAt`); pulling down puts the
+  brake on. A tap on a gold ring, a second finger, or the one Fire button shoots.
+- The brake slows her and never stops her (`BRAKE_FLOOR`). There is no accelerator.
+- One cart, three rounds, no build screen. The gun reaches only what is lit (`GUN_RANGE`);
+  every target wears a ring, faint out of range and gold within it.
+- No cart may play itself, and no street may need a shot the player cannot see: `npm test`
+  checks that an idle cart never gets home and that a sensible driver gets three stars.
+- The village is the Queen's and the story is on the street: her kitchen mob with pans,
+  rolling pins and egg beaters, the Queen on her balcony, the King's own people at the roost.
 - Portrait and thumbs come first. The bottom of the screen is for dragging; Fire sits under
   the right thumb.
 
@@ -43,16 +48,18 @@ and rides it down a defended hill to the Empress Hen. Prototype stage.
 - `src/render` reads simulation state and events; it never moves bodies or changes rules.
 - The simulation steps at a fixed `STEP` (1/60 s) and uses no wall clock and no
   `Math.random`, so a run replays exactly. Physics is the deterministic Rapier build
-  (`@dimforge/rapier3d-deterministic-compat`): the ordinary build gives a different pile-up
-  for the first world made in a process.
-- After changing physics constants or the course, run `npm test` and
-  `npx tsx scripts/builds.ts`: an idle cart must fail and a sensible driver must get home.
+  (`@dimforge/rapier3d-deterministic-compat`).
+- After changing physics constants or the street, run `npm test`, `npx tsx scripts/window.ts`
+  and `npx tsx scripts/window.ts wain`.
 
 ## Commands
 
 - Development: `npm run dev` (port 5180); `?auto` lets the test pilot drive
 - Tests: `npm test`; full acceptance: `npm run check`
-- Trace a run event by event with the test pilot: `npx tsx scripts/trace.ts lever,wedge,plane [idle]`
-- Speed down the bare road: `npm run probe -- [brake 0..1]`; what a held drag does:
-  `npx tsx scripts/hold.ts`; the jumps: `npx tsx scripts/jumps.ts`
+- Trace a run event by event: `npx tsx scripts/trace.ts [steady|idle|nowain|late|dawdle]`
+- The timing window: `npx tsx scripts/window.ts [wain]`; the crossing: `npx tsx scripts/lip.ts`
+- In a browser console, `__egg.step(seconds, { goal, brake, shoot })` drives the game where
+  frames do not tick (a hidden tab); set `__egg.view.app.timeScale = 0` first.
 - Sound is `src/audio.ts`: synthesised, no files, presentation only.
+- Pages: `.github/workflows/pages.yml` builds `main` to the site root and tag `gauntlet-v1`
+  to `/gauntlet/`.

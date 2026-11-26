@@ -2,10 +2,14 @@
 
 *The Queen wants an omelette. The Egg King wants his mother.*
 
-A mobile-first physics game. Bolt three simple machines to the Egg King's cart, pack him in hay, then steer
-it down the Queen's gauntlet to the Empress Hen with his shell in one piece.
+A mobile-first physics game. The Queen's village is built down a hill, and the whole of it is
+one push from falling over. Set it off, then ride the Egg King's cart through what follows,
+down to the Empress Hen, with his shell in one piece.
 
-This is an early prototype: one gauntlet, six machines, one gun.
+This is an early prototype: one street, **Bell Tower Street**.
+
+The first version, a gauntlet of towers ridden on a cart built from three simple machines, is
+kept as its own game on branch `gauntlet` and is published at `/gauntlet/` beside this one.
 
 ## Play
 
@@ -15,64 +19,53 @@ npm run dev
 ```
 
 Open [http://127.0.0.1:5180](http://127.0.0.1:5180). Add `?auto` to watch the built-in
-driver play the run.
+driver play the street.
 
-- **Build:** pick three of the six machines. They work on their own; there is nothing to press.
 - **Steer:** put a finger down anywhere and drag sideways. The cart goes that way and keeps
-  going until you lift the finger or bring it back; a longer drag is a harder swerve
-  (or **←/→**, **A/D**). The King's men do the leaning; lose men and she answers more slowly.
+  going until you lift the finger or bring it back (or **←/→**, **A/D**).
 - **Brake:** pull the same finger down (or **↓**, **S**). She slows to a trot, never to a stand.
-- **Fire:** the gun lays itself on the nearest tower or wall ahead and rings it in gold. Tap
-  the screen, touch it with a second finger, or press **Fire** (or **Space**).
-- **R** restarts the run; **M** mutes the sound.
+- **Fire:** everything the gun could hit wears a ring. When a ring turns gold it is in range:
+  tap it, or press **Fire** (or **Space**) for the next one. Three rounds, no more.
+- **R** restarts; **M** mutes the sound.
 
-## Rules
+## Bell Tower Street
 
-- **Only a jolt hurts him.** The King has no hit points. His shell cracks when the cart's
-  velocity changes sharply: a stone, a hard landing, a rammed barricade, a blast.
-- **Hay is his cushion.** He rides packed in bales, and every knock comes out of the hay
-  before it reaches his shell. Farmers leave more by the road.
-- **Stars:** get him home; arrive with the shell uncracked; arrive with all three men aboard.
-- **The six machines**
+The bridge over the canal is gone. The bell tower beside it leans out over the water, held
+back by one rope to a capstan on the quay.
 
-  | Machine | On the cart | What it does, unasked |
-  |---|---|---|
-  | Lever | Batting Arm | Bats a stone back at the tower that threw it, then must be cocked again |
-  | Wedge | Plough | Shoulders crates and rubble out of the road |
-  | Inclined plane | Sloped Roof | Turns aside three stones or volleys, a plank each |
-  | Pulley | Hoist | Swings gifts aboard from half the road away |
-  | Screw | Hay Press | Packs the hay tight, so each bale takes a harder knock |
-  | Wheel and axle | Great Wheels | Grip through oil, and a quicker lean |
+1. **Shoot the capstan.** The tower falls away from you and lies from bank to bank: its face
+   is the new bridge.
+2. **Brake.** It takes about three seconds to come down. Reach the bank too soon and you meet
+   it standing, or the water.
+3. **The bell** breaks loose as the tower lands, rolls down the far street and bowls the
+   Queen's kitchen mob out of its side of the road. The cooks nearby dive for the gutter, for
+   a while.
+4. **The cheese wain** on the far bank is only chocked. Knock the chock out and it runs down
+   the other side of the street into the well, and clears that side too. Leave it, and the
+   cooks still standing throw what they are holding.
+5. **Steer round what is left:** the bell where it stopped, the woolsacks, the well.
 
-- **Towers** take turns. Each marks the road with a red ring that fills: a small one for a
-  mangonel's stone, a wide one for an archers' volley. Be out of it when it fills, or brake
-  and let it land in front of you.
-- **The gun:** every cart carries one, with two rounds in the rack. A round brings a tower
-  down or blows a hole in a wall. There are more towers than rounds.
-- **On the road:** barricades to steer round, plough or shoot; oil that kills your grip; a
-  hump, and two bridges that have each lost a side. Get onto the half that is left and let
-  her run: the landing hill beyond is cut for a rolling cart and forgives a slow one.
-- **Pickups** are what the King's subjects have left by the road: hay to pack round him;
-  volunteers who climb aboard; the smith's shot, two more rounds; a powder keg stolen from
-  the Queen, which goes to the front of the rack and takes out everything near where it lands.
+- **Only a jolt hurts him.** His shell cracks when the cart's velocity changes sharply, when a
+  pan lands, or when he runs into a cook. Hay takes each knock first, two bales' worth.
+- **Stars:** get him home; arrive with the shell uncracked; arrive without a pan landed.
+- A cart that stops is caught.
 
 ## Development
 
 ```bash
 npm run typecheck
-npm test                      # headless: the run is winnable, an idle cart is not, replays are exact
-npm run probe                 # speed down the bare road (add a brake setting, 0 to 1)
-npx tsx scripts/jumps.ts      # air time and damage on each jump, free and braked
-npx tsx scripts/builds.ts     # all twenty carts, driven by the test pilot
+npm test                         # headless: winnable, not by an idle cart, replays exact
+npx tsx scripts/trace.ts         # one run, event by event (steady, idle, nowain, late, dawdle)
+npx tsx scripts/window.ts        # outcome for every shot delay and brake setting (add: wain)
+npx tsx scripts/lip.ts           # the jolt of crossing the fallen tower
 npm run build
-npm run check                 # typecheck, tests and build
+npm run check                    # typecheck, tests and build
 ```
 
 ```
 src/sim/      rules and physics, headless (Rapier 3D, fixed 60 Hz, no DOM, no Math.random)
-  parts.ts      the six machines
-  course.ts     the gauntlet: road and jumps, towers, walls, oil, pickups
-  game.ts       the cart, the jolt rule, the gun, towers, machines, pickups, the verdict
+  course.ts     the street: the hill, the canal, the tower, the mob, the wain
+  game.ts       the cart, the jolt rule, the gun, the falling tower, the bell, the wain, the mob
   autoplay.ts   pilots for tests and ?auto
 src/render/   PlayCanvas view; reads the sim, never writes it
 src/audio.ts  every sound, synthesised; presentation only

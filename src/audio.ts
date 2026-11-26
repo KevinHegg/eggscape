@@ -231,6 +231,31 @@ export class Sound {
     for (const [note, at] of [[392, 0.5], [370, 0.72], [349, 0.94], [262, 1.16]] as const) this.tone("triangle", note, note * 0.98, 0.3, 0.3, at);
   }
 
+  /** The great bell, struck: harder is louder and longer. */
+  toll(hard: number): void {
+    const loud = Math.max(0.25, Math.min(1, hard));
+    this.tone("sine", 196, 194, 1.6 * loud + 0.5, 0.7 * loud);
+    this.tone("sine", 392, 389, 1.1 * loud + 0.4, 0.34 * loud);
+    this.tone("sine", 523, 518, 0.8 * loud + 0.3, 0.2 * loud);
+    this.tone("square", 990, 970, 0.12, 0.1 * loud);
+    this.hiss("bandpass", 2200, 1200, 0.06, 0.4 * loud);
+  }
+
+  /** A tower making up its mind: timber and stone complaining. */
+  groan(): void {
+    this.tone("sawtooth", 62, 44, 1.5, 0.3);
+    this.tone("sawtooth", 93, 58, 1.3, 0.16, 0.2);
+    this.hiss("bandpass", 420, 180, 1.4, 0.3);
+    this.rubble(6, 0.5);
+  }
+
+  /** Something heavy going into the water. */
+  splash(): void {
+    this.hiss("lowpass", 500, 2400, 0.12, 0.7);
+    this.hiss("bandpass", 2600, 700, 0.7, 0.6, 0.08);
+    this.tone("sine", 140, 50, 0.3, 0.5);
+  }
+
   /** Home: a fanfare and the Empress Hen. */
   fanfare(): void {
     for (const [note, at, length] of [[523, 0, 0.14], [659, 0.14, 0.14], [784, 0.28, 0.14], [1047, 0.42, 0.5], [784, 0.62, 0.12], [1047, 0.74, 0.7]] as const) {

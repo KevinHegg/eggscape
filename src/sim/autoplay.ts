@@ -1,25 +1,23 @@
-import { chasms } from "./course";
 import { Game, STEP, type Input } from "./game";
-import type { PartId } from "./parts";
 
-/** Something that plays a run: given the game, what to do this step. */
+/** Something that plays a street: given the game, what to do this step. */
 export type Pilot = (game: Game) => Input;
 
 /** Does nothing at all. A cart left to itself should not get home. */
 export const idle: Pilot = () => ({ lean: 0 });
 
-/** The lean that carries the cart towards `x` across the road and settles it there. */
+/** The lean that carries the cart towards `x` across the street and settles it there. */
 export function leanToward(game: Game, x: number): number {
   const value = (x - game.position.x) * 0.9 - game.velocity.x * 0.32;
   return Math.max(-1, Math.min(1, value));
 }
 
-/** Metres a second she crosses the road with the lean held hard over. */
+/** Metres a second she crosses the street with the lean held hard over. */
 const SIDLE = 4;
 
 /**
- * The lean that keeps the cart moving across the road for as long as it is asked: `rate` is -1
- * (hard left) to 1 (hard right), and 0 steadies her where she is. It will not grind the kerb.
+ * The lean that keeps the cart moving across the street for as long as it is asked: `rate` is
+ * -1 (hard left) to 1 (hard right), and 0 steadies her where she is. It will not grind the kerb.
  */
 export function leanAt(game: Game, rate: number): number {
   const edge = game.course.width / 2 - 0.9;
@@ -28,111 +26,98 @@ export function leanAt(game: Game, rate: number): number {
   return Math.max(-1, Math.min(1, value));
 }
 
+export interface Plan {
+  /** Seconds to sit on the shot after the winch comes into range. */
+  wait?: number;
+  /** Knock the wain's chock out too, when it lights. */
+  wain?: boolean;
+  /**
+   * "judge" brakes just enough to reach the bank as the tower lands. A number is a fixed brake
+   * from the moment the winch lights until the far bank, whatever the tower is doing.
+   */
+  brake?: "judge" | number;
+  /** Keep the brake hard on beyond the canal too: a driver with no nerve. */
+  dawdle?: boolean;
+  /** Seconds of safety "judge" leaves between the tower landing and the cart reaching it. */
+  margin?: number;
+}
+
 /**
- * A plain, sensible driver used to prove a cart can get home: it steers out of every red ring,
- * round what stands in the road, into the gifts, and fires at what the gun is laid on. It reads
- * only what a player can see.
+ * A driver with a plan for Bell Tower Street, reading only what a player can see: where the
+ * tower has got to, where the bell lies, who is standing.
  */
-export function driver(options: { shoot?: boolean; brake?: boolean } = {}): Pilot {
-  return (game) => drive(game, options.shoot ?? true, options.brake ?? true);
-}
+export function driver(plan: Plan = {}): Pilot {
+  let litAt = -1;
+  return (game) => {
+    const course = game.course;
+    const cart = game.position;
+    const d = game.distance;
+    const lip = course.tower.d;
+    const far = lip + Math.sin(course.tower.rest) * course.tower.height;
+    const lane = (course.tower.x0 + course.tower.x1) / 2;
 
-/** The ordinary driver. */
-export const steady: Pilot = driver();
+    // Across the fallen tower, then down the street the bell has cleared, round the bell itself.
+    // Between the woolsacks on one side and the well on the other there is a way through.
+    const through = (course.sacks.x + 1.2 + course.well.x - 1.15) / 2;
+    const goal = d < far + 1 ? lane : d < course.well.d + 4 ? through : 0;
 
-function drive(game: Game, mayShoot: boolean, mayBrake: boolean): Input {
-  const cart = game.position;
-  const d = game.distance;
-  const reach = game.course.width / 2 - 1.1;
-
-  // Where on the road is it safe to be over the next stretch?
-  const blocked: Array<[number, number]> = [];
-  if (!game.has("wedge")) {
-    for (const wall of game.course.walls) {
-      if (wall.d > d && wall.d - d < 34 && game.wallStands(wall)) blocked.push([wall.x0 - 1.3, wall.x1 + 1.3]);
+    let shoot: string | undefined;
+    const winch = game.targets.find((target) => target.id === "windlass");
+    if (winch?.lit) {
+      if (litAt < 0) litAt = game.time;
+      if (game.time - litAt >= (plan.wait ?? 0)) shoot = "windlass";
     }
-  }
-  if (!game.has("wheel")) {
-    for (const patch of game.course.oil) {
-      if (patch.d1 > d && patch.d0 - d < 26) blocked.push([patch.x0 - 1, patch.x1 + 1]);
-    }
-  }
-  // A bridge with a side gone: be on the side that is left.
-  for (const piece of game.course.pieces) {
-    if (piece.d1 < d || piece.d0 - d > 45) continue;
-    if (piece.x0 !== undefined && piece.x0 > -reach) blocked.push([-99, piece.x0 + 1.3]);
-    if (piece.x1 !== undefined && piece.x1 < reach) blocked.push([piece.x1 - 1.3, 99]);
-  }
-  for (const marker of game.markers) blocked.push([marker.at.x - marker.radius - 1, marker.at.x + marker.radius + 1]);
-  const safe = (x: number): boolean => blocked.every(([low, high]) => x < low || x > high);
-  let goal = cart.x;
-  if (!safe(cart.x)) {
-    let best = Infinity;
-    for (let x = -reach; x <= reach; x += 0.5) {
-      if (safe(x) && Math.abs(x - cart.x) < best) {
-        best = Math.abs(x - cart.x);
-        goal = x;
+    if (!shoot && plan.wain && game.targets.find((target) => target.id === "wain")?.lit) shoot = "wain";
+
+    let brake = 0;
+    if (d < lip) {
+      const mode = plan.brake ?? "judge";
+      if (mode === "judge") {
+        // Would she be at the bank before the tower is down? Then hold her back.
+        const arrive = (lip - d) / Math.max(1, -game.velocity.z);
+        const down = game.bridgeIn + (plan.margin ?? 0.35);
+        // While the rope still holds there is nothing to time: only hold her off the bank itself.
+        brake = (game.tower.state === "held" ? lip - d < 24 : arrive < down) ? 1 : 0;
+      } else if (litAt >= 0) {
+        brake = mode;
       }
+    } else if (plan.dawdle && d < far + 50) {
+      brake = 1;
     }
-  } else {
-    // Greed: drift towards a gift worth having, if the way is clear.
-    for (const pickup of game.pickups) {
-      const ahead = -pickup.pos.z - d;
-      if (pickup.taken || ahead < 2 || ahead > 30) continue;
-      if (pickup.kind === "man" && game.men >= 3) continue;
-      if (safe(pickup.pos.x)) goal = pickup.pos.x;
-    }
-  }
-
-  // The brake: when a ring is going to land on the cart anyway, let it land in front instead.
-  // Never near a gap: a slow cart falls short.
-  let brake = 0;
-  const lipAhead = chasms(game.course).some((gap) => gap.d0 - d > -2 && gap.d0 - d < 40);
-  if (mayBrake && !lipAhead) {
-    for (const marker of game.markers) {
-      const due = cart.z + game.velocity.z * Math.max(0, marker.t);
-      if (Math.abs(marker.at.x - cart.x) < marker.radius + 0.5 && Math.abs(due - marker.at.z) < marker.radius + 1.5) brake = 1;
-    }
-  }
-
-  // The gun: towers on sight; a wall only when it's in the way.
-  let shoot = false;
-  if (mayShoot && game.target && game.ammo.length > 0) {
-    if (game.target.kind === "tower") shoot = true;
-    else shoot = !game.has("wedge") && Math.abs(game.target.at.x - cart.x) < 1.2 && !safe(cart.x);
-  }
-  return { lean: leanToward(game, goal), brake, shoot };
+    return shoot ? { lean: leanToward(game, goal), brake, shoot } : { lean: leanToward(game, goal), brake };
+  };
 }
+
+/** The ordinary driver: fires the moment the winch lights, sets the wain off, brakes by eye. */
+export const steady: Pilot = driver({ wain: true });
 
 export interface Outcome {
   phase: Game["phase"];
   cause: Game["cause"];
-  time: number;
-  shell: number;
-  men: number;
   stars: number;
+  shell: number;
+  hay: number;
+  knocks: number;
   distance: number;
-  /** A fingerprint of the whole run, for checking that it replays exactly. */
-  trace: string;
+  time: number;
 }
 
-/** Play one run to its end without drawing anything. */
-export async function play(build: readonly PartId[], pilot: Pilot, limit = 130): Promise<Outcome> {
-  const game = await Game.create(build);
-  let hash = 2166136261;
-  while (!game.over && game.time < limit) {
-    game.step(pilot(game));
-    game.takeEvents();
-    if (game.tick % 30 === 0) {
-      const p = game.position;
-      for (const value of [p.x, p.y, p.z, game.shell]) {
-        hash ^= Math.round(value * 1000);
-        hash = Math.imul(hash, 16777619);
-      }
-    }
-  }
-  for (let settle = 0; settle < 60; settle += 1) game.step({ lean: 0 });
-  const outcome = { phase: game.phase, cause: game.cause, time: game.time, shell: game.shell, men: game.men, stars: game.stars, distance: game.distance, trace: (hash >>> 0).toString(16) };
+/** Play one street to its end and say how it went. */
+export async function play(pilot: Pilot, limit = 100): Promise<Outcome> {
+  const game = await Game.create();
+  while (!game.over && game.time < limit) game.step(pilot(game));
+  const outcome: Outcome = {
+    phase: game.phase,
+    cause: game.cause,
+    stars: game.stars,
+    shell: Math.round(game.shell),
+    hay: game.hay,
+    knocks: game.knocks,
+    distance: Math.round(game.distance),
+    time: Math.round(game.time * 10) / 10,
+  };
   game.dispose();
   return outcome;
 }
+
+export { STEP };

@@ -154,14 +154,6 @@ body {
   background: rgb(29 21 18 / 0.2);
 }
 
-#crew i {
-  border-radius: 7px 7px 3px 3px;
-}
-
-#crew i.on {
-  background: var(--vermilion);
-}
-
 #hay i {
   width: 20px;
   border-radius: 3px;
@@ -372,11 +364,9 @@ body {
   background: var(--ink);
 }
 
-#rounds i.keg {
-  height: 15px;
-  margin-top: -2px;
-  border-radius: 3px;
-  background: var(--gold);
+#rounds i.spent {
+  background: transparent;
+  opacity: 0.45;
 }
 
 /* Shown only while the brake is on. */
@@ -403,52 +393,6 @@ body {
 }
 
 /* The machines work by themselves; these only say what state each is in. */
-#chips {
-  position: absolute;
-  top: calc(60px + var(--safe-top));
-  left: 12px;
-  display: flex;
-  gap: 6px;
-}
-
-#chips span {
-  position: relative;
-  padding: 2px 8px 3px;
-  border: 2px solid var(--ink);
-  border-radius: 4px;
-  background: var(--vellum);
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  overflow: hidden;
-  transition: background 0.15s;
-}
-
-#chips span b {
-  position: relative;
-  margin-left: 4px;
-  color: var(--vermilion);
-}
-
-#chips span::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  transform-origin: left;
-  transform: scaleX(var(--cool, 0));
-  background: rgb(29 21 18 / 0.3);
-}
-
-#chips span.active {
-  background: var(--gold);
-}
-
-#chips span.spent {
-  opacity: 0.4;
-  text-decoration: line-through;
-}
-
 @media (max-width: 600px) {
   #fire kbd {
     display: none;
@@ -577,68 +521,6 @@ button {
   flex: 1;
 }
 
-#slots {
-  display: flex;
-  gap: 8px;
-  margin: 6px 0 10px;
-}
-
-#slots div {
-  flex: 1;
-  min-height: 40px;
-  display: grid;
-  place-items: center;
-  border: 2px dashed rgb(29 21 18 / 0.5);
-  border-radius: 6px;
-  font: 700 22px var(--display);
-}
-
-#slots div.full {
-  border-style: solid;
-  background: var(--gold);
-}
-
-#parts {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-#parts button {
-  min-height: 0;
-  padding: 8px 8px 9px;
-  text-align: left;
-  text-transform: none;
-  letter-spacing: 0;
-  box-shadow: 0 3px 0 var(--ink);
-}
-
-#parts button small {
-  display: block;
-  font: 700 12px var(--ui);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--lapis);
-}
-
-#parts button strong {
-  display: block;
-  font: 700 23px/1 var(--display);
-}
-
-#parts button span {
-  display: block;
-  margin-top: 3px;
-  font: 500 14px/1.15 var(--ui);
-  opacity: 0.85;
-}
-
-#parts button.chosen {
-  background: var(--gold);
-  transform: translateY(2px);
-  box-shadow: 0 1px 0 var(--ink);
-}
-
 .goals {
   margin: 10px 0 0;
   font-size: 15px;
@@ -701,4 +583,14 @@ button {
     width: 520px;
     transform: translateX(-50%);
   }
+}
+
+#old {
+  display: block;
+  margin-top: 14px;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+  opacity: 0.7;
 }
