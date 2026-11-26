@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+    <meta name="theme-color" content="#ecdcb6" />
+    <meta name="description" content="Build a cart from simple machines and get the Egg King home through the Queen's gauntlet." />
+    <title>The Great Eggscape</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Almendra:wght@400;700&family=Barlow+Condensed:wght@500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <main id="app">
+      <div id="stage"></div>
+
+      <div id="hud" hidden>
+        <header id="hud-top">
+          <div class="meter" id="shell" title="The King's shell">
+            <span class="egg" aria-hidden="true"></span>
+            <div class="bar"><i id="shell-fill"></i><em></em><em></em></div>
+          </div>
+          <div class="pips" id="crew" title="King's men aboard"></div>
+          <div class="pips" id="hay" title="Hay padding"></div>
+        </header>
+        <div id="track" aria-hidden="true"><i id="track-fill"></i><b id="track-egg"></b><span>Roost</span></div>
+        <div id="toast" aria-live="polite"></div>
+        <div id="lean-hint">Hold the left or right of the road to lean</div>
+        <footer id="bar"></footer>
+      </div>
+
+      <section id="title" class="card">
+        <p class="eyebrow">A siege, from the egg's side</p>
+        <h1>The Great Eggscape</h1>
+        <p class="story">The Queen wants an omelette. The Egg King wants his mother.</p>
+        <p class="story small">Bolt three simple machines to his cart and get him down the hill to the Empress Hen, with his shell in one piece.</p>
+        <button type="button" class="primary" id="to-build">Build a cart</button>
+      </section>
+
+      <section id="build" class="card" hidden>
+        <p class="eyebrow">Six machines. Pick three.</p>
+        <div id="slots"></div>
+        <div id="parts"></div>
+        <p class="goals"><b>★</b> Get him home <b>★</b> Shell uncracked <b>★</b> All three men aboard</p>
+        <button type="button" class="primary" id="roll-out">Roll out</button>
+      </section>
+
+      <section id="result" class="card" hidden>
+        <p class="eyebrow" id="result-eyebrow"></p>
+        <h2 id="result-title"></h2>
+        <div id="result-stars"></div>
+        <p class="story" id="result-line"></p>
+        <ul id="result-stats"></ul>
+        <div class="row">
+          <button type="button" class="primary" id="again">Go again</button>
+          <button type="button" id="change">Change cart</button>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
