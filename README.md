@@ -6,8 +6,8 @@ A mobile-first physics game. The Queen's village is built down a hill, and the w
 one push from falling over. Set it off, then ride the Egg King's cart through what follows,
 down to the Empress Hen, with his shell in one piece.
 
-This is an early prototype: three streets, **Bell Tower Street**, **Powder Row** and
-**Miller's Leap**, joined by town gates. What is left of the cart at the bottom of one is what you have at the
+This is an early prototype: four streets, **Bell Tower Street**, **Powder Row**,
+**Pudding Lane** and **Miller's Leap**, joined by town gates. What is left of the cart at the bottom of one is what you have at the
 top of the next.
 
 The first version, a gauntlet of towers ridden on a cart built from three simple machines, is
@@ -21,14 +21,14 @@ npm run dev
 ```
 
 Open [http://127.0.0.1:5180](http://127.0.0.1:5180). Add `?auto` to watch the built-in
-driver play every street, or `?street=2` or `?street=3` to start on a later one with a fresh
-cart.
+driver play every street, or `?street=2`, `?street=3` or `?street=4` to start on a later one
+with a fresh cart.
 
 - **Steer:** put a finger down anywhere and drag sideways. The cart goes that way and keeps
   going until you lift the finger or bring it back (or **←/→**, **A/D**).
-- **Brake:** pull the same finger down (or **↓**, **S**) and she slows to a trot, never to a
-  stand. The brake stays on, even with the finger lifted, until you push up (or **↑**, **W**,
-  or tap the Brake badge). There is no going faster than letting her run.
+- **Brake:** the round button bottom left (or **B**, **↓**, **S**). Tap it and she slows to a
+  trot, never to a stand; tap it again to let her run. Dragging only steers. There is no going
+  faster than letting her run, unless powder goes off behind her.
 - **Fire:** everything the gun could hit wears a ring. When a ring turns gold it is in range:
   tap it, or press **Fire** (or **Space**, **F**) for the next one. Three rounds to start with.
 - **Eggs:** tap anything else and one of the men throws an egg at it: an egg beater in mid
@@ -72,6 +72,24 @@ barricade, and she has left a few kegs in the road with slow matches in them.
    way down to the wagon.
 4. **Brake.** Be well back when the wagon goes.
 
+## Pudding Lane
+
+Kegs sown all down the lane, the kitchen across the middle of it, a shield wall at the bottom,
+and at the top the cistern the whole quarter drinks from. Fire or water: neither is the right
+answer.
+
+1. **Water.** A round at the cistern's ring and everything in it goes down the lane: every keg
+   it reaches is soaked and every cook it reaches is carried off. So is the one keg that would
+   have been useful.
+2. **Fire.** Keep the powder dry and it has to be got past: weave between the red rings, or
+   burst them with eggs from a distance.
+3. **The gilt keg** has a long match in it. An egg lights it, a red ring closes on it as it
+   burns, and gold arrows on the road show where to be when it goes: just past it. Powder
+   going off behind the cart throws her down the street, fast enough to go through the shield
+   wall like a ball through skittles. With the brake on when it goes, most of the push is lost.
+4. **The shield wall** throws nothing and does not move. A slow cart is thrown back off it. A
+   round opens it, an egg apiece puts the heads in the way down, or she comes through on a blast.
+
 ## Miller's Leap
 
 A windmill at the top of the hill with its millstone swung out over the road, the Queen's
@@ -83,9 +101,11 @@ left standing.
    off the quay into the gorge.
 2. **Keep up, and keep clear.** Follow in its wake and the hill costs one round. The cooks it
    only frightened get up again.
-3. **Keep right for the bridge, and stay off the brake.** What is left of the bridge is a
-   ramp. Fast enough, she clears the gorge and comes down in the straw the Hen's people have
-   laid. Too slow, she does not.
+3. **Light the gilt keg on the quay.** The gorge is wider than a cart can jump. Egg the keg as
+   she comes through the barricade and be just past it, on the way up the bridge, when it goes.
+4. **Brake off, and keep right.** What is left of the bridge is a ramp on the right. Thrown by
+   the blast she clears the gorge and comes down in the straw the Hen's people have laid. With
+   the brake on when it goes, or with the keg never lit, she does not.
 
 - **Only a jolt hurts him.** His shell cracks when the cart's velocity changes sharply, when a
   pan lands, when he runs into a cook, or when powder goes off beside him. Hay takes each knock first, two bales' worth.
@@ -101,6 +121,7 @@ npx tsx scripts/trace.ts         # one run, event by event (steady, idle, nowain
                                  # on Powder Row: wagon, train, rush, blind)
 npx tsx scripts/window.ts        # outcome for every shot delay and brake setting (add: wain)
 npx tsx scripts/lip.ts           # the jolt of crossing the fallen tower
+npx tsx scripts/lane.ts          # Pudding Lane: every way down it, by fire and by water
 npx tsx scripts/leap.ts          # Miller's Leap: speed off the bridge, air and cost, every way
 npm run build
 npm run check                    # typecheck, tests and build

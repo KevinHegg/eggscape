@@ -418,48 +418,69 @@ body {
   }
 }
 
-/* Shown only while the brake is on. */
+/* The brake: a button of its own under the left thumb, the twin of Fire. On is red and says so. */
 #brake {
+  position: relative;
   flex: none;
-  margin-bottom: 30px;
-  padding: 6px 10px;
+  width: 116px;
+  height: 116px;
+  padding: 0;
   border: 3px solid var(--ink);
-  border-radius: 8px;
-  background: var(--vermilion);
-  color: #fff6e6;
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  white-space: nowrap;
-  text-transform: uppercase;
-  box-shadow: 0 3px 0 var(--ink);
-  opacity: 0;
-  transform: translateY(8px);
-  transition: opacity 0.1s, transform 0.1s;
+  border-radius: 50%;
+  background: var(--vellum-dark);
+  color: var(--ink);
+  font-family: var(--ui);
+  box-shadow: 0 5px 0 var(--ink);
+  pointer-events: auto;
   touch-action: none;
 }
 
-/* On, it can be tapped off as well as pushed off. */
+#brake strong {
+  display: block;
+  font-family: var(--display);
+  font-size: 28px;
+  line-height: 1;
+}
+
+#brake kbd {
+  display: block;
+  margin-bottom: 2px;
+  font: 600 12px var(--ui);
+  opacity: 0.45;
+}
+
+#brake span {
+  display: block;
+  min-height: 15px;
+  margin-top: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+#brake span::after {
+  content: "off";
+  opacity: 0.5;
+}
+
+/* Held down, like a lever thrown over. */
 #brake.on {
+  background: var(--vermilion);
+  color: #fff6e6;
+  box-shadow: 0 2px 0 var(--ink);
+  transform: translateY(3px);
+}
+
+#brake.on span::after {
+  content: "on";
   opacity: 1;
-  transform: none;
-  pointer-events: auto;
-}
-
-#brake b {
-  display: inline-block;
-  animation: nudge 0.9s ease-in-out infinite;
-}
-
-@keyframes nudge {
-  50% {
-    transform: translateY(-4px);
-  }
 }
 
 /* The machines work by themselves; these only say what state each is in. */
 @media (max-width: 600px) {
-  #fire kbd {
+  #fire kbd,
+  #brake kbd {
     display: none;
   }
 }

@@ -1,6 +1,6 @@
 import * as pc from "playcanvas";
-import { chasms, courseEnd, heightAt, spanOf, type CourseDef } from "../sim/course";
-import { EGG_RANGE, KEG_TRIP, MEN, STONE_RADIUS, panAt, type EggAim, type Game, type GameEvent, type Prop, type Vec3 } from "../sim/game";
+import { chasms, courseEnd, heightAt, slopeAt, spanOf, type CourseDef } from "../sim/course";
+import { EGG_RANGE, KEG_TRIP, MEN, RAM_SPEED, STONE_RADIUS, panAt, type EggAim, type Game, type GameEvent, type Prop, type Vec3 } from "../sim/game";
 
 /** What a touch on the street means: a round from the gun at a ringed target, or an egg at anything else. */
 export type Pick = { shoot: string } | { egg: EggAim };
@@ -26,6 +26,8 @@ function gorges(course: CourseDef): Array<{ d0: number; d1: number; stump: boole
 
 /** How many splashes of yolk lie about before the oldest is mopped up. */
 const MESS = 28;
+/** How wide the ring round a lit charge starts: about as far as it will hurt. */
+const FUSE_RING = 9;
 
 type Triple = readonly [number, number, number];
 type Shape = "box" | "sphere" | "cylinder" | "cone" | "capsule";
@@ -142,7 +144,12 @@ export class View {
   private readonly props = new Map<number, pc.Entity>();
   private readonly shots = new Map<number, pc.Entity>();
   private readonly eggs = new Map<number, pc.Entity>();
-  private readonly kegs = new Map<number, { root: pc.Entity; spark: pc.Entity; ring: pc.Entity | null }>();
+  private readonly kegs = new Map<number, { root: pc.Entity; spark: pc.Entity; ring: pc.Entity | null; timer: pc.Entity | null; marks: pc.Entity[] }>();
+  /** The cistern as it stood, what is left of it, and the water on its way down the street. */
+  private cistern: { vat: pc.Entity; wreck: pc.Entity; wave: pc.Entity; foam: pc.Entity[] } | null = null;
+  private puddled = 0;
+  /** Seconds of fire still coming out from under her after a charge has thrown her. */
+  private rush = 0;
   private readonly walls = new Map<number, pc.Entity>();
   private readonly pickups = new Map<number, pc.Entity>();
   private mess: pc.Entity[] = [];
@@ -416,6 +423,9 @@ export class View {
     this.stoneRope = null;
     this.sails = null;
     this.stoneRoll = 0;
+    this.cistern = null;
+    this.puddled = 0;
+    this.rush = 0;
     this.chock = null;
     this.queen = null;
     this.hen = null;
@@ -450,6 +460,7 @@ export class View {
     this.buildTower(game.course);
     this.buildWorks(game);
     this.buildMill(game);
+    this.buildCistern(game);
     this.buildStraw(game.course);
     this.buildMob(game);
     this.buildPowder(game);
@@ -595,6 +606,7 @@ export class View {
     // Where no house stands: over the water, and where the town gate does.
     const gaps = gorges(course).map((gap) => ({ d0: gap.d0 - 0.6, d1: gap.d1 + 0.6 }));
     if (course.mill) gaps.push({ d0: course.mill.d - 6, d1: course.mill.d + 6 });
+    if (course.cistern) gaps.push({ d0: course.cistern.d - 5.5, d1: course.cistern.d + 3.4 });
     if (course.roost === null) gaps.push({ d0: course.finish - 2.2, d1: course.finish + 2.2 });
     const yard = course.roost === null ? courseEnd(course) - 2 : course.finish - 8;
     for (const side of [-1, 1]) {
@@ -971,6 +983,88 @@ export class View {
   }
 
   /** Straw laid deep where he is meant to come down, and the carts it came in. */
+  /** The conduit cistern: a great oak vat on legs over the kerb, brim full, and the wave that comes out of it. */
+  private buildCistern(game: Game): void {
+    const m = this.m;
+    const course = game.course;
+    const def = course.cistern;
+    if (!def) return;
+    const side = Math.sign(def.x) || 1;
+    const ground = heightAt(course, def.d);
+    const root = this.group("cistern", this.scene, [def.x, ground, -def.d]);
+    for (const x of [-1.15, 1.15]) for (const z of [-1.15, 1.15]) this.shape("box", root, [x, 1.4, z], [0.3, 3.4, 0.3], m.oakDark, [0, 0, 0], true);
+    for (const z of [-1.15, 1.15]) this.shape("box", root, [0, 1.5, z], [3, 0.18, 0.18], m.oak, [0, 0, 38], true);
+    this.shape("box", root, [0, 3.1, 0], [3.5, 0.24, 3.5], m.oak, [0, 0, 0], true);
+    const vat = this.group("vat", root, [0, 3.2, 0]);
+    this.shape("cylinder", vat, [0, 1.4, 0], [3.4, 2.8, 3.4], m.oak);
+    for (const y of [0.5, 1.4, 2.3]) this.shape("cylinder", vat, [0, y, 0], [3.52, 0.16, 3.52], m.iron);
+    this.shape("cylinder", vat, [0, 2.82, 0], [3.1, 0.06, 3.1], m.water);
+    // The spout over the street, and the Queen's mark on the staves so it reads as a thing to shoot.
+    this.shape("box", vat, [-side * 2.1, 0.5, 0], [1.4, 0.3, 0.44], m.oakDark, [0, 0, side * 14]);
+    this.shape("cylinder", vat, [0, 1.5, 1.74], [1.3, 0.06, 1.3], m.vermilion, [90, 0, 0]);
+    this.shape("cylinder", vat, [0, 1.5, 1.78], [0.7, 0.06, 0.7], m.gold, [90, 0, 0]);
+    const wreck = this.group("wreck", root, [0, 3.2, 0]);
+    for (let stave = 0; stave < 9; stave += 1) {
+      const turn = (stave / 9) * Math.PI * 2 + 0.3;
+      // What faced the street went with the water.
+      if (Math.cos(turn) * -side > 0.25) continue;
+      this.shape("box", wreck, [Math.cos(turn) * 1.65, 0.5 + ((stave * 7) % 4) * 0.28, Math.sin(turn) * 1.65], [0.5, 1 + ((stave * 7) % 4) * 0.56, 0.12], m.oak, [0, (-turn * 180) / Math.PI + 90, ((stave * 5) % 3) * 8 - 8]);
+    }
+    this.shape("cylinder", wreck, [0, 0.1, 0], [3.3, 0.1, 3.3], m.oakDark);
+    wreck.enabled = false;
+    // The wave: a roll of water the width of the street with a head of foam on it.
+    const wave = this.group("wave", this.scene);
+    const sheet = this.paint("flood", INK.water, { gloss: 0.9, opacity: 0.7 });
+    this.shape("cylinder", wave, [0, 0.1, 0], [1.9, course.width + 0.5, 1.9], sheet, [0, 0, 90]);
+    this.shape("box", wave, [0, -0.18, 5], [course.width + 0.5, 0.34, 10], sheet);
+    const foam: pc.Entity[] = [];
+    for (let lump = 0; lump < 9; lump += 1) {
+      const x = -course.width / 2 + (lump + 0.5) * (course.width / 9);
+      foam.push(this.shape("sphere", wave, [x, 0.9, -0.3], [1.3, 0.9, 1.1], m.spray));
+    }
+    wave.enabled = false;
+    this.cistern = { vat, wreck, wave, foam };
+  }
+
+  /** The water goes where the sim says its front has got to, and leaves the road wet behind it. */
+  private syncFlood(game: Game): void {
+    const look = this.cistern;
+    const flood = game.flood;
+    const def = game.course.cistern;
+    if (!look || !flood || !def) return;
+    look.vat.enabled = flood.state === "held";
+    look.wreck.enabled = flood.state !== "held";
+    const running = flood.state === "running";
+    look.wave.enabled = running;
+    if (!running) return;
+    const course = game.course;
+    const front = flood.front;
+    // It rises as it leaves the cistern and sinks into the road at the end of its run.
+    const size = Math.min(1, (front - def.d) / 6 + 0.35, (def.d + def.reach - front) / 9 + 0.15);
+    const tilt = (-Math.atan(slopeAt(course, front)) * 180) / Math.PI;
+    look.wave.setPosition(0, heightAt(course, front) + 0.3 * size, -front);
+    look.wave.setLocalEulerAngles(tilt, 0, 0);
+    look.wave.setLocalScale(1, size, 1);
+    look.foam.forEach((lump, index) => {
+      const at = lump.getLocalPosition();
+      lump.setLocalPosition(at.x, 0.9 + Math.sin(this.clock * 13 + index * 2.1) * 0.28, -0.3 + Math.cos(this.clock * 9 + index * 1.3) * 0.3);
+    });
+    if (this.frame % 2 === 0) {
+      const x = (this.chance() - 0.5) * course.width;
+      this.puff({ x, y: heightAt(course, front) + 1 * size, z: -front - 0.4 }, this.frame % 4 ? this.m.spray : this.m.water, 0.9, 0.45, [this.chance() * 2 - 1, 3 + this.chance() * 3, -6]);
+    }
+    // Puddles where it has been.
+    while (this.puddled < front - 3 && this.puddled < def.d + def.reach) {
+      this.puddled = Math.max(this.puddled, def.d) + 2.4;
+      const d = this.puddled;
+      const x = (this.chance() - 0.5) * (course.width - 2.4);
+      const wide = 1.6 + this.chance() * 2.2;
+      const slope = (-Math.atan(slopeAt(course, d)) * 180) / Math.PI;
+      const puddle = this.shape("cylinder", this.scene, [x, heightAt(course, d) + 0.05, -d], [wide, 0.02, wide * (1.2 + this.chance())], this.paint("puddle", INK.water, { gloss: 0.95, opacity: 0.5 }), [slope, 0, 0]);
+      if (puddle.render) puddle.render.castShadows = false;
+    }
+  }
+
   private buildStraw(course: CourseDef): void {
     const m = this.m;
     const straw = course.straw;
@@ -1064,6 +1158,11 @@ export class View {
       // An apron, and something from the kitchen in the right hand.
       this.shape("box", look.root, [0, 0.26, 0.13], [0.3, 0.4, 0.02], m.egg, [0, 0, 0], this.lively);
       this.utensil(look.arms[1]!, [0, 0.44, 0], one.def.id, this.lively);
+      // Stood shoulder to shoulder, they have brought the biggest pot lids in the kitchen.
+      if (one.def.shield) {
+        this.shape("cylinder", look.root, [-0.06, 0.34, 0.24], [0.62, 0.04, 0.62], m.bronze, [90, 0, 0], this.lively);
+        this.shape("sphere", look.root, [-0.06, 0.34, 0.27], [0.16, 0.16, 0.1], m.gold, [0, 0, 0], this.lively);
+      }
       this.mob.set(one.def.id, { root: look.root, arms: look.arms, x: one.pos.x, phase: one.def.id * 2.3, throwing: 0 });
     }
   }
@@ -1212,10 +1311,17 @@ export class View {
         this.puff({ x: p.x + back.x + out.x, y: p.y + back.y, z: p.z + back.z + out.z }, this.frame % 2 ? this.m.dust : this.m.flash, 0.45, 0.3, [side * 0.8, 1.2, 2.5]);
       }
     }
+    // Thrown by powder, she comes down the street with fire under her until she slows.
+    this.rush = Math.max(0, this.rush - dt);
+    if (game.phase === "run" && (this.rush > 0 || -game.velocity.z >= RAM_SPEED)) {
+      const back = rotate3(q, (this.chance() - 0.5) * 1.2, -0.2, 1.2);
+      this.puff({ x: p.x + back.x, y: p.y + back.y, z: p.z + back.z }, this.frame % 3 === 0 ? this.m.smoke : this.frame % 3 === 1 ? this.m.blast : this.m.spark, 0.7, 0.35, [this.chance() * 2 - 1, 1.5 + this.chance() * 2, 5]);
+    }
     this.bales.forEach((bale, index) => (bale.enabled = index < game.hay));
     this.syncTower(game);
     this.syncWorks(game);
     this.syncMill(game, dt);
+    this.syncFlood(game);
     this.syncMob(game, dt);
     this.syncPans(game);
     this.syncEggs(game);
@@ -1436,6 +1542,34 @@ export class View {
         this.kegShape(root, false);
         this.shape("box", root, [0.06, 0.64, 0], [0.04, 0.22, 0.04], m.rope, [0, 0, -24]);
       }
+      // A charge with a long match: a fatter keg, gilt-hooped, the match coiled up the road from it,
+      // and arrows on the cobbles past it for where a cart wants to be when it goes.
+      let timer: pc.Entity | null = null;
+      const marks: pc.Entity[] = [];
+      if (def.fuse !== undefined) {
+        root.setLocalScale(1.3, 1.3, 1.3);
+        root.setLocalPosition(keg.at.x, keg.at.y + 0.16, keg.at.z);
+        this.shape("cylinder", root, [0, 0, 0], [0.96, 0.12, 0.96], m.gold);
+        for (let turn = 0; turn < 7; turn += 1) this.shape("box", root, [0.3 + Math.sin(turn * 1.1) * 0.22, -0.46, 0.5 + turn * 0.3], [0.07, 0.07, 0.36], m.rope, [0, Math.cos(turn * 1.1) * 40, 0]);
+        fuseAt = [0.3, -0.36, 2.5];
+        const lie = (-Math.atan(slopeAt(course, def.d)) * 180) / Math.PI;
+        const tap = this.hoop(this.scene, [keg.at.x, heightAt(course, def.d) + 0.09, keg.at.z], 2.6, m.yolk);
+        tap.setLocalEulerAngles(lie, 0, 0);
+        marks.push(tap);
+        for (const beyond of [5, 6.6, 8.2]) {
+          const d = def.d + beyond;
+          const tilt = (-Math.atan(slopeAt(course, d)) * 180) / Math.PI;
+          const mark = this.group("arrow", this.scene, [keg.at.x, heightAt(course, d) + 0.07, -d], [tilt, 0, 0]);
+          for (const hand of [-1, 1]) {
+            const stroke = this.shape("box", mark, [hand * 0.62, 0, 0.3], [1.6, 0.03, 0.34], m.gold, [0, hand * 38, 0]);
+            if (stroke.render) stroke.render.castShadows = false;
+          }
+          marks.push(mark);
+        }
+        timer = this.hoop(this.scene, [keg.at.x, heightAt(course, def.d) + 0.14, keg.at.z], 1, m.danger);
+        timer.setLocalEulerAngles(lie, 0, 0);
+        timer.enabled = false;
+      }
       const spark = this.shape("sphere", root, fuseAt, [0.16, 0.16, 0.16], m.spark);
       if (spark.render) spark.render.castShadows = false;
       // A trap says so: a red ring on the road as wide as its temper.
@@ -1445,7 +1579,7 @@ export class View {
         ring = this.hoop(this.scene, [keg.at.x, heightAt(course, def.d) + 0.08, keg.at.z], KEG_TRIP * 2, m.danger);
         ring.setLocalEulerAngles(-tilt, 0, 0);
       }
-      this.kegs.set(def.id, { root, spark, ring });
+      this.kegs.set(def.id, { root, spark, ring, timer, marks });
     }
     for (const wall of game.walls) {
       const def = wall.def;
@@ -1471,16 +1605,40 @@ export class View {
       const look = this.kegs.get(keg.def.id);
       if (!look) continue;
       const here = keg.state !== "gone";
+      const wet = keg.state === "wet";
       look.root.enabled = here;
+      // The long match: a red ring closing on the keg as it burns down, and the arrows past it flashing.
+      const burning = keg.state === "lit" && keg.burn > 0 && look.timer !== null;
+      if (look.timer) {
+        look.timer.enabled = burning;
+        if (burning) {
+          const left = Math.max(0, (keg.until - game.time) / keg.burn);
+          const wide = 0.9 + left * (FUSE_RING - 0.9);
+          look.timer.setLocalScale(wide, wide, wide);
+        }
+      }
+      look.marks.forEach((mark, index) => {
+        mark.enabled = keg.state === "set" || (burning && (index === 0 || Math.sin(this.clock * 22 - index * 1.4) > -0.2));
+        if (index === 0 && keg.state === "set") {
+          const beat = 2.6 * (1 + Math.sin(this.clock * 6) * 0.08);
+          mark.setLocalScale(beat, beat, beat);
+        }
+      });
+      if (wet) {
+        // Soaked, on its side, and no use to anybody.
+        look.root.setLocalEulerAngles(0, keg.def.id * 50, 82);
+        look.root.setLocalPosition(keg.at.x, keg.at.y - 0.14, keg.at.z);
+        look.spark.enabled = false;
+      }
       if (look.ring) {
-        look.ring.enabled = here && this.mode === "run";
+        look.ring.enabled = here && !wet && this.mode === "run";
         const beat = 1 + Math.sin(this.clock * (keg.state === "lit" ? 30 : 5) + keg.def.id) * 0.05;
         look.ring.setLocalScale(KEG_TRIP * 2 * beat, KEG_TRIP * 2 * beat, KEG_TRIP * 2 * beat);
       }
-      if (!here) continue;
+      if (!here || wet) continue;
       // A slow match glows; a lit fuse spits.
       const lit = keg.state === "lit";
-      const glow = lit ? 0.3 + Math.abs(Math.sin(this.clock * 40)) * 0.3 : keg.def.trap ? 0.12 + Math.abs(Math.sin(this.clock * 4 + keg.def.id)) * 0.1 : 0.01;
+      const glow = lit ? 0.3 + Math.abs(Math.sin(this.clock * 40)) * 0.3 : keg.def.trap || keg.def.fuse !== undefined ? 0.12 + Math.abs(Math.sin(this.clock * 4 + keg.def.id)) * 0.1 : 0.01;
       look.spark.setLocalScale(glow, glow, glow);
       if (lit && this.frame % 2 === 0) {
         const at = look.spark.getPosition();
@@ -1644,7 +1802,7 @@ export class View {
     if (!best && ring) return { shoot: ring };
     for (const one of game.mob) if (one.state === "stand") offer({ x: one.pos.x, y: one.pos.y + 1.1, z: one.pos.z }, { cook: one.def.id }, reach, 1);
     for (const thing of game.clutter) if (!thing.done) offer(thing.at, { clutter: thing.def.id }, reach, 1);
-    for (const keg of game.kegs) if (keg.state !== "gone") offer(keg.at, { keg: keg.def.id }, reach * (keg.def.big ? 1.4 : 1.1), 0.9);
+    for (const keg of game.kegs) if (keg.state !== "gone" && keg.state !== "wet") offer(keg.at, { keg: keg.def.id }, reach * (keg.def.big ? 1.4 : 1.1), 0.9);
     if (best) return { egg: best };
     // Nothing there: the stone goes where the thumb pointed, as far as the street under it.
     const x = clientX - box.left;
@@ -1920,6 +2078,17 @@ export class View {
       this.burst({ x: event.at.x, y: event.at.y + 0.8, z: event.at.z }, m.dust, 7, 0.8, 5);
       this.burst({ x: event.at.x, y: event.at.y + 1.2, z: event.at.z }, event.by === "wain" ? m.yolk : m.gold, 5, 0.3, 7);
       if (event.by === "bell") this.pulse(event.at, m.aim, 1, 6, 0.4);
+      if (event.by === "flood") this.burst({ x: event.at.x, y: event.at.y + 0.6, z: event.at.z }, m.spray, 8, 0.7, 5);
+      if (event.by === "ram") {
+        this.shake = Math.min(1.4, this.shake + 0.3);
+        this.burst({ x: event.at.x, y: event.at.y + 0.9, z: event.at.z }, m.blast, 6, 0.5, 8);
+        this.pulse(event.at, m.aim, 1, 5, 0.35);
+      }
+    }
+    if (event.type === "bash") {
+      this.shake = Math.min(1.4, this.shake + 0.6);
+      this.burst({ x: event.at.x, y: event.at.y + 0.9, z: event.at.z + 0.5 }, m.spark, 8, 0.25, 7);
+      this.burst({ x: event.at.x, y: event.at.y + 0.6, z: event.at.z + 0.6 }, m.dust, 5, 0.7, 3);
     }
     if (event.type === "panic") {
       const look = this.mob.get(event.id);
@@ -1949,6 +2118,28 @@ export class View {
       }
     }
     if (event.type === "fuse") this.burst(event.at, m.spark, 5, 0.2, 4);
+    if (event.type === "kick") {
+      // Thrown: fire out behind her if the powder had its way, a sad cough of smoke if the brake did.
+      const thrown = !event.braked && event.gain > 1.5;
+      const behind = { x: event.at.x, y: event.at.y + 0.3, z: event.at.z + 1.5 };
+      this.shake = Math.min(1.6, this.shake + (thrown ? 0.7 : 0.25));
+      this.burst(behind, thrown ? m.blast : m.smoke, thrown ? 12 : 7, thrown ? 0.9 : 1.1, thrown ? 7 : 3);
+      if (thrown) {
+        this.burst(behind, m.spark, 9, 0.3, 11);
+        this.rush = 1.5;
+      }
+    }
+    if (event.type === "flood") {
+      this.shake = Math.max(this.shake, 1.1);
+      this.burst(event.at, m.spray, 16, 1.3, 9);
+      this.burst(event.at, m.water, 14, 1.1, 7);
+      this.burst(event.at, m.oak, 8, 0.35, 10);
+      this.puff({ x: event.at.x * 0.5, y: event.at.y - 1.5, z: event.at.z }, m.spray, 5, 0.7, [-event.at.x, 2, -3]);
+    }
+    if (event.type === "doused") {
+      this.burst({ x: event.at.x, y: event.at.y + 0.3, z: event.at.z }, m.spray, 7, 0.5, 4);
+      this.puff({ x: event.at.x, y: event.at.y + 0.8, z: event.at.z }, m.smoke, 0.9, 0.7, [0, 2.5, 0]);
+    }
     if (event.type === "boom") {
       const size = event.big ? 2.4 : 1;
       this.shake = Math.min(1.6, this.shake + (event.big ? 1.3 : 0.5));

@@ -2,9 +2,10 @@
 
 A mobile-first physics game. A hill village is one Rube Goldberg machine: the player sets it
 off, then has to ride the Egg King's cart through what follows, down to the Empress Hen.
-Prototype stage: three streets ridden one after the other: Bell Tower Street, Powder Row and
-Miller's Leap. Each asks something different of the brake: wait for the tower, keep back from
-the powder, and on the last keep up with the stone and stay off it for the leap.
+Prototype stage: four streets ridden one after the other: Bell Tower Street, Powder Row,
+Pudding Lane and Miller's Leap. Each asks something different of the brake: wait for the
+tower, keep back from the powder, choose fire or water, and on the last keep up with the stone
+and have the brake off when the charge on the quay throws her over the gorge.
 
 The first game (pick three machines, ride the Queen's gauntlet) is frozen on branch
 `gauntlet` (tag `gauntlet-v1`) and published beside this one at `/gauntlet/`. Do not merge
@@ -38,11 +39,13 @@ it back or change it in passing; it is kept as it was on purpose.
   (`feelJolt`), plus the fixed costs named in `game.ts` (a pan that lands, a whack from a
   cook he runs into). Hay takes every knock before the shell does, and the bales visibly go.
 - Three verbs, two thumbs. One finger drags like a stick: sideways and the cart goes that way
-  and keeps going until the finger lifts or comes back (`leanAt`); pulling down puts the
-  brake on, and it stays on, finger or no finger, until a push up (or a tap on the Brake
-  badge) lets it off. The brake is the only speed control: it is for slowing things down when
-  the action is hot, and there is nothing faster than letting her run. A tap on a gold ring or the one Fire button shoots the gun; a tap or a second finger
-  anywhere else throws an egg at what is under it (`View.pickAt`).
+  and keeps going until the finger lifts or comes back (`leanAt`). Dragging only steers. The
+  brake is a toggle button, bottom left, the twin of Fire bottom right: tap it on, tap it off
+  (the user found braking on the drag "muddled" with steering; do not put it back there). The
+  brake is the only speed control: it is for slowing things down when the action is hot, and
+  there is nothing faster than letting her run, except powder. A tap on a gold ring or the one
+  Fire button shoots the gun; a tap or a second finger anywhere else throws an egg at what is
+  under it (`View.pickAt`).
 - The brake slows her and never stops her (`BRAKE_FLOOR`). There is no accelerator.
 - One cart, three rounds to start with, no build screen. The gun reaches only what is lit (`GUN_RANGE`);
   every target wears a ring, faint out of range and gold within it.
@@ -65,6 +68,23 @@ it back or change it in passing; it is kept as it was on purpose.
   cart only inside `hurt`; kerb kegs are out of reach of a cart that keeps to the road. The
   powder wagon is the big one, and the only thing besides a round that shifts a barricade
   (`walls`). Kegs are state, not bodies.
+- Powder behind her is a push (`KEG_KICK` in `game.ts`). A cart that is further down the
+  street than a keg when it goes, and not far to one side, is thrown forward, up to
+  `KICK_TOP`; inside the blast's `hurt` it is thrown and hurt both. With the brake on at that
+  moment only `KICK_BRAKED` of the push gets through. A trap the cart tripped itself is only
+  ever a blow. A keg with a `fuse` is a charge with a long match: an egg lights it instead of
+  bursting it, a red ring closes on it as it burns, and gold arrows on the road past it mark
+  where to be. This is the game's one way of going faster than the hill allows, and at
+  `RAM_SPEED`, which only a kick reaches (`npm test` checks), she goes through cooks like
+  skittles and the rest of their rank dive.
+- Puzzles should have more than one way through, at different prices (the user asked for
+  this). Pudding Lane is the pattern: the cistern (`cistern` in `course.ts`) costs a round and
+  floods the lane, soaking every keg and sweeping every cook as far as it runs, including the
+  charge that would have been useful; kept dry, the kegs must be woven through or burst with
+  eggs, and the charge sends her through the shield wall. A shield wall (`shield` on a rank)
+  throws nothing and is a wall: a slow cart is thrown back off it until a round opens it, an
+  egg apiece ducks the cooks in the way, or she comes through on a blast.
+  `npx tsx scripts/lane.ts` prints every way down it.
 - The millstone (`mill` in `course.ts`) is driven, not left to roll: one ball, locked to its
   lane, held by the hill to `STONE_PACE`, which is a little more than the cart can make, so it
   always leads and what it will hit can be read from the top of the street. It bowls whoever
@@ -72,12 +92,16 @@ it back or change it in passing; it is kept as it was on purpose.
   lane runs out. Following in its wake costs one round for the whole hill.
 - A piece of street may be broken off short of a kerb (`x0`/`x1` on a `Piece`): the collider,
   the kerbs and the drawing all stop where it does, and a cart that leaves it falls. The
-  leap at the bottom of Miller's Leap is plain ballistics off such a stump: it wants speed
-  (about 8 m/s off the end; a cart that brakes down to the bridge drops short) and the right
-  lane. `straw` marks where the landing is soft (`STRAW_TRAVEL`): there the springs take a
-  drop that would crack him on cobbles. `npx tsx scripts/leap.ts` prints speed off the
-  bridge, air and cost for every way of driving it; keep the window wide enough that an
-  unbraked cart clears it with a metre a second to spare.
+  leap at the bottom of Miller's Leap is plain ballistics off such a stump, and the gorge is
+  wider than the hill alone will carry her (about 11.5 m/s off the end is needed, and she
+  makes about 9): it takes the charge on the quay going off behind her, with the brake off,
+  and the right lane. `straw` marks where the landing is soft (`STRAW_TRAVEL`): there the
+  springs take a drop that would crack him on cobbles. `npx tsx scripts/leap.ts` prints speed
+  off the bridge, air and cost for every way of driving it, and for lighting the fuse early
+  and late; keep that window forgiving (about a second and a half between too soon and too
+  late) and keep "no charge" and "brake on at the blast" falling short.
+- A street must be winnable from a fresh cart, so anything it cannot be won without is on it:
+  Miller's Leap has a pile of shot at the top because the hoist needs one round.
 - No cart may play itself, and no street may need a shot the player cannot see: `npm test`
   checks that an idle cart never gets home and that a sensible driver gets three stars.
 - The village is the Queen's and the story is on the street: her kitchen mob with pans,
@@ -94,7 +118,8 @@ it back or change it in passing; it is kept as it was on purpose.
   (`@dimforge/rapier3d-deterministic-compat`).
 - After changing physics constants or a street, run `npm test`, `npx tsx scripts/window.ts`
   and `npx tsx scripts/window.ts wain`; for Powder Row, `npx tsx scripts/trace.ts wagon`
-  (also `train`, `rush`, `blind`); for Miller's Leap, `npx tsx scripts/leap.ts`.
+  (also `train`, `rush`, `blind`); for Pudding Lane, `npx tsx scripts/lane.ts`; for Miller's
+  Leap, `npx tsx scripts/leap.ts`.
 
 ## Commands
 

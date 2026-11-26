@@ -1,5 +1,5 @@
 import { STREETS, type CourseDef } from "./course";
-import { Game, STEP, type Carry, type Input } from "./game";
+import { EGG_RANGE, Game, RAM_SPEED, STEP, type Carry, type Input } from "./game";
 
 /** Something that plays a street: given the game, what to do this step. */
 export type Pilot = (game: Game) => Input;
@@ -147,7 +147,46 @@ export function sapper(plan: Blasting = {}): Pilot {
   };
 }
 
-export interface Milling {
+/** How a driver means to use a charge with a long match in it. */
+export interface Riding {
+  /** Light it so as to be just past it when it goes. False leaves it alone. */
+  light?: boolean;
+  /** Light it this many seconds sooner than he should (or, negative, later). */
+  early?: number;
+  /** Keep the brake on until it has gone up: for showing what that costs. */
+  hold?: boolean;
+}
+
+/** Metres past the charge he means to be when it goes: clear of the hurt, well inside the push. */
+const RIDE = 5.8;
+
+/**
+ * Lights the next long-matched charge at the moment that puts him just beyond it when it goes,
+ * going by how fast he is rolling now. Brakes if he is going too fast to do that from in reach.
+ */
+function ride(game: Game, input: Input, plan: Riding): void {
+  if (plan.light === false) return;
+  const d = game.distance;
+  const charge = game.kegs.find((keg) => keg.def.fuse !== undefined && keg.state !== "gone" && keg.state !== "wet" && keg.def.d > d - 12);
+  if (!charge) return;
+  if (charge.state === "lit") {
+    if (plan.hold) input.brake = 1;
+    return;
+  }
+  if (charge.def.d < d + 2) return;
+  const cart = game.position;
+  const reach = Math.hypot(charge.at.x - cart.x, charge.at.y - cart.y, charge.at.z - cart.z);
+  const burn = (charge.def.fuse ?? 0) + Math.min(0.7, reach / 46) + (plan.early ?? 0);
+  const coming = d + Math.max(game.speed, 1) * burn;
+  const thrown = game.eggFlights.some((egg) => "keg" in egg.aim && egg.aim.keg === charge.def.id);
+  if (reach < EGG_RANGE - 1 && coming >= charge.def.d + RIDE) {
+    if (!thrown) input.egg = { keg: charge.def.id };
+  }
+  // Too fast to light it from where an egg will carry: ease her until he can.
+  else if (reach < 46 && game.speed * burn - RIDE > EGG_RANGE - 3) input.brake = 1;
+}
+
+export interface Milling extends Riding {
   /** Shoot the hoist and let the stone go. Without it the barricade has to be shot down instead. */
   stone?: boolean;
   /** A round at the barricade if it is still standing when it comes into reach. */
@@ -194,9 +233,93 @@ export function miller(plan: Milling = {}): Pilot {
       asked.set(id, game.time);
       return true;
     };
-    if (plan.traps ?? true) {
+    ride(game, input, plan);
+    if (!input.egg && (plan.traps ?? true)) {
       const trap = game.kegs.find((keg) => keg.def.trap && keg.state === "set" && keg.def.d > d + 7 && Math.abs(keg.def.x - lane) < 3.4 && reach(keg.at) < 26);
       if (trap && want(trap.def.id)) input.egg = { keg: trap.def.id };
+    }
+    if (!input.egg && plan.eggs) {
+      const thrown = game.pans.find((pan) => !pan.doomed);
+      if (thrown) input.egg = { pan: thrown.id };
+    }
+    return input;
+  };
+}
+
+export interface Baking extends Riding {
+  /** "water" bursts the cistern and follows the flood down. "fire" keeps the powder dry. */
+  way?: "water" | "fire";
+  /** Hold her back behind the front of the water. Without it she runs out ahead of it. */
+  follow?: boolean;
+  /** Burst the traps in his own road from a safe distance. Otherwise he has to steer round them. */
+  traps?: boolean;
+  /** A round into any rank with somebody still standing in his road. */
+  ranks?: boolean;
+  /** An egg at whoever is standing in his road, to put his head down while she goes by. */
+  duck?: boolean;
+  /** Throw an egg at everything the cooks throw. */
+  eggs?: boolean;
+  /** Where he keeps in the lane, or the line he threads down it: [distance, x] and so on. */
+  lane?: number | [number, number][];
+}
+
+/** Down the middle, with a step aside for the pile of shot near the bottom. */
+const BY_THE_PILE: [number, number][] = [
+  [84, 0],
+  [92, -2.4],
+  [96, -2.4],
+  [104, 0],
+];
+
+/** A driver for Pudding Lane, reading only what a player can see. */
+export function baker(plan: Baking = {}): Pilot {
+  return (game) => {
+    const cart = game.position;
+    const d = game.distance;
+    const way = plan.way ?? "water";
+    let lane = 0;
+    if (typeof plan.lane === "number") lane = plan.lane;
+    else {
+      const line = plan.lane ?? BY_THE_PILE;
+      const next = line.findIndex(([at]) => at > d);
+      if (next < 0) lane = line[line.length - 1]![1];
+      else if (next === 0) lane = line[0]![1];
+      else {
+        const [d0, x0] = line[next - 1]!;
+        const [d1, x1] = line[next]!;
+        lane = x0 + ((x1 - x0) * (d - d0)) / (d1 - d0);
+      }
+    }
+    const input: Input = { lean: leanToward(game, lane) };
+    const flood = game.flood;
+    if (way === "water") {
+      if (game.targets.find((target) => target.id === "cistern")?.lit) input.shoot = "cistern";
+      // The water has to get there first. There is nothing to be had by being ahead of it.
+      if ((plan.follow ?? true) && flood && flood.state !== "spent" && d > flood.front - 7) input.brake = 1;
+    }
+    // Going fast enough to go through them, there is nothing to shoot at.
+    if (!input.shoot && (plan.ranks ?? true) && game.speed < RAM_SPEED) {
+      const charge = game.kegs.find((keg) => keg.def.fuse !== undefined && (keg.state === "set" || keg.state === "lit"));
+      const rank = game.targets.find((target) => {
+        if (target.kind !== "rank" || !target.lit || -target.at.z - d > 18) return false;
+        // Anybody the charge is going to send her through can be left where he is.
+        if (plan.light !== false && charge && (charge.state === "lit" || d < charge.def.d) && -target.at.z > charge.def.d && -target.at.z < charge.def.d + 26) return false;
+        return game.mob.some((one) => one.state === "stand" && Math.abs(one.def.d + target.at.z) < 1 && Math.abs(one.def.x - lane) < 1.5);
+      });
+      if (rank) input.shoot = rank.id;
+    }
+    const reach = (at: { x: number; y: number; z: number }): number => Math.hypot(at.x - cart.x, at.y - cart.y, at.z - cart.z);
+    // One egg at a thing is enough: not another while the first is still in the air.
+    const flying = (kind: "keg" | "cook", id: number): boolean => game.eggFlights.some((egg) => kind in egg.aim && (egg.aim as Record<string, number>)[kind] === id);
+    ride(game, input, plan);
+    if (!input.egg && (plan.traps ?? true)) {
+      // Only what he would actually set off, and nothing the water is about to see to.
+      const trap = game.kegs.find((keg) => keg.def.trap && keg.state === "set" && keg.def.d > d + 7 && Math.abs(keg.def.x - lane) < 2.9 && reach(keg.at) < 26 && flood?.state !== "running");
+      if (trap && !flying("keg", trap.def.id)) input.egg = { keg: trap.def.id };
+    }
+    if (!input.egg && plan.duck) {
+      const one = game.mob.find((cook) => cook.state === "stand" && cook.def.d > d + 3 && cook.def.d < d + 14 && Math.abs(cook.def.x - cart.x) < 1.6);
+      if (one && !flying("cook", one.def.id)) input.egg = { cook: one.def.id };
     }
     if (!input.egg && plan.eggs) {
       const thrown = game.pans.find((pan) => !pan.doomed);
@@ -209,7 +332,8 @@ export function miller(plan: Milling = {}): Pilot {
 /** A fresh, sensible driver for whichever street this is. */
 export function pilotFor(course: CourseDef): Pilot {
   if (course.tower) return driver({ wain: true, eggs: true });
-  return course.mill ? miller({ eggs: true }) : sapper({ eggs: true });
+  if (course.mill) return miller({ eggs: true });
+  return course.cistern ? baker({ eggs: true }) : sapper({ eggs: true });
 }
 
 

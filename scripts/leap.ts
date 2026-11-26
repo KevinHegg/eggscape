@@ -6,7 +6,7 @@ import { miller, type Milling, type Pilot } from "../src/sim/autoplay";
 import { STREETS } from "../src/sim/course";
 import { Game } from "../src/sim/game";
 
-const course = STREETS[2]!;
+const course = STREETS.find((street) => street.name === "Miller's Leap")!;
 const stump = course.pieces.find((piece) => piece.x0 !== undefined)!;
 
 async function run(name: string, plan: Milling, verbose = false): Promise<void> {
@@ -31,6 +31,8 @@ async function run(name: string, plan: Milling, verbose = false): Promise<void> 
       if (event.type === "thud") stoneAt = `thud@${game.time.toFixed(1)}s cart d=${game.distance.toFixed(0)}`;
       if (event.type === "plunge") notes.push(`plunge@${game.time.toFixed(1)}s cart d=${game.distance.toFixed(0)}`);
       if (event.type === "breach") notes.push(`breach@${game.time.toFixed(1)}s cart d=${game.distance.toFixed(0)}`);
+      if (event.type === "kick") notes.push(`kick +${event.gain.toFixed(1)}${event.braked ? " braked" : ""}@${game.distance.toFixed(0)}`);
+      if (event.type === "fuse") notes.push(`fuse@${game.distance.toFixed(0)} v=${game.speed.toFixed(1)}`);
       if (event.type === "air") notes.push(`air ${event.distance.toFixed(1)}m ${event.time.toFixed(2)}s`);
       if (event.type === "jolt" && (event.amount > 0.5 || event.absorbed > 0.5)) notes.push(`jolt ${event.amount.toFixed(0)}+${event.absorbed.toFixed(0)}@${game.distance.toFixed(0)}`);
       if (verbose && (event.type === "bowled" || event.type === "boom" || event.type === "panic")) notes.push(`${event.type}@${game.distance.toFixed(0)}`);
@@ -42,6 +44,9 @@ async function run(name: string, plan: Milling, verbose = false): Promise<void> 
 
 await run("sensible", { eggs: true });
 await run("no eggs", {});
+await run("no charge", { light: false, eggs: true });
+await run("held brake", { hold: true, eggs: true });
+for (const early of [-1.2, -0.9, -0.6, -0.4, -0.2, 0.2, 0.4, 0.6, 0.9, 1.2]) await run(`early ${early}`, { early, eggs: true });
 await run("no stone", { stone: false, eggs: true });
 await run("idle shots", { stone: false, wall: false });
 await run("no rank shots", { ranks: false, eggs: true });

@@ -250,6 +250,12 @@ export class Sound {
     this.tone("square", 1800, 2400, 0.03, 0.08);
   }
 
+  /** A match put out by water: the fizz, going down instead of up. */
+  sizzle(): void {
+    this.hiss("highpass", 4200, 900, 0.5, 0.2);
+    this.hiss("lowpass", 900, 300, 0.3, 0.25, 0.05);
+  }
+
   /** Powder going up. The wagon is a good deal more of it. */
   boom(big: boolean): void {
     this.tone("sine", big ? 110 : 170, 26, big ? 1.2 : 0.45, 1);

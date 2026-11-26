@@ -90,6 +90,29 @@ interface Blast {
 }
 const KEG_BLAST: Blast = { bowl: 3, fright: 6, chain: 5.6, hurt: 4.5, damage: 26, floor: 6 };
 const WAGON_BLAST: Blast = { bowl: 5.5, fright: 13, chain: 6.5, hurt: 9, damage: 70, floor: 14 };
+
+/**
+ * Powder going off behind the cart is a push. A cart that is further down the street than the
+ * keg, and not far to one side of it, is thrown forward: all of `speed` up to `full` metres
+ * beyond the keg, falling to nothing at `reach`. Nearer than the blast's `hurt` it is thrown
+ * and hurt both.
+ */
+interface Kick {
+  reach: number;
+  full: number;
+  beside: number;
+  speed: number;
+}
+export const KEG_KICK: Kick = { reach: 12, full: 8, beside: 3.4, speed: 9 };
+const WAGON_KICK: Kick = { reach: 17, full: 11, beside: 5, speed: 11 };
+/** A cart can only be thrown so fast. */
+export const KICK_TOP = 14.5;
+/** With the brake on, the shoe holds the wheel and most of the push is lost. */
+export const KICK_BRAKED = 0.25;
+/** Going this fast, which only powder will do, she goes through cooks like a ball through skittles. */
+export const RAM_SPEED = 12.6;
+/** How fast the cistern's water runs down the street. */
+const FLOOD_PACE = 9.5;
 /** A wall this close along the street to the wagon goes with it. */
 const WAGON_BREACH = 7;
 
@@ -130,6 +153,9 @@ const PAN_FLIGHT = 0.7;
 const PAN_REACH = 1.4;
 const PAN_DAMAGE = 7;
 const WHACK_DAMAGE = 12;
+/** Running into a shield wall: what it costs, and how fast she comes back up the street off it. */
+const SHIELD_BASH = 22;
+const SHIELD_THROW = 4.5;
 const WAIN_SHOVE = 7;
 
 /** Standing still this long, the Queen's cooks catch up. */
@@ -151,7 +177,7 @@ export interface Quat {
 /** "through" is a street finished with another to come; "won" is home. */
 export type Phase = "run" | "won" | "through" | "broken";
 export type BreakCause = "jolt" | "spilled" | "fell" | "mob" | "caught" | "blast";
-export type TargetKind = "windlass" | "wain" | "rank" | "wall" | "hoist";
+export type TargetKind = "windlass" | "wain" | "rank" | "wall" | "hoist" | "cistern";
 
 /** What the cart takes with it from one street into the next. */
 export interface Carry {
@@ -205,11 +231,16 @@ export type GameEvent =
   | { type: "toll"; at: Vec3; hard: number }
   | { type: "panic"; id: number; rank: number }
   | { type: "bowled"; id: number; at: Vec3; by: Bowler }
+  | { type: "bash"; id: number; at: Vec3 }
   | { type: "regroup"; rank: number }
   | { type: "throw"; id: number }
   | { type: "pan"; at: Vec3; hit: boolean; kind: number }
   | { type: "wainOff"; at: Vec3 }
   | { type: "wainCrash"; at: Vec3 }
+  | { type: "kick"; at: Vec3; gain: number; braked: boolean }
+  | { type: "flood"; at: Vec3 }
+  | { type: "doused"; id: number; at: Vec3 }
+  | { type: "ebb" }
   | { type: "stoneLoose"; at: Vec3 }
   | { type: "thud"; at: Vec3 }
   | { type: "plunge"; at: Vec3 }
@@ -221,7 +252,14 @@ export type GameEvent =
   | { type: "finish" };
 
 export type PropKind = "hay" | "beam" | "shell" | "block" | "folk" | "shard" | "hen" | "crown";
-export type Bowler = "bell" | "wain" | "shot" | "cart" | "pot" | "blast" | "stone";
+export type Bowler = "bell" | "wain" | "shot" | "cart" | "pot" | "blast" | "stone" | "flood" | "ram";
+
+/** The cistern's water: still in it, on its way down the street, or run out. */
+export interface Flood {
+  state: "held" | "running" | "spent";
+  /** How far down the street the front of it has got. */
+  front: number;
+}
 
 /** The miller's stone: hung on the hoist, let fall, rolling down its lane, and then gone into the gorge. */
 export interface Stone {
@@ -302,10 +340,13 @@ export interface EggShot {
 export interface Keg {
   def: KegDef;
   at: Vec3;
-  /** Sitting there, fuse burning, or gone up. */
-  state: "set" | "lit" | "gone";
-  /** When a lit one goes. */
+  /** Sitting there, fuse burning, soaked and good for nothing, or gone up. */
+  state: "set" | "lit" | "wet" | "gone";
+  /** When a lit one goes, and how long its fuse was when it was lit. */
   until: number;
+  burn: number;
+  /** Set off by the cart itself coming too near: that is a blow, and never a push. */
+  tripped: boolean;
 }
 
 export interface Wall {
@@ -434,6 +475,7 @@ export class Game {
   readonly bell: Bell = { state: "hung", body: null, landed: false, quiet: 0 };
   readonly wain: Wain | null;
   readonly stone: Stone | null;
+  readonly flood: Flood | null;
   readonly mob: Mobster[] = [];
   readonly pans: Pan[] = [];
   readonly eggFlights: EggShot[] = [];
@@ -452,6 +494,7 @@ export class Game {
   private spring = SPRING_TRAVEL;
   private tipTime = 0;
   private stalled = 0;
+  private bashed = -9;
   private gunCooldown = 0;
   private eggCooldown = 0;
   /** Until when the kitchen is too shocked to throw. */
@@ -515,7 +558,7 @@ export class Game {
     this.tower = this.raiseTower();
     this.wain = this.parkWain();
     for (const def of course.kegs) {
-      this.kegs.push({ def, at: { x: def.x, y: heightAt(course, def.d) + def.up + (def.big ? 0.9 : 0.55), z: -def.d }, state: "set", until: 0 });
+      this.kegs.push({ def, at: { x: def.x, y: heightAt(course, def.d) + def.up + (def.big ? 0.9 : 0.55), z: -def.d }, state: "set", until: 0, burn: 0, tripped: false });
     }
     for (const def of course.pickups) {
       this.pickups.push({ def, at: { x: def.x, y: heightAt(course, def.d) + 0.5, z: -def.d }, taken: false });
@@ -535,6 +578,9 @@ export class Game {
     const mill = course.mill;
     this.stone = mill ? { state: "hung", body: null, at: { x: mill.x, y: heightAt(course, mill.d) + mill.drop, z: -mill.d } } : null;
     if (this.stone) this.targets.push({ id: "hoist", kind: "hoist", at: { ...this.stone.at, y: this.stone.at.y + STONE_RADIUS + 0.5 }, lit: false, done: false, doomed: false });
+    const cistern = course.cistern;
+    this.flood = cistern ? { state: "held", front: cistern.d } : null;
+    if (cistern) this.targets.push({ id: "cistern", kind: "cistern", at: { x: cistern.x, y: heightAt(course, cistern.d) + 4.4, z: -cistern.d }, lit: false, done: false, doomed: false });
     this.raiseWalls();
     for (const rank of new Set(course.mob.map((def) => def.rank))) {
       this.targets.push({ id: `rank${rank}`, kind: "rank", at: { x: 0, y: 0, z: 0 }, lit: false, done: false, doomed: false });
@@ -647,6 +693,7 @@ export class Game {
     this.stepBell();
     this.stepWain();
     this.stepStone();
+    this.stepFlood();
     this.stepKegs();
     this.stepMob();
     this.stepPans();
@@ -737,7 +784,8 @@ export class Game {
       }
       const ahead = -target.at.z - d;
       const reach = Math.hypot(target.at.x - cart.x, target.at.y - cart.y, target.at.z - cart.z);
-      if (ahead < 2) target.done = true;
+      // Past it, or all but on top of it. A rank can still be shot at from the end of its own noses.
+      if (ahead < (target.kind === "rank" ? -1 : 2)) target.done = true;
       target.lit = !this.over && !target.done && !target.doomed && reach <= GUN_RANGE;
     }
     // The winch first, then the wain, then whichever rank is nearest.
@@ -782,6 +830,9 @@ export class Game {
       } else if (target.kind === "hoist") {
         target.done = true;
         this.dropStone();
+      } else if (target.kind === "cistern") {
+        target.done = true;
+        this.burst();
       } else if (target.kind === "wall") {
         const wall = this.walls.find((one) => `wall${one.def.id}` === target.id);
         if (wall) this.breach(wall);
@@ -793,7 +844,7 @@ export class Game {
         if (!thing.done && Math.hypot(thing.at.x - flight.to.x, thing.at.z - flight.to.z) <= SHOT_SCATTER) this.smash(thing);
       }
       for (const keg of this.kegs) {
-        if (keg.state !== "gone" && Math.hypot(keg.at.x - flight.to.x, keg.at.z - flight.to.z) <= SHOT_SCATTER + (keg.def.big ? 2.5 : 0)) this.explode(keg);
+        if (keg.state !== "gone" && keg.state !== "wet" && Math.hypot(keg.at.x - flight.to.x, keg.at.z - flight.to.z) <= SHOT_SCATTER + (keg.def.big ? 2.5 : 0)) this.explode(keg);
       }
     }
   }
@@ -845,7 +896,7 @@ export class Game {
       to = { ...thing.at };
     } else if ("keg" in aim) {
       const keg = this.kegs.find((one) => one.def.id === aim.keg);
-      if (!keg || keg.state === "gone") return;
+      if (!keg || keg.state === "gone" || keg.state === "wet") return;
       to = { ...keg.at };
     } else {
       to = { ...aim.at };
@@ -902,8 +953,10 @@ export class Game {
         if (hit === "ground") hit = "clutter";
       }
       for (const keg of this.kegs) {
-        if (keg.state === "gone" || Math.hypot(keg.at.x - at.x, keg.at.y - at.y, keg.at.z - at.z) > EGG_SPLASH) continue;
-        this.explode(keg);
+        if (keg.state === "gone" || keg.state === "wet" || Math.hypot(keg.at.x - at.x, keg.at.y - at.y, keg.at.z - at.z) > EGG_SPLASH) continue;
+        // A long match is lit and left to burn; anything else goes at once.
+        if (keg.def.fuse !== undefined) this.light(keg, keg.def.fuse);
+        else this.explode(keg);
         hit = "keg";
       }
       this.events.push({ type: "splat", at: { ...at }, hit, kind });
@@ -945,6 +998,7 @@ export class Game {
     if (keg.state !== "set") return;
     keg.state = "lit";
     keg.until = this.time + fuse;
+    keg.burn = fuse;
     this.events.push({ type: "fuse", id: keg.def.id, at: { ...keg.at } });
   }
 
@@ -953,7 +1007,7 @@ export class Game {
    * set off, its neighbours' fuses are lit, and a cart inside the blast is hurt by how close it is.
    */
   private explode(keg: Keg): void {
-    if (keg.state === "gone") return;
+    if (keg.state === "gone" || keg.state === "wet") return;
     keg.state = "gone";
     const at = keg.at;
     const big = keg.def.big;
@@ -981,31 +1035,92 @@ export class Game {
     }
     if (this.over) return;
     const cart = this.chassis.translation();
-    const away = Math.hypot(cart.x - at.x, cart.z - at.z);
-    if (away >= size.hurt || Math.abs(cart.y - at.y) > 4) return;
-    const close = 1 - away / size.hurt;
-    // The shove is for show; what it costs him is counted here, once.
+    if (Math.abs(cart.y - at.y) > 4) return;
     const mass = this.chassis.mass();
-    const push = (big ? 9 : 5) * close * mass;
-    this.chassis.applyImpulse({ x: ((cart.x - at.x) / Math.max(0.5, away)) * push, y: push * 0.5, z: ((cart.z - at.z) / Math.max(0.5, away)) * push }, true);
-    this.joltSkip = Math.max(this.joltSkip, 8);
-    this.prevVel = { ...this.chassis.linvel() };
+    const away = Math.hypot(cart.x - at.x, cart.z - at.z);
+    // Behind her, it is a push: she is thrown down the street, unless the brake has hold of her.
+    const kick = big ? WAGON_KICK : KEG_KICK;
+    const beyond = at.z - cart.z;
+    const thrown = !keg.tripped && beyond > 0.3 && beyond < kick.reach && Math.abs(cart.x - at.x) < kick.beside;
+    if (thrown) {
+      const power = beyond <= kick.full ? 1 : 1 - (beyond - kick.full) / (kick.reach - kick.full);
+      const braked = this.braking > 0;
+      const pace = -this.chassis.linvel().z;
+      const gain = Math.max(0, Math.min(Math.max(pace, KICK_TOP), pace + kick.speed * power * (braked ? KICK_BRAKED : 1)) - pace);
+      const slope = slopeAt(this.course, -cart.z);
+      const norm = Math.hypot(1, slope);
+      this.chassis.applyImpulse({ x: 0, y: (-slope / norm) * gain * mass, z: (-1 / norm) * gain * mass }, true);
+      this.joltSkip = Math.max(this.joltSkip, 8);
+      this.prevVel = { ...this.chassis.linvel() };
+      this.events.push({ type: "kick", at: { ...cart }, gain, braked });
+    }
+    if (away >= size.hurt) return;
+    const close = 1 - away / size.hurt;
+    if (!thrown) {
+      // Beside her or ahead of her, it is a blow. The shove is for show; the cost is counted below.
+      const push = (big ? 9 : 5) * close * mass;
+      this.chassis.applyImpulse({ x: ((cart.x - at.x) / Math.max(0.5, away)) * push, y: push * 0.5, z: ((cart.z - at.z) / Math.max(0.5, away)) * push }, true);
+      this.joltSkip = Math.max(this.joltSkip, 8);
+      this.prevVel = { ...this.chassis.linvel() };
+    }
     this.knocks += 1;
     this.damage(size.floor + size.damage * close, "blast");
+  }
+
+  /** The cistern is shot through and everything in it starts down the street. */
+  private burst(): void {
+    const flood = this.flood;
+    const def = this.course.cistern;
+    if (!flood || !def || flood.state !== "held") return;
+    flood.state = "running";
+    const at = { x: def.x, y: heightAt(this.course, def.d) + 3.6, z: -def.d };
+    for (let piece = 0; piece < 12; piece += 1) {
+      this.spawn("beam", { x: 0.12, y: 0.12, z: 0.9 }, 4, { x: at.x + this.random() * 2 - 1, y: at.y + this.random() * 1.6, z: at.z + this.random() * 2 - 1 }, {
+        x: -Math.sign(def.x) * (2 + this.random() * 6),
+        y: 2 + this.random() * 5,
+        z: -this.random() * 8,
+      });
+    }
+    this.events.push({ type: "flood", at });
+  }
+
+  /** Water does for powder and for cooks alike: what the front of it reaches is soaked or carried off. */
+  private stepFlood(): void {
+    const flood = this.flood;
+    const def = this.course.cistern;
+    if (!flood || !def || flood.state !== "running") return;
+    const was = flood.front;
+    flood.front = Math.min(def.d + def.reach, flood.front + FLOOD_PACE * STEP);
+    for (const keg of this.kegs) {
+      if ((keg.state !== "set" && keg.state !== "lit") || keg.def.d <= was || keg.def.d > flood.front) continue;
+      keg.state = "wet";
+      this.events.push({ type: "doused", id: keg.def.id, at: { ...keg.at } });
+    }
+    for (const one of this.mob) {
+      if (one.state === "out" || one.def.d <= was || one.def.d > flood.front) continue;
+      this.bowl(one, "flood", { x: this.random() * 3 - 1.5, y: 3.5, z: -FLOOD_PACE });
+    }
+    if (flood.front >= def.d + def.reach) {
+      flood.state = "spent";
+      this.events.push({ type: "ebb" });
+    }
   }
 
   private stepKegs(): void {
     const cart = this.chassis.translation();
     const rollers = this.rollers();
     for (const keg of this.kegs) {
-      if (keg.state === "gone") continue;
+      if (keg.state === "gone" || keg.state === "wet") continue;
       if (keg.state === "lit") {
         if (this.time >= keg.until) this.explode(keg);
         continue;
       }
       if (!keg.def.trap) continue;
       // The slow match: near enough to hear it is near enough.
-      if (!this.over && Math.hypot(cart.x - keg.at.x, cart.z - keg.at.z) <= KEG_TRIP && Math.abs(cart.y - keg.at.y) < 3) this.light(keg, TRIP_FUSE);
+      if (!this.over && Math.hypot(cart.x - keg.at.x, cart.z - keg.at.z) <= KEG_TRIP && Math.abs(cart.y - keg.at.y) < 3) {
+        keg.tripped = true;
+        this.light(keg, TRIP_FUSE);
+      }
       for (const roller of rollers) {
         if (Math.hypot(roller.x - keg.at.x, -roller.d - keg.at.z) <= 1.8) this.explode(keg);
       }
@@ -1363,13 +1478,32 @@ export class Game {
       if (one.state !== "stand" || this.over) continue;
       // Run into one of them and it costs him a clout on the way through.
       if (Math.abs(one.pos.x - cart.x) < 1.15 && Math.abs(one.pos.z - cart.z) < 1.3 && Math.abs(one.pos.y - cart.y) < 2.5) {
+        if (-v.z >= RAM_SPEED) {
+          // Going like that, it is the cook who comes off worse, and the rest of his rank who take the hint.
+          this.bowl(one, "ram", { x: Math.sign(one.pos.x - cart.x || 1) * 6, y: 7, z: v.z * 0.9 });
+          for (const other of this.mob) if (other.def.rank === one.def.rank) this.dive(other);
+          continue;
+        }
+        if (one.def.shield) {
+          // A shield wall is a wall. It does not go over: she is thrown back up the street off it.
+          if (this.time - this.bashed < 0.6) continue;
+          this.bashed = this.time;
+          this.knocks += 1;
+          const back = { x: v.x * 0.3, y: Math.max(v.y, 1.5), z: SHIELD_THROW };
+          this.chassis.setLinvel(back, true);
+          this.joltSkip = Math.max(this.joltSkip, 8);
+          this.prevVel = back;
+          this.events.push({ type: "bash", id: one.def.id, at: { ...one.pos } });
+          this.damage(SHIELD_BASH, "mob");
+          continue;
+        }
         this.knocks += 1;
         this.bowl(one, "cart", { x: Math.sign(one.pos.x - cart.x || 1) * 4, y: 5, z: v.z * 0.9 });
         this.damage(WHACK_DAMAGE, "mob");
         continue;
       }
       const ahead = one.def.d - d;
-      if (ahead > THROW_REACH || ahead < -3) continue;
+      if (one.def.shield || ahead > THROW_REACH || ahead < -3) continue;
       if (one.next < 0) one.next = this.time + 0.25 + this.random() * 0.9;
       if (this.time < one.next || this.time < this.gasp) continue;
       one.next = this.time + THROW_EVERY + this.random() * 0.4;
@@ -1525,7 +1659,9 @@ export class Game {
     const up = rotate(this.chassis.rotation(), { x: 0, y: 1, z: 0 });
     this.tipTime = up.y < 0.2 ? this.tipTime + STEP : 0;
     if (this.tipTime > 0.7) return this.shatter("spilled");
-    if (p.y < heightAt(this.course, d) - 5 || d > courseEnd(this.course) + 4) return this.shatter("fell");
+    // Over the water it is the lower bank that counts: a leap may dip below the one it left.
+    const gap = chasms(this.course).find((one) => d > one.d0 && d < one.d1);
+    if (p.y < (gap ? gap.y : heightAt(this.course, d)) - 5 || d > courseEnd(this.course) + 4) return this.shatter("fell");
     // She cannot stand still for long: the Queen's cooks are coming down the hill behind her.
     this.stalled = this.speed < 1.2 ? this.stalled + STEP : 0;
     if (this.stalled > CAUGHT_AFTER || this.time > 90) return this.shatter("caught");

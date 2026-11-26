@@ -40,6 +40,8 @@ export interface MobDef {
   rank: number;
   d: number;
   x: number;
+  /** One of a shield wall: both hands on the biggest pot lid in the kitchen, so nothing is thrown. */
+  shield?: boolean;
 }
 
 export type ClutterKind = "pot" | "barrel" | "coop" | "queen";
@@ -84,6 +86,22 @@ export interface KegDef {
   trap: boolean;
   /** The powder wagon: a much bigger bang, and the only thing that will shift a barricade. */
   big: boolean;
+  /**
+   * A charge with a long match: an egg lights it instead of bursting it, and it burns this
+   * many seconds before it goes. Time enough to be somewhere else, or somewhere useful.
+   */
+  fuse?: number;
+}
+
+/**
+ * The conduit cistern at the top of a street. Shoot it and what it holds goes down the road:
+ * every keg it reaches is soaked and every cook it reaches is carried off, as far as it runs.
+ */
+export interface CisternDef {
+  d: number;
+  x: number;
+  /** How far down the street its water gets. */
+  reach: number;
 }
 
 /**
@@ -128,6 +146,7 @@ export interface CourseDef {
   kegs: KegDef[];
   walls: WallDef[];
   mill: MillDef | null;
+  cistern: CisternDef | null;
   /** Straw laid deep on the far side of a leap: a cart that comes down in it comes down soft. */
   straw: { d0: number; d1: number } | null;
   /** Crossing this line ends the street: the town gate, or on the last street the roost yard. */
@@ -150,9 +169,11 @@ const barrel = (d: number, x: number): Loose<ClutterDef> => ({ kind: "barrel", d
 const coop = (d: number, x: number): Loose<ClutterDef> => ({ kind: "coop", d, x, up: 1.4, bowl: 0, fright: 5.5 });
 const trap = (d: number, x: number): Loose<KegDef> => ({ d, x, up: 0, trap: true, big: false });
 const link = (d: number, x: number): Loose<KegDef> => ({ d, x, up: KERB_TOP, trap: false, big: false });
-const ranks = (rows: Array<{ d: number; xs: number[] }>): MobDef[] => {
+/** A charge in the road with a long match in it. */
+const charge = (d: number, x: number, fuse = 2.4): Loose<KegDef> => ({ d, x, up: 0, trap: false, big: false, fuse });
+const ranks = (rows: Array<{ d: number; xs: number[]; shield?: boolean }>): MobDef[] => {
   let id = 0;
-  return rows.flatMap((row, rank) => row.xs.map((x) => ({ id: id++, rank, d: row.d, x })));
+  return rows.flatMap((row, rank) => row.xs.map((x) => (row.shield ? { id: id++, rank, d: row.d, x, shield: true } : { id: id++, rank, d: row.d, x })));
 };
 
 interface Laid {
@@ -243,6 +264,7 @@ const BELL_TOWER_STREET: CourseDef = {
   kegs: numbered<KegDef>([trap(FAR + 40, 3.6)]),
   walls: [],
   mill: null,
+  cistern: null,
   straw: null,
   finish: BELL.foot + 12,
   roost: null,
@@ -297,8 +319,66 @@ const POWDER_ROW: CourseDef = {
   ]),
   walls: [{ id: 0, d: WAGON + 3.2, height: 2.8 }],
   mill: null,
+  cistern: null,
   straw: null,
   finish: POWDER.foot + 12,
+  roost: null,
+};
+
+// ---------------------------------------------------------------- Pudding Lane
+
+const PUDDING = lay([
+  [30, 0.03], // in under the gate, with time to look at the cistern standing over the street
+  [116, 0.13],
+  [8, 0.07],
+  [40, 0], // out through the town gate
+]);
+
+/**
+ * Fire or water. The lane is sown with the Queen's kegs and held by her kitchen, and at the top
+ * of it stands the cistern the whole quarter drinks from. Let the water go and it does for the
+ * powder and the cooks alike, as far as it runs: the kegs in the road, the kitchen, and the one
+ * charge that could have been useful. Keep the powder dry and it has to be got past, but the
+ * charge at the bottom of the lane, lit and left behind, sends a cart through a shield wall
+ * like a ball through skittles. Neither way is the right one.
+ */
+const PUDDING_LANE: CourseDef = {
+  name: "Pudding Lane",
+  width: HALF * 2,
+  pieces: PUDDING.pieces,
+  tower: null,
+  windlass: null,
+  wain: null,
+  well: null,
+  sacks: null,
+  mob: ranks([
+    { d: 66, xs: [-4, -2, 0, 2, 4] },
+    // The shield wall: shoulder to shoulder, and no way round.
+    { d: 115, xs: [-4.4, -2.6, -0.9, 0.9, 2.6, 4.4], shield: true },
+    { d: 125, xs: [-3.5, -1.75, 0, 1.75, 3.5] },
+  ]),
+  clutter: numbered<ClutterDef>([pot(34, -HUNG), barrel(42, -KERB), coop(56, KERB), pot(66, HUNG), barrel(72, -KERB), pot(86, -HUNG), coop(100, -KERB), pot(115, HUNG), barrel(120, KERB), pot(125, -HUNG)]),
+  pickups: numbered<PickupDef>([
+    { kind: "eggs", d: 12, x: 0 },
+    { kind: "shot", d: 94, x: -2.4 },
+    { kind: "eggs", d: 95, x: 2.4 },
+  ]),
+  kegs: numbered<KegDef>([
+    // Sown left and right by turns, so that there is a way to weave through for whoever looks for it.
+    trap(38, -1.8),
+    trap(48, 2.4),
+    trap(58, -2.2),
+    trap(74, 2.4),
+    trap(85, -1.6),
+    // And one with a long match, where the lane straightens for the shield wall.
+    charge(105, 0),
+  ]),
+  walls: [],
+  mill: null,
+  // Its water gets as far as the charge and no further: the shield wall stays dry, and standing.
+  cistern: { d: 28, x: KERB + 1.1, reach: 80 },
+  straw: null,
+  finish: PUDDING.foot + 12,
   roost: null,
 };
 
@@ -306,7 +386,7 @@ const POWDER_ROW: CourseDef = {
 
 const QUAY = 118;
 const STUMP = 7;
-const GORGE = 8;
+const GORGE = 13;
 const STONE_LANE = -3;
 
 const LEAP = lay([
@@ -315,7 +395,7 @@ const LEAP = lay([
   [28, 0.2], // the plunge to the water
   [8, 0.04], // the quay
   [STUMP, -0.09, -1, HALF], // what is left of the bridge: the right-hand half of its first arch, and it climbs
-  { water: GORGE, fall: 0.55 }, // the gorge, and the far bank well below
+  { water: GORGE, fall: 5 / GORGE }, // the gorge: too wide for a cart by itself, and the far bank well below
   [14, 0.22], // the far bank falls away under him, deep in straw
   [8, 0.08],
   [44, 0], // the roost yard
@@ -325,7 +405,8 @@ const LEAP = lay([
  * The bridge over the gorge is down, all but the right-hand half of its first arch, which makes
  * a ramp for anything going fast enough. The Queen has a barricade across the hill and her
  * kitchen in front of it. The miller's stone, let go, runs down the left of the street through
- * all of it and off the quay into the gorge. The cart has to keep up, keep right, and jump.
+ * all of it and off the quay into the gorge. The cart has to keep up, keep right, and jump:
+ * and the gorge is wider than a cart can jump, unless the charge on the quay goes off behind it.
  */
 const MILLERS_LEAP: CourseDef = {
   name: "Miller's Leap",
@@ -343,6 +424,8 @@ const MILLERS_LEAP: CourseDef = {
   ]),
   clutter: numbered<ClutterDef>([pot(30, HUNG), barrel(38, KERB), coop(47, KERB), pot(52, HUNG), barrel(63, KERB), pot(68, HUNG), coop(79, KERB), pot(84, HUNG), barrel(100, KERB)]),
   pickups: numbered<PickupDef>([
+    // Nobody is sent at the mill with an empty gun: without one round there is no way down.
+    { kind: "shot", d: 7, x: 0.6 },
     { kind: "eggs", d: 34, x: 2.4 },
     // In the stone's wake, for whoever follows it down.
     { kind: "shot", d: 58, x: STONE_LANE },
@@ -356,17 +439,20 @@ const MILLERS_LEAP: CourseDef = {
     // And in his.
     trap(46, 2.6),
     trap(74, 1.2),
-    trap(101, 2.4),
+    trap(101, 3.6),
+    // The Queen's sappers meant this one for the bridge. It will do for getting over what is left of it.
+    charge(QUAY - 4, 2),
   ]),
   walls: [{ id: 0, d: 92, height: 2.8 }],
   mill: { d: 20, x: STONE_LANE, drop: 5.5 },
+  cistern: null,
   straw: { d0: QUAY + STUMP + GORGE, d1: QUAY + STUMP + GORGE + 22 },
   finish: LEAP.foot + 6,
   roost: LEAP.foot + 32,
 };
 
 /** The streets of a run, in the order they are ridden. */
-export const STREETS: CourseDef[] = [BELL_TOWER_STREET, POWDER_ROW, MILLERS_LEAP];
+export const STREETS: CourseDef[] = [BELL_TOWER_STREET, POWDER_ROW, PUDDING_LANE, MILLERS_LEAP];
 export const COURSE: CourseDef = BELL_TOWER_STREET;
 
 /** How much of the street a piece carries, from x0 to x1. */

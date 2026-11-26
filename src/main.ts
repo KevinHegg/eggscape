@@ -60,17 +60,10 @@ interface Drag {
   y: number;
   since: number;
   moved: boolean;
-  /** Where the finger was across the street when it was last at the top (or bottom) of its travel. */
-  xTurn: number;
 }
 let drag: Drag | null = null;
-/**
- * The brake is on. It is a latch, not a hold: a pull down puts it on and it stays on, finger
- * or no finger, until a push up (or a tap on the badge) lets it off again.
- */
+/** The brake is on. It has its own button, and stays as it was left: dragging only steers. */
 let slow = false;
-/** Pixels of pull, or of push, that work the brake. */
-const BRAKE_PULL = 36;
 const keys = new Set<string>();
 /** A shot was asked for and the sim has not yet heard: at a named target, or at whatever is next. */
 let trigger: string | true | null = null;
@@ -92,6 +85,8 @@ let bowled = 0;
 let towerAtEnd: NonNullable<Game["tower"]>["state"] = "held";
 /** The last thing to go bang, in case it is the last thing he hears. */
 let lastBoom = { big: false, time: -1 };
+/** How the charge with the long match went: unlit, thrown by it, held by the brake, in his face, or long past it. */
+let charge: "unlit" | "lit" | "thrown" | "braked" | "early" | "late" | "wet" = "unlit";
 
 // ---------------------------------------------------------------- screens
 
@@ -122,6 +117,7 @@ function enter(run: boolean, index: number, carry?: Carry): void {
   lobbed = null;
   setSlow(false);
   lastBoom = { big: false, time: -1 };
+  charge = "unlit";
   freeze = 0;
   flying = false;
   rounds = -1;
@@ -145,7 +141,8 @@ function drawHud(current: Game): void {
   const along = ((street + current.progress) / STREETS.length) * 100;
   $("track-fill").style.width = `${along}%`;
   $("track-egg").style.left = `${along}%`;
-  $("brake").classList.toggle("on", slow && current.phase === "run");
+  $("brake").classList.toggle("on", slow);
+  $("brake").setAttribute("aria-pressed", String(slow));
   // The gun: what is in the rack, and whether it has anything to shoot at.
   if (current.ammo !== rounds) {
     rounds = current.ammo;
@@ -220,10 +217,42 @@ function narrate(event: GameEvent, current: Game): void {
     case "fuse": {
       sound.fuse();
       const cart = current.position;
-      if (Math.hypot(event.at.x - cart.x, event.at.z - cart.z) < KEG_TRIP + 0.6) toast("A slow match!", "bad");
+      if (current.kegs.find((keg) => keg.def.id === event.id)?.def.fuse !== undefined) {
+        charge = "lit";
+        toast("It's lit!");
+        hint("ride", slow ? "Brake off, and get past it before it goes!" : "Get past it before it goes!");
+      } else if (Math.hypot(event.at.x - cart.x, event.at.z - cart.z) < KEG_TRIP + 0.6) toast("A slow match!", "bad");
       break;
     }
+    case "kick":
+      if (event.braked) {
+        charge = "braked";
+        toast("The brake held her!", "bad");
+      } else if (event.gain > 1.5) {
+        if (charge === "lit" || charge === "early") charge = "thrown";
+        sound.whoosh();
+        toast("Whoosh!");
+      }
+      break;
+    case "flood":
+      sound.smash();
+      sound.splash();
+      sound.rubble(7, 0.05);
+      freeze = Math.max(freeze, 0.07);
+      toast("There goes the cistern!");
+      break;
+    case "doused":
+      sound.sizzle();
+      if (current.kegs.find((keg) => keg.def.id === event.id)?.def.fuse !== undefined) {
+        charge = "wet";
+        hint("soaked", "Wet powder is no use to her, either");
+      }
+      break;
     case "boom":
+      if (current.kegs.find((keg) => keg.def.id === event.id)?.def.fuse !== undefined && charge === "lit") {
+        // Where was he when it went? Short of it, or so far past that it never touched him.
+        charge = current.distance < -event.at.z + 0.3 ? "early" : "late";
+      }
       sound.boom(event.big);
       freeze = Math.max(freeze, event.big ? 0.1 : 0.04);
       if (event.big || lastBoom.time !== current.time || !lastBoom.big) lastBoom = { big: event.big, time: current.time };
@@ -260,7 +289,7 @@ function narrate(event: GameEvent, current: Game): void {
       break;
     case "letGo":
       sound.groan();
-      hint("brake", "It's going! Pull down to slow her: let it land first");
+      hint("brake", "It's going! Brake, and let it land first");
       break;
     case "bellLoose":
       sound.toll(0.5);
@@ -277,6 +306,14 @@ function narrate(event: GameEvent, current: Game): void {
       bowled += 1;
       sound.swat(true);
       if (event.by === "cart") toast("Oof!", "bad");
+      else if (event.by === "ram") toast("Skittles!");
+      else if (event.by === "flood") toast("Washed away!");
+      break;
+    case "bash":
+      sound.clang();
+      sound.bang(false);
+      toast("The shield wall!", "bad");
+      hint("shields", "They won't budge. A round, an egg apiece, or powder behind her");
       break;
     case "regroup":
       // Only worth saying while they are still between him and home.
@@ -354,6 +391,9 @@ function narrate(event: GameEvent, current: Game): void {
 /** How it ended, and the one thing worth knowing for the next go. */
 function verdict(current: Game): { title: string; line: string } {
   const course = current.course;
+  if (current.cause === "blast" && charge === "early") {
+    return { title: "Devilled", line: "The gilt keg went off in his face. Light it, then be past it when the red ring closes." };
+  }
   if (current.cause === "blast") {
     return lastBoom.big
       ? { title: "Devilled", line: "He was at the barricade when the powder wagon went up. Set it off from well back, and brake until it has gone." }
@@ -368,9 +408,12 @@ function verdict(current: Game): { title: string; line: string } {
       // The hill with the mill on it: a stone, a barricade, and a bridge with most of it missing.
       const hung = current.stone?.state === "hung";
       if (current.cause === "fell") {
-        return current.position.x < (stump.x0 ?? 0) - 0.1
-          ? { title: "Poached", line: "Only the right-hand half of the bridge is standing. Keep right for the leap." }
-          : { title: "Poached", line: "Too slow off the end of the bridge. Stay off the brake down the last of the hill." };
+        if (current.position.x < (stump.x0 ?? 0) - 0.1) return { title: "Poached", line: "Only the right-hand half of the bridge is standing. Keep right for the leap." };
+        if (charge === "braked") return { title: "Poached", line: "The powder went off behind him with the brake still on, and the brake won. Let it off before the red ring closes." };
+        if (charge === "early") return { title: "Poached", line: "The gilt keg went off before he reached it. Light it from closer in, or come at it faster." };
+        if (charge === "late") return { title: "Poached", line: "He was long past the gilt keg when it went. Light it sooner: an egg carries a good way." };
+        if (charge === "thrown") return { title: "Poached", line: "Thrown, and not far enough. The nearer it is behind him when it goes, the harder the push." };
+        return { title: "Poached", line: "The gorge is wider than a cart can jump. Egg the gilt keg on the quay, and let it go off behind him." };
       }
       if (held && (current.cause === "caught" || current.cause === "jolt")) {
         return hung
@@ -382,12 +425,16 @@ function verdict(current: Game): { title: string; line: string } {
         if (Math.hypot(at.x - current.position.x, at.z - current.position.z) < 5) return { title: "Milled", line: "The stone has the left of the road and means to keep it. Give it room." };
       }
       if (current.cause === "jolt" && current.distance > stump.d1) {
-        return { title: "Scrambled", line: "He cleared the gorge and missed the straw. Faster off the bridge carries him further in." };
+        return charge === "braked"
+          ? { title: "Scrambled", line: "So nearly over. The brake was on when the powder went, and took the best of the push." }
+          : { title: "Scrambled", line: "So nearly over. The nearer the gilt keg is behind him when it goes, the harder the push." };
       }
     }
     switch (current.cause) {
       case "mob":
-        return { title: "Beaten", line: "The kitchen had him. An egg makes them duck; a round from the gun flattens a rank." };
+        return course.cistern
+          ? { title: "Beaten", line: "The shield wall had him. A round opens it, an egg apiece ducks them, and the gilt keg going off behind him sends him clean through. If it is dry." }
+          : { title: "Beaten", line: "The kitchen had him. An egg makes them duck; a round from the gun flattens a rank." };
       case "caught":
         return held
           ? { title: "Omelette", line: "The barricade held, and they came down for him. The powder wagon against it would shift it: an egg from well back, or a round at its ring." }
@@ -406,7 +453,7 @@ function verdict(current: Game): { title: string; line: string } {
   switch (current.cause) {
     case "fell":
       return shot
-        ? { title: "Poached", line: towerAtEnd === "down" ? "He went in beside the bridge. The tower fell on the left: cross on the left." : "He reached the water before the bridge did. Pull down to brake, and let the tower land." }
+        ? { title: "Poached", line: towerAtEnd === "down" ? "He went in beside the bridge. The tower fell on the left: cross on the left." : "He reached the water before the bridge did. Put the brake on, and let the tower land." }
         : { title: "Poached", line: "The bridge is gone, but the bell tower would reach. One rope holds it, at the capstan on the quay." };
     case "mob":
       return { title: "Beaten", line: "The kitchen had him. The bell clears one side of the street; the cheese wain would clear the other." };
@@ -473,8 +520,7 @@ const SLACK = 7;
 
 /**
  * Drag sideways and the cart goes that way, and keeps going until the finger lifts or comes
- * back: a little drag is a drift, a long one a swerve. Pull down and the brake comes on, and
- * stays on until a push up; there is nothing faster than letting her run. Arrow
+ * back: a little drag is a drift, a long one a swerve. The brake is a button of its own. Arrow
  * keys do the same from a keyboard.
  */
 function steer(current: Game): { lean: number; brake: number } {
@@ -493,7 +539,7 @@ function steer(current: Game): { lean: number; brake: number } {
 function setSlow(on: boolean): void {
   if (slow === on) return;
   slow = on;
-  if (on && running) hint("slow", "Brake's on. Push up to let her run");
+  if (on && running) hint("slow", "Brake's on. Tap it again to let her run");
 }
 
 /** A touch on the street: a round at the gold ring under it, or an egg at whatever else is there. */
@@ -522,7 +568,7 @@ stageHost.addEventListener("pointerdown", (event) => {
     tap(event.clientX, event.clientY);
     return;
   }
-  drag = { id: event.pointerId, x0: event.clientX, y0: event.clientY, x: event.clientX, y: event.clientY, since: performance.now(), moved: false, xTurn: event.clientX };
+  drag = { id: event.pointerId, x0: event.clientX, y0: event.clientY, x: event.clientX, y: event.clientY, since: performance.now(), moved: false };
 });
 window.addEventListener("pointermove", (event) => {
   if (!drag || event.pointerId !== drag.id) return;
@@ -531,20 +577,6 @@ window.addEventListener("pointermove", (event) => {
   // The stick's centre trails a finger that has gone past full lean, so turning back bites at once.
   const full = fullLean();
   drag.x0 = Math.max(drag.x - full, Math.min(drag.x + full, drag.x0));
-  // The brake works like a lever with two stops. Off, it is measured from the highest the finger
-  // has been, and a pull down from there puts it on; on, from the lowest, and a push up lets it
-  // off. A thumb sweeping across the street rises and falls a little, and that must not work it.
-  const turned = slow ? drag.y > drag.y0 : drag.y < drag.y0;
-  if (turned) {
-    drag.y0 = drag.y;
-    drag.xTurn = drag.x;
-  }
-  const travel = Math.abs(drag.y - drag.y0);
-  if (travel > BRAKE_PULL && Math.abs(drag.x - drag.xTurn) < travel * 1.5) {
-    setSlow(!slow);
-    drag.y0 = drag.y;
-    drag.xTurn = drag.x;
-  }
   if (!drag.moved && Math.hypot(drag.x - drag.x0, drag.y - drag.y0) > 12) {
     drag.moved = true;
     if (!steered) {
@@ -564,7 +596,7 @@ for (const type of ["pointerup", "pointercancel"] as const) {
 stageHost.addEventListener("contextmenu", (event) => event.preventDefault());
 $("brake").addEventListener("pointerdown", (event) => {
   event.preventDefault();
-  setSlow(false);
+  if (running && !handing) setSlow(!slow);
 });
 $("fire").addEventListener("pointerdown", (event) => {
   event.preventDefault();
@@ -579,9 +611,7 @@ window.addEventListener("keydown", (event) => {
     event.preventDefault();
     trigger = true;
   }
-  // Down puts the brake on and up lets it off, as a finger would.
-  if (running && (key === "ArrowDown" || key === "s")) setSlow(true);
-  if (running && (key === "ArrowUp" || key === "w")) setSlow(false);
+  if (running && (key === "ArrowDown" || key === "s" || key === "b")) setSlow(!slow);
   if (key === "m") toggleSound();
   if (key === "r" && (running || resultShown) && !handing) void start(street, entry);
 });
@@ -612,17 +642,19 @@ $("sound").addEventListener("pointerdown", (event) => {
 drawSound();
 
 /** What is said at the top of each street. */
-const OPENING = [
-  "The bridge is out. That tower would reach.",
-  "The Queen's powder. Red rings are traps: egg them from well back.",
-  "The miller's stone hangs over the road. Shoot the hoist.",
-];
+const OPENING: Record<string, string> = {
+  "Bell Tower Street": "The bridge is out. That tower would reach.",
+  "Powder Row": "The Queen's powder. Red rings are traps: egg them from well back.",
+  "Pudding Lane": "Kegs all down the lane, and a cistern over it. Fire, or water?",
+  "Miller's Leap": "The miller's stone hangs over the road. Shoot the hoist.",
+};
+const opening = (index: number): string => OPENING[STREETS[index]?.name ?? ""] ?? "";
 
 async function start(index = firstStreet, carry?: Carry): Promise<void> {
   sound.unlock();
   await stage(true, index, carry);
   show("run");
-  hint(`start${index}`, OPENING[index] ?? "");
+  hint(`start${index}`, opening(index));
   if (auto) $("lean-hint").classList.add("gone");
 }
 
@@ -657,7 +689,7 @@ async function handOver(current: Game): Promise<void> {
   await wait(1100);
   $("curtain").classList.remove("across");
   handing = false;
-  hint(`start${street}`, OPENING[street] ?? "");
+  hint(`start${street}`, opening(street));
 }
 
 $("roll-out").addEventListener("click", () => void start());
@@ -689,17 +721,26 @@ function coach(current: Game): void {
     if (!wagon) {
       // No powder against this one: the stone, or a round.
       if (gap < 30 && gap > 8 && current.stone?.state === "hung") hint("wall", "The barricade! Tap its gold ring");
-    } else if (gap < 34 && gap > 12 && lit) hint("wait", "It's lit! Pull down to slow her and let it go up");
+    } else if (gap < 34 && gap > 12 && lit) hint("wait", "It's lit! Brake, and let it go up");
     else if (gap < 60 && gap > 30 && !lit) hint("train", "One egg on a kerb keg sets the whole row off");
     else if (gap < 28 && gap > 10 && !lit) hint("wagon", "The barricade! Egg the powder wagon, and brake");
   }
   // The leap: said in good time, on the last of the hill.
   const stump = current.course.pieces.find((piece) => piece.x0 !== undefined);
-  if (stump && current.distance > stump.d0 - 46 && current.distance < stump.d0 - 12 && !wall) hint("leap", slow ? "Brake off for the bridge: push up! And keep right" : "Keep right for the bridge, and off the brake!");
+  // The charge with the long match: what it is for, then how to use it, then the one thing that spoils it.
+  const keg = current.kegs.find((one) => one.def.fuse !== undefined && (one.state === "set" || one.state === "lit") && one.def.d > current.distance - 2);
+  if (keg && !wall) {
+    const gap = keg.def.d - current.distance;
+    if (keg.state === "lit") {
+      if (slow && gap < 14) hint("off", "Brake off, or the blast won't carry her!");
+    } else if (stump && gap < 52 && gap > 38) hint("gap", "Too wide to jump! The gilt keg on the quay could throw her over");
+    else if (gap < 36 && gap > 12 && current.flood?.state !== "running") hint("charge", "Egg the gilt keg, then be just past it when it blows");
+  } else if (stump && charge !== "unlit" && current.distance > stump.d0 - 8 && current.distance < stump.d0) hint("leap", "Keep right for the bridge!");
   if (current.ammo === 0) return;
   const lit = current.target;
   if (!lit) return;
   if (lit.id === "hoist") hint("hoist", "Gold ring on the mill's hoist: tap it, or press Fire");
+  if (lit.id === "cistern" && current.distance > 11) hint("cistern", "Shoot the cistern and the powder drowns. All of it");
   const tower = current.tower?.state;
   if (lit.id === "windlass") hint("fire", "Gold ring on the capstan: tap it, or press Fire");
   else if (lit.id === "wain" && tower !== "held") hint("wain", "The cheese wain is only chocked: tap its ring");
