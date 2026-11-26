@@ -18,7 +18,8 @@ Open [http://127.0.0.1:5180](http://127.0.0.1:5180). Add `?auto` to watch the bu
 driver play the run.
 
 - **Build:** pick three of the six machines. They work on their own; there is nothing to press.
-- **Steer:** put a finger down anywhere and drag. The cart follows it across the road
+- **Steer:** put a finger down anywhere and drag sideways. The cart goes that way and keeps
+  going until you lift the finger or bring it back; a longer drag is a harder swerve
   (or **←/→**, **A/D**). The King's men do the leaning; lose men and she answers more slowly.
 - **Brake:** pull the same finger down (or **↓**, **S**). She slows to a trot, never to a stand.
 - **Fire:** the gun lays itself on the nearest tower or wall ahead and rings it in gold. Tap

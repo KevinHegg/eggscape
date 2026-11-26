@@ -10,8 +10,9 @@ and rides it down a defended hill to the Empress Hen. Prototype stage.
   The cart is sprung: coming down wheels first, the springs take the first of a landing.
 - Hay is the cushion. The King rides packed in bales (two to start, four at most); every
   knock comes out of the hay before it reaches the shell, and the bales visibly go.
-- Three verbs, two thumbs. One finger drags: the cart follows it across the road
-  (`leanToward`), and pulling down puts the brake on. A tap, a second finger, or the one Fire
+- Three verbs, two thumbs. One finger drags like a stick: drag sideways and the cart goes that
+  way and keeps going until the finger lifts or comes back (`leanAt`), and pulling down puts
+  the brake on. A tap, a second finger, or the one Fire
   button shoots. There are no other buttons in a run.
 - The brake slows her and never stops her (`BRAKE_FLOOR`). There is no accelerator: a cart
   has a brake, not an engine.
@@ -52,6 +53,6 @@ and rides it down a defended hill to the Empress Hen. Prototype stage.
 - Development: `npm run dev` (port 5180); `?auto` lets the test pilot drive
 - Tests: `npm test`; full acceptance: `npm run check`
 - Trace a run event by event with the test pilot: `npx tsx scripts/trace.ts lever,wedge,plane [idle]`
-- Speed down the bare road: `npm run probe -- [brake 0..1]`; steering response:
-  `npx tsx scripts/steer.ts`; the jumps: `npx tsx scripts/jumps.ts`
+- Speed down the bare road: `npm run probe -- [brake 0..1]`; what a held drag does:
+  `npx tsx scripts/hold.ts`; the jumps: `npx tsx scripts/jumps.ts`
 - Sound is `src/audio.ts`: synthesised, no files, presentation only.

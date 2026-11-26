@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { driver, idle, leanToward, play, steady, type Pilot } from "../src/sim/autoplay";
+import { driver, idle, leanAt, leanToward, play, steady, type Pilot } from "../src/sim/autoplay";
 import { COURSE } from "../src/sim/course";
 import { Game, type GameEvent } from "../src/sim/game";
 import { PART_IDS, type PartId } from "../src/sim/parts";
@@ -66,6 +66,22 @@ test("the brake slows her, and never stops her", async () => {
   assert.ok(braked.game.time > free.game.time * 1.25, `free ${free.game.time.toFixed(1)}s, braked ${braked.game.time.toFixed(1)}s`);
   assert.ok(braked.game.distance >= 120);
   assert.ok(braked.events.some((event) => event.type === "brake"));
+});
+
+test("a held drag keeps her crossing the road until it is let go, and never grinds the kerb", async () => {
+  const game = await Game.create(["pulley", "screw", "lever"], { ...COURSE, walls: [], towers: [], oil: [], pickups: [] });
+  while (game.distance < 20) game.step({ lean: leanToward(game, -3) });
+  const from = game.position.x;
+  for (let step = 0; step < 30; step += 1) game.step({ lean: leanAt(game, 1) });
+  const half = game.position.x - from;
+  for (let step = 0; step < 30; step += 1) game.step({ lean: leanAt(game, 1) });
+  const whole = game.position.x - from;
+  assert.ok(half > 0.8 && whole - half > 1.5, `she kept going: ${half.toFixed(2)} m then ${whole.toFixed(2)} m`);
+  const lifted = game.position.x;
+  for (let step = 0; step < 60; step += 1) game.step({ lean: leanAt(game, 0) });
+  assert.ok(game.position.x - lifted < 0.8, `she steadied within ${(game.position.x - lifted).toFixed(2)} m of the finger lifting`);
+  for (let step = 0; step < 180; step += 1) game.step({ lean: leanAt(game, 1) });
+  assert.ok(game.position.x < COURSE.width / 2 - 0.6 && game.shell === 100, `held hard over she rides inside the kerb, unhurt (x ${game.position.x.toFixed(2)})`);
 });
 
 test("the roof turns three blows aside and then is spent", async () => {

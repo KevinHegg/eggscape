@@ -1,7 +1,7 @@
 import "./style.css";
 import { Sound } from "./audio";
 import { View } from "./render/view";
-import { leanToward, steady } from "./sim/autoplay";
+import { leanAt, leanToward, steady } from "./sim/autoplay";
 import { Game, MAX_HAY, MAX_MEN, STEP, initPhysics, type GameEvent } from "./sim/game";
 import { PARTS, PART_IDS, SLOTS, type PartId } from "./sim/parts";
 
@@ -43,14 +43,13 @@ let game: Game | null = null;
 let running = false;
 let resultShown = false;
 let accumulator = 0;
-/** The finger that is steering: where it went down, where it is, and where the cart was then. */
+/** The finger that is steering: where its stick is centred, and where it is now. */
 interface Drag {
   id: number;
   x0: number;
   y0: number;
   x: number;
   y: number;
-  cartX: number;
   since: number;
   moved: boolean;
 }
@@ -329,28 +328,30 @@ function showResult(current: Game): void {
 
 // ---------------------------------------------------------------- input
 
-/** Metres the cart should move across the road for each pixel the finger does. */
-function reach(): number {
-  return 12 / Math.min(stageHost.clientWidth, 560);
+/** Pixels of sideways drag that put the lean hard over. */
+function fullLean(): number {
+  return 0.13 * Math.min(stageHost.clientWidth, 560);
 }
+/** Pixels the finger may wander before it counts as a lean. */
+const SLACK = 7;
 
 /**
- * The cart goes where the finger goes: drag sideways and it follows across the road, pull down
- * and the brake comes on. Arrow keys do the same from a keyboard.
+ * Drag sideways and the cart goes that way, and keeps going until the finger lifts or comes
+ * back: a little drag is a drift, a long one a swerve. Pull down and the brake comes on. Arrow
+ * keys do the same from a keyboard.
  */
 function steer(current: Game): { lean: number; brake: number } {
-  let lean = 0;
+  let rate = 0;
   let brake = 0;
   if (drag) {
-    const edge = current.course.width / 2 - 0.9;
-    const goal = Math.max(-edge, Math.min(edge, drag.cartX + (drag.x - drag.x0) * reach()));
-    lean = leanToward(current, goal);
+    const across = drag.x - drag.x0;
+    rate = (Math.sign(across) * Math.max(0, Math.abs(across) - SLACK)) / (fullLean() - SLACK);
     brake = Math.max(0, Math.min(1, (drag.y - drag.y0 - 26) / 60));
   }
-  if (keys.has("ArrowLeft") || keys.has("a")) lean -= 1;
-  if (keys.has("ArrowRight") || keys.has("d")) lean += 1;
+  if (keys.has("ArrowLeft") || keys.has("a")) rate -= 1;
+  if (keys.has("ArrowRight") || keys.has("d")) rate += 1;
   if (keys.has("ArrowDown") || keys.has("s")) brake = 1;
-  return { lean: Math.max(-1, Math.min(1, lean)), brake };
+  return { lean: leanAt(current, Math.max(-1, Math.min(1, rate))), brake };
 }
 
 const stageHost = $("stage");
@@ -361,12 +362,15 @@ stageHost.addEventListener("pointerdown", (event) => {
     trigger = true;
     return;
   }
-  drag = { id: event.pointerId, x0: event.clientX, y0: event.clientY, x: event.clientX, y: event.clientY, cartX: game.position.x, since: performance.now(), moved: false };
+  drag = { id: event.pointerId, x0: event.clientX, y0: event.clientY, x: event.clientX, y: event.clientY, since: performance.now(), moved: false };
 });
 window.addEventListener("pointermove", (event) => {
   if (!drag || event.pointerId !== drag.id) return;
   drag.x = event.clientX;
   drag.y = event.clientY;
+  // The stick's centre trails a finger that has gone past full lean, so turning back bites at once.
+  const full = fullLean();
+  drag.x0 = Math.max(drag.x - full, Math.min(drag.x + full, drag.x0));
   // The brake is measured from the highest the finger has been, so it can be let off again.
   drag.y0 = Math.min(drag.y0, drag.y);
   if (!drag.moved && Math.hypot(drag.x - drag.x0, drag.y - drag.y0) > 12) {

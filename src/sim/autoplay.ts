@@ -14,6 +14,20 @@ export function leanToward(game: Game, x: number): number {
   return Math.max(-1, Math.min(1, value));
 }
 
+/** Metres a second she crosses the road with the lean held hard over. */
+const SIDLE = 4;
+
+/**
+ * The lean that keeps the cart moving across the road for as long as it is asked: `rate` is -1
+ * (hard left) to 1 (hard right), and 0 steadies her where she is. It will not grind the kerb.
+ */
+export function leanAt(game: Game, rate: number): number {
+  const edge = game.course.width / 2 - 0.9;
+  const asked = rate + (rate * SIDLE - game.velocity.x) * 0.3;
+  const value = Math.max(leanToward(game, -edge), Math.min(leanToward(game, edge), asked));
+  return Math.max(-1, Math.min(1, value));
+}
+
 /**
  * A plain, sensible driver used to prove a cart can get home: it steers out of every red ring,
  * round what stands in the road, into the gifts, and fires at what the gun is laid on. It reads
