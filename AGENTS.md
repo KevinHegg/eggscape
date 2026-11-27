@@ -1,9 +1,11 @@
 # The Great Eggscape: working rules
 
 A mobile-first physics game. The Egg King falls through the Queen's kitchen by himself, and the
-player's only move is to tap a place and have a straw bale thrown there. Prototype stage: two
-rooms, The Larder and The Scullery, built to find out whether that one verb is fun and how one
-room hands him on to the next. The user's verdict on the Larder alone: "This is good."
+player's only move is to tap a place and have a straw bale thrown there. Prototype stage: three
+rooms, The Larder, The Scullery and The Mill, built to find out whether that one verb is fun,
+how one room hands him on to the next, and whether a room can bring a new contraption without
+a new control. The user's verdict on the Larder alone: "This is good."; on the first two
+rooms: "These are playing well."
 
 Two earlier games are frozen and published beside this one. Do not merge them back or change
 them in passing; they are kept as they were on purpose.
@@ -37,6 +39,27 @@ them in passing; they are kept as they were on purpose.
   the player to let him go.
 - Rooms get harder by asking for more in less time and with less to spare (`bales`, `spare`),
   not by new controls. The Scullery's first bale has to be thrown inside about a second.
+- Each new room brings a new contraption that the same bale works. The user: "ultimately
+  we're gonna need more than just levers that toss the egg through the air", and suggested a
+  water wheel that is stuck and a bale that releases the water. The Mill is that: a bale on
+  the pan of a sluice lever (`WheelDef.pan`) lets the water in, `RACE` seconds later it is on
+  the wheel, and the wheel then turns at `WHEEL_TURN` and carries him over. Dry, the wheel is
+  loose on its axle and his own weight turns it the wrong way, into a pan. What building it
+  taught:
+  - Nothing he could come to rest on may be within reach of a paddle. A shelf beside the
+    wheel caught him, and the next paddle came down and pinned him there for good. Now the
+    wheel drops him, on to a bed of straw well below it.
+  - Paddles are slippery (`setFriction(0.2)`, combined by the lesser). Between two rough ones
+    he wedged like a cork and went all the way round into the pan.
+  - A paddle sometimes meets him at the lip and carries him clean over the top, so a splash
+    board hangs beside the wheel to bring him down on the straw anyway.
+  - A wheel with the water on it counts as soft, like straw. He lands in it hard enough to
+    crack otherwise, and nobody thinks of water as a knock.
+  - The time the wheel has him is time for the player to get ready for what follows. A room
+    can use a contraption's own slowness that way.
+- A bale that bursts under him goes on breaking his fall for `STRAW_GRACE`: without that, he
+  dropped through the place where it had been and cracked on the floor he had just been
+  saved from.
 - Each link is a simple, robust event, not a pile of free bodies doing whatever they like.
   The see-saw was first built as a jointed plank that really threw the egg, and the throw was
   different every time. Now the plank is a body that cannot move, only turn about its pivot,
@@ -65,6 +88,16 @@ them in passing; they are kept as they were on purpose.
   where it can; a taller machine scrolls with him.
 - The look is the toy theatre: chunky shapes, warm light, a medieval kitchen, the Egg King with
   his crown and sash, the Queen's cooks, the Empress Hen.
+- Everything soft looks like the bales: gold, strapped, with stalks sticking out of it (the
+  `bed` and `nest` looks). Flour sacks drawn as pale lumps were soft too, and the user saw
+  them as "the row of eggs", which "doesn't really read as a soft landing spot". Nothing soft
+  is to be round or pale again.
+- The way from one room to the next is to be seen. The user: "The down he goes dialog between
+  floors hides the movement of the egg king from the bottom one to the top of the next
+  scene." So while a card is up over a nest, the camera looks lower (`stage.hold`) and shows
+  him on it, with the hatch below; and when he is sent down he hops out past the edge of the
+  floor and drops to the hatch in front of everything (`ARRIVE`), and only then can he be let
+  go.
 
 ## Non-negotiable rules
 
@@ -80,12 +113,12 @@ them in passing; they are kept as they were on purpose.
 
 - Development: `npm run dev` (port 5180); `?auto` lets the scripted player play
 - Tests: `npm test`; full acceptance: `npm run check`
-- Trace a run event by event: `npx tsx scripts/kitchen.ts [room=scullery] [time:x,y ...]`
+- Trace a run event by event: `npx tsx scripts/kitchen.ts [room=scullery|mill] [time:x,y ...]`
   (heights as if the room stood where the Larder does)
 - In a browser console, `__egg.step(seconds, { x, y })` drives the game where frames do not
   tick (a hidden tab); set `__egg.stage.app.timeScale = 0` first, `__egg.restart()` to begin,
   `__egg.enter(1)` to sit him in the second room, `__egg.descend()` to leave a roost. Here
-  `y` is the house's own height: the second room is a `STOREY` (18) lower.
+  `y` is the house's own height: each room is a `STOREY` (18) lower than the one above.
 - Sound is `src/audio.ts`: synthesised, no files, presentation only.
 - Pages: `.github/workflows/pages.yml` builds `main` to the site root, tag `streets-v1` to
   `/streets/` and tag `gauntlet-v1` to `/gauntlet/`.

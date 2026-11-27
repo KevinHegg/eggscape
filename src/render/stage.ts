@@ -1,5 +1,5 @@
 import * as pc from "playcanvas";
-import { BALE_FLIGHT, BALE_H, BALE_W, EGG, eggOutline, type Block, type Game, type GameEvent, type LevelDef } from "../sim/kitchen";
+import { BALE_H, BALE_W, EGG, eggOutline, type Block, type Game, type GameEvent, type LevelDef, type WheelDef } from "../sim/kitchen";
 
 /**
  * The kitchen as it is seen: a doll's house with its front off. Everything in the simulation
@@ -43,7 +43,11 @@ const INK = {
   skin: new pc.Color(0.86, 0.66, 0.5),
   canvas: new pc.Color(0.9, 0.86, 0.76),
   fire: new pc.Color(1, 0.5, 0.1),
+  water: new pc.Color(0.26, 0.52, 0.9),
 };
+
+/** The drop from a roost to the hatch below it: a wriggle, the fall, and a moment to land. */
+const ARRIVE = { wait: 0.4, fall: 0.95, land: 0.25 };
 
 interface Puff {
   entity: pc.Entity;
@@ -81,7 +85,12 @@ export class Stage {
   private hatch = 0;
   private hatchOpen = false;
   /** He is on his way down from the roost above: where from, and for how long. */
-  private arrival: { from: { x: number; y: number; turn: number }; t: number } | null = null;
+  private arrival: { from: { x: number; y: number; turn: number }; t: number; gone: boolean } | null = null;
+  /** Where the camera has been told to look while a card is up, and a request to work that out. */
+  private held: number | null = null;
+  private holdAsk: { lowest: number; cover: number } | null = null;
+  /** The water wheels of the room being played, and how far open each sluice is drawn. */
+  private mills: Array<{ def: WheelDef; wheel: pc.Entity; lever: pc.Entity; gate: pc.Entity; gateY: number; stream: pc.Entity; reach: number; fall: pc.Entity; k: number; drip: number }> = [];
   private flames: pc.Entity[] = [];
   private fried: pc.Entity | null = null;
   private mess: pc.Entity | null = null;
@@ -196,6 +205,10 @@ export class Stage {
       ghost: this.paint("ghost", INK.hay, { opacity: 0.45, glow: 0.4 }),
       socket: this.paint("socket", INK.hay, { opacity: 0.2, glow: 0.3 }),
       steam: this.paint("steam", new pc.Color(0.95, 0.95, 0.95), { opacity: 0.5 }),
+      vellum: this.paint("vellum", INK.vellum),
+      ember: this.paint("ember", new pc.Color(0.7, 0.2, 0.08), { glow: 0.7 }),
+      water: this.paint("water", INK.water, { gloss: 0.9, glow: 0.45, opacity: 0.88 }),
+      spray: this.paint("spray", new pc.Color(0.8, 0.9, 1), { glow: 0.5 }),
     };
   }
 
@@ -335,20 +348,25 @@ export class Stage {
     this.shake = 0;
     this.hatch = 0;
     this.hatchOpen = false;
-    this.arrival = arrive ? { from: arrive, t: 0 } : null;
-    if (!arrive) this.snap = true;
+    this.arrival = arrive ? { from: arrive, t: 0, gone: false } : null;
+    this.mills = [];
+    this.holdAsk = null;
+    if (!arrive) {
+      this.snap = true;
+      this.held = null;
+    }
 
     for (const level of house.includes(game.level) ? house : [game.level]) {
       const here = level === game.level;
       this.buildRoom(level);
       for (const block of level.blocks) this.buildBlock(block);
       this.buildSeesaws(level, here);
+      this.buildWheels(level, here);
       this.buildPans(level);
       this.buildNest(level, here);
       if (level.hatch) this.buildHatch(level, here);
     }
     this.buildKing();
-    if (arrive) this.burst(arrive.x, arrive.y - 0.3, this.m.hay, 10, 0.4, 3);
 
     const m = this.m;
     this.ghost = this.baleShape(this.scene, m.ghost);
@@ -381,8 +399,9 @@ export class Stage {
     const larder = level.key === "larder";
     const flip = larder ? 1 : -1;
     const railY = level.top - 1.1;
-    this.shape("box", this.scene, [midX + flip * 1.6, railY, BACK + 0.12], [3.4, 0.08, 0.08], m.iron, [0, 0, 0], true);
-    for (let index = 0; index < 5; index += 1) {
+    const rail = level.wheels.length === 0;
+    if (rail) this.shape("box", this.scene, [midX + flip * 1.6, railY, BACK + 0.12], [3.4, 0.08, 0.08], m.iron, [0, 0, 0], true);
+    for (let index = 0; rail && index < 5; index += 1) {
       const x = midX + flip * (0.2 + index * 0.7);
       const size = 0.5 - (index % 3) * 0.08;
       this.shape("cylinder", this.scene, [x, railY - 0.2 - size / 2, BACK + 0.16], [size, 0.07, size], m.copper, [90, 0, 0], true);
@@ -395,7 +414,7 @@ export class Stage {
     this.shape("box", window, [0, 0, 0.06], [1.26, 0.08, 0.05], m.oakDark, [0, 0, 0], true);
     if (!larder) {
       // A plate rack on the back wall, where there is room for one.
-      const rack = this.group("rack", this.scene, [level.left + 1.7, level.bottom + 6.9, BACK + 0.2]);
+      const rack = this.group("rack", this.scene, [level.left + 1.7, level.bottom + (rail ? 6.9 : 7.6), BACK + 0.2]);
       this.shape("box", rack, [0, 0, 0], [2.4, 0.1, 0.4], m.oakDark, [0, 0, 0], true);
       for (let index = 0; index < 3; index += 1) {
         const x = -0.78 + index * 0.78;
@@ -421,25 +440,52 @@ export class Stage {
       this.shape("box", root, [0, 0, -0.15], [block.w, block.h, DEPTH + 0.5], m.stoneDark, [0, 0, 0], true);
       return;
     }
-    if (block.look === "sack") {
-      // Flour sacks laid along the floor: lumps, not a slab.
-      const count = Math.max(2, Math.round(block.w / 0.62));
-      for (let index = 0; index < count; index += 1) {
-        const x = -block.w / 2 + ((index + 0.5) * block.w) / count;
-        for (const z of [-0.5, 0.42]) {
-          this.shape("sphere", root, [x, 0.02, z + (index % 2) * 0.1], [(block.w / count) * 1.12, block.h * 1.08, 1], m.canvas, [0, 0, 0], true);
-          this.shape("box", root, [x, block.h * 0.2, z + 0.44], [0.2, 0.12, 0.05], m.lapis, [0, 0, 0], true);
-        }
+    if (block.look === "bed") {
+      // A bed of straw: bales laid end to end, bound like the ones he is thrown, with a ragged
+      // top of stalks. What is gold and strapped is soft; nothing round, which read as eggs.
+      const deep = DEPTH - 0.5;
+      this.shape("box", root, [0, 0, -0.05], [block.w, block.h, deep], m.hay, [0, 0, 0], true);
+      this.shape("box", root, [0, block.h * 0.5, -0.05], [block.w * 0.98, 0.06, deep - 0.08], m.hayDark, [0, 0, 0], true);
+      const lengths = Math.max(1, Math.round(block.w / BALE_W));
+      for (let index = 0; index < lengths; index += 1) {
+        const mid = -block.w / 2 + ((index + 0.5) * block.w) / lengths;
+        for (const side of [-1, 1]) this.shape("box", root, [mid + (side * block.w) / lengths / 4, 0, -0.05], [0.07, block.h * 1.04, deep + 0.03], m.oakDark, [0, 0, 0], true);
+        if (index > 0) this.shape("box", root, [mid - block.w / lengths / 2, 0, -0.05], [0.03, block.h * 1.01, deep + 0.01], m.hayDark, [0, 0, 0], true);
       }
+      const stalks = Math.max(6, Math.round(block.w / 0.13));
+      for (let index = 0; index < stalks; index += 1) {
+        const x = -block.w / 2 + ((index + 0.5) * block.w) / stalks;
+        const z = deep / 2 - 0.12 - ((index * 7) % 5) * 0.34;
+        const tall = 0.16 + ((index * 5) % 4) * 0.05;
+        this.shape("box", root, [x, block.h * 0.5 + tall * 0.4, z], [0.035, tall, 0.035], index % 3 ? m.hay : m.hayDark, [((index * 3) % 5) * 12 - 24, 0, ((index * 7) % 9) * 9 - 36], true);
+      }
+      return;
+    }
+    if (block.look === "board") {
+      this.shape("box", root, [0, 0, -0.1], [block.w, block.h, 1.5], m.oak, [0, 0, 0], true);
+      for (const along of [-0.42, 0.42]) this.shape("box", root, [0, along * block.h, -0.1], [block.w + 0.04, 0.1, 1.54], m.iron, [0, 0, 0], true);
       return;
     }
     if (block.look === "nest") {
       this.shape("box", root, [0, 0, -0.1], [block.w, block.h, DEPTH - 0.2], m.hay, [0, 0, 0], true);
-      const tufts = Math.max(2, Math.round(Math.max(block.w, block.h) / 0.45));
-      for (let index = 0; index < tufts; index += 1) {
-        const along = (index + 0.5) / tufts - 0.5;
-        const upright = block.h > block.w;
-        this.shape("sphere", root, upright ? [-block.w * 0.4, along * block.h, 0.5 - (index % 3) * 0.5] : [along * block.w, block.h * 0.42, 0.6 - (index % 3) * 0.6], [0.5, 0.34, 0.6], index % 2 ? m.hayDark : m.hay, [0, 0, index * 31], true);
+      // Loose straw: stalks standing out of it at all angles, along its top or up its face.
+      const upright = block.h > block.w;
+      const stalks = Math.max(6, Math.round(Math.max(block.w, block.h) / 0.12));
+      for (let index = 0; index < stalks; index += 1) {
+        const along = (index + 0.5) / stalks - 0.5;
+        const z = 0.8 - ((index * 7) % 6) * 0.3;
+        const tall = 0.2 + ((index * 5) % 4) * 0.06;
+        const lean = ((index * 7) % 9) * 10 - 40;
+        const face = block.x > 0 ? -1 : 1;
+        this.shape(
+          "box",
+          root,
+          upright ? [face * (block.w / 2 + tall * 0.3), along * block.h, z] : [along * block.w, block.h / 2 + tall * 0.35, z],
+          [0.04, tall, 0.04],
+          index % 3 ? m.hay : m.hayDark,
+          [((index * 3) % 5) * 12 - 24, 0, upright ? face * -90 + lean : lean],
+          true,
+        );
       }
       return;
     }
@@ -480,15 +526,93 @@ export class Stage {
     }
   }
 
+  /** A water wheel on its axle, the cistern over it, the sluice lever with its pan, and the trough between. */
+  private buildWheels(level: LevelDef, here: boolean): void {
+    const m = this.m;
+    for (const def of level.wheels) {
+      // The axle comes out of the back wall on a stout bracket.
+      this.shape("cylinder", this.scene, [def.x, def.y, -0.2], [0.26, DEPTH + 0.2, 0.26], m.iron, [90, 0, 0], true);
+      this.shape("box", this.scene, [def.x, def.y - 0.5, BACK + 0.2], [0.5, 1.4, 0.4], m.oakDark, [0, 0, 0], true);
+      for (const side of [-1, 1]) this.shape("box", this.scene, [def.x + side * 0.55, def.y - 0.75, BACK + 0.2], [0.2, 1.5, 0.3], m.oakDark, [0, 0, side * 38], true);
+
+      const wheel = this.group("wheel", this.scene, [def.x, def.y, 0]);
+      this.shape("cylinder", wheel, [0, 0, 0], [def.drum * 2, 1.36, def.drum * 2], m.oakDark, [90, 0, 0]);
+      this.shape("cylinder", wheel, [0, 0, 0.72], [0.5, 0.1, 0.5], m.iron, [90, 0, 0]);
+      // A plate across the back of it, so that each pair of paddles reads as a bucket; the
+      // front is open, and he is seen sitting in one.
+      this.shape("cylinder", wheel, [0, 0, -0.74], [def.r * 2 - 0.16, 0.08, def.r * 2 - 0.16], m.oakDark, [90, 0, 0]);
+      this.shape("cylinder", wheel, [0, 0, -0.7], [def.r * 2 - 0.5, 0.04, def.r * 2 - 0.5], m.oak, [90, 0, 0]);
+      const rim = this.hoop(wheel, [0, 0, -0.7], m.iron);
+      rim.setLocalScale(def.r * 2 - 0.12, 2, def.r * 2 - 0.12);
+      const from = def.drum * 0.6;
+      for (let index = 0; index < def.paddles; index += 1) {
+        const turn = 90 + (index / def.paddles) * 360;
+        const blade = this.group("blade", wheel, [0, 0, 0], [0, 0, turn]);
+        this.shape("box", blade, [(from + def.r) / 2, 0, 0], [def.r - from, 0.14, 1.5], m.oak);
+        this.shape("box", blade, [def.r - 0.06, 0, 0], [0.12, 0.2, 1.56], m.verdigris);
+        this.shape("box", blade, [(from + def.r) / 2, 0, 0.76], [def.r - from, 0.16, 0.04], m.oakDark);
+      }
+
+      // The cistern, bound with iron and full to the brim.
+      const tank = def.tank;
+      const tx = (tank.x0 + tank.x1) / 2;
+      const ty = (tank.y0 + tank.y1) / 2;
+      const tw = tank.x1 - tank.x0;
+      const th = tank.y1 - tank.y0;
+      this.shape("box", this.scene, [tx, ty, -0.1], [tw, th, 1.7], m.oak, [0, 0, 0], true);
+      for (const up of [-0.3, 0.3]) this.shape("box", this.scene, [tx, ty + up * th, -0.1], [tw + 0.04, 0.09, 1.74], m.iron, [0, 0, 0], true);
+      this.shape("box", this.scene, [tx, tank.y1 + 0.01, -0.1], [tw - 0.16, 0.04, 1.54], m.water, [0, 0, 0], true);
+      // Its sign, for anyone in doubt what is in it.
+      this.shape("cylinder", this.scene, [tx, ty, 0.76], [0.62, 0.04, 0.62], m.vellum, [90, 0, 0], true);
+      this.shape("sphere", this.scene, [tx, ty - 0.06, 0.79], [0.34, 0.34, 0.06], m.lapis, [0, 0, 0], true);
+      this.shape("cone", this.scene, [tx, ty + 0.14, 0.79], [0.26, 0.3, 0.05], m.lapis, [0, 0, 0], true);
+      this.shape("box", this.scene, [tank.x0 - 0.02, tank.y0 + 0.28, 0], [0.06, 0.46, 0.7], m.ink, [0, 0, 0], true);
+      const gateY = tank.y0 + 0.3;
+      const gate = this.shape("box", this.scene, [tank.x0 - 0.07, gateY, 0], [0.08, 0.6, 0.86], m.iron);
+
+      // The trough from the sluice to over the wheel, and the water that runs down it.
+      const mouth = { x: tank.x0, y: tank.y0 + 0.14 };
+      const run = Math.hypot(mouth.x - def.spout.x, mouth.y - def.spout.y);
+      const tilt = Math.atan2(mouth.y - def.spout.y, mouth.x - def.spout.x) * RAD;
+      const trough = this.group("trough", this.scene, [def.spout.x, def.spout.y, 0], [0, 0, tilt]);
+      this.shape("box", trough, [run / 2, -0.05, 0], [run + 0.1, 0.07, 0.8], m.oak, [0, 0, 0], true);
+      // The board on the audience's side is low, so that the water is seen running in it.
+      this.shape("box", trough, [run / 2, 0.06, -0.4], [run + 0.1, 0.26, 0.07], m.oakDark, [0, 0, 0], true);
+      this.shape("box", trough, [run / 2, -0.02, 0.4], [run + 0.1, 0.1, 0.07], m.oakDark, [0, 0, 0], true);
+      for (const along of [0.3, 0.75]) this.shape("box", this.scene, [def.spout.x + (mouth.x - def.spout.x) * along, def.spout.y + (mouth.y - def.spout.y) * along + 0.9, BACK + 0.3], [0.09, 1.9, 0.09], m.iron, [0, 0, 0], true);
+      const stream = this.shape("box", trough, [run, 0.07, 0], [0.01, 0.16, 0.7], m.water);
+      stream.enabled = false;
+      const top = def.y + def.r * 0.8;
+      const fall = this.shape("box", this.scene, [def.spout.x - 0.12, (def.spout.y + top) / 2, 0], [0.34, def.spout.y - top + 0.1, 0.7], m.water);
+      fall.enabled = false;
+
+      // The sluice lever: a beam on a post, the gold pan on its long end and the gate on its short one.
+      const pivot = { x: tank.x0 - 0.42, y: def.pan.y - 0.02 };
+      this.shape("box", this.scene, [pivot.x, (pivot.y + mouth.y) / 2, 0.52], [0.1, pivot.y - mouth.y + 0.2, 0.1], m.iron, [0, 0, 0], true);
+      const lever = this.group("lever", this.scene, [pivot.x, pivot.y, 0], [0, 0, -7]);
+      const long = pivot.x - (def.pan.x - def.pan.w / 2);
+      this.shape("box", lever, [(0.36 - long) / 2, -0.07, 0.52], [long + 0.36, 0.09, 0.1], m.oakDark);
+      this.shape("box", lever, [def.pan.x - pivot.x, -0.03, 0], [def.pan.w, 0.07, 1.15], m.gold);
+      for (const side of [-1, 1]) this.shape("box", lever, [def.pan.x - pivot.x + (side * def.pan.w) / 2, 0.02, 0], [0.06, 0.16, 1.15], m.gold);
+      this.shape("box", lever, [0.34, -0.3, 0.52], [0.05, 0.5, 0.05], m.iron);
+
+      if (here) this.mills.push({ def, wheel, lever, gate, gateY, stream, reach: run, fall, k: 0, drip: 0 });
+    }
+  }
+
   private buildPans(level: LevelDef): void {
     const m = this.m;
     for (const pit of level.pits) {
       if (pit.hung) {
         // A pan in an iron box hung under the hole, with its own little fire beneath.
-        this.pan(this.scene, [pit.x, pit.pan - 0.05, 0.1], 1.1);
-        for (const side of [-1, 1]) this.shape("box", this.scene, [pit.x + side * 0.6, pit.pan - 0.2, BACK + 0.55], [0.1, 0.1, 1.2], m.iron, [0, 0, 0], true);
-        for (let index = 0; index < 3; index += 1) {
-          const flame = this.shape("cone", this.scene, [pit.x - 0.3 + index * 0.3, pit.pan - 0.2, 0.82], [0.2, 0.34, 0.1], m.fire);
+        const wide = pit.w > 2;
+        this.pan(this.scene, [pit.x, pit.pan - 0.05, 0.1], wide ? 1.5 : 1.1);
+        for (const side of [-1, 1]) this.shape("box", this.scene, [pit.x + side * (wide ? pit.w * 0.42 : 0.6), pit.pan - 0.2, BACK + 0.55], [0.1, 0.1, 1.2], m.iron, [0, 0, 0], true);
+        if (wide) this.shape("box", this.scene, [pit.x, pit.pan - 0.04, 0], [pit.w - 0.1, 0.03, 1.46], m.ember, [0, 0, 0], true);
+        const fires = wide ? 9 : 3;
+        const spread = wide ? (pit.w * 0.84) / (fires - 1) : 0.3;
+        for (let index = 0; index < fires; index += 1) {
+          const flame = this.shape("cone", this.scene, [pit.x - (spread * (fires - 1)) / 2 + index * spread, pit.pan - (wide ? 0.42 : 0.2), 0.82], [0.2, 0.34, 0.1], m.fire);
           this.flames.push(flame);
         }
         continue;
@@ -608,6 +732,20 @@ export class Stage {
     }
   }
 
+  /**
+   * While a card covers the bottom `cover` pixels of the screen, look low enough that `lowest`
+   * (a height in the house) is seen above it. `null` lets the camera go back to him.
+   */
+  hold(lowest: number | null, cover = 0): void {
+    this.holdAsk = lowest === null ? null : { lowest, cover };
+    if (lowest === null) this.held = null;
+  }
+
+  /** He is still on his way down from the roost above. */
+  get arriving(): boolean {
+    return this.arrival !== null;
+  }
+
   // ---------------------------------------------------------------- pointing
 
   /** Where on the kitchen's plane a point on the screen is. */
@@ -652,13 +790,28 @@ export class Stage {
           this.fry(end.to);
         }
       } else if (this.arrival && game.phase === "ready") {
-        // Down through the straw of the roost above and on to the hatch.
-        const from = this.arrival.from;
-        this.arrival.t += dt;
-        const k = Math.min(1, this.arrival.t / 0.7);
-        king.setLocalPosition(from.x + (egg.x - from.x) * k, from.y + (egg.y - from.y) * k * k, 0);
-        king.setLocalEulerAngles(0, 0, (from.turn + (egg.turn - from.turn) * k) * RAD);
-        if (k >= 1) this.arrival = null;
+        // A wriggle on the roost, then out past the edge of the floor and down on to the hatch,
+        // in front of everything so that all of it is seen.
+        const arrival = this.arrival;
+        const from = arrival.from;
+        arrival.t += dt;
+        const wait = Math.min(1, arrival.t / ARRIVE.wait);
+        const k = Math.min(1, Math.max(0, (arrival.t - ARRIVE.wait) / ARRIVE.fall));
+        if (k > 0 && !arrival.gone) {
+          arrival.gone = true;
+          this.burst(from.x, from.y - 0.2, this.m.hay, 12, 0.4, 3);
+          this.burst(from.x, from.y - 0.2, this.m.hayDark, 6, 0.26, 2);
+        }
+        const ease = k * k * (3 - 2 * k);
+        const hop = Math.sin(Math.min(1, k * 2.2) * Math.PI) * 0.5;
+        king.setLocalPosition(from.x + (egg.x - from.x) * ease + (k === 0 ? Math.sin(arrival.t * 34) * 0.05 * wait : 0), from.y + (egg.y - from.y) * k * k + hop, Math.sin(k * Math.PI) * 1.5);
+        king.setLocalEulerAngles(0, 0, (from.turn + (egg.turn - from.turn) * ease) * RAD + (k === 0 ? Math.sin(arrival.t * 26) * 9 * wait : Math.sin(k * Math.PI) * -40));
+        if (arrival.t >= ARRIVE.wait + ARRIVE.fall + ARRIVE.land) {
+          this.arrival = null;
+          this.held = null;
+          this.burst(egg.x, egg.y - 0.4, this.m.dust, 6, 0.26, 1.6);
+          this.shake = Math.max(this.shake, 0.2);
+        }
       } else {
         this.arrival = null;
         king.setLocalPosition(egg.x, egg.y, 0);
@@ -726,8 +879,37 @@ export class Stage {
       cook.arms[1]!.setLocalEulerAngles(0, 0, -120 + stir * 16);
       cook.arms[0]!.setLocalEulerAngles(0, 0, 150);
     }
+    game.wheels.forEach((state, index) => {
+      const mill = this.mills[index];
+      if (!mill) return;
+      mill.wheel.setLocalEulerAngles(0, 0, state.turn * RAD);
+      mill.k += ((state.open ? 1 : 0) - mill.k) * Math.min(1, dt * 10);
+      mill.lever.setLocalEulerAngles(0, 0, -7 * (1 - mill.k));
+      const at = mill.gate.getLocalPosition();
+      mill.gate.setLocalPosition(at.x, mill.gateY + 0.42 * mill.k, at.z);
+      // The water creeps down the trough from the sluice, then falls on the wheel for good.
+      mill.stream.enabled = state.flow > 0;
+      const length = Math.max(0.01, mill.reach * state.flow);
+      mill.stream.setLocalScale(length, 0.16 + Math.sin(this.clock * 17) * 0.02, 0.7);
+      mill.stream.setLocalPosition(mill.reach - length / 2, 0.07, 0);
+      mill.fall.enabled = state.wet;
+      if (state.wet) {
+        const wobble = 0.34 + Math.sin(this.clock * 23) * 0.06;
+        const scale = mill.fall.getLocalScale();
+        mill.fall.setLocalScale(wobble, scale.y, 0.7);
+        mill.drip -= dt;
+        if (mill.drip <= 0) {
+          mill.drip = 0.07;
+          const n = Math.floor(this.clock * 14);
+          const def = mill.def;
+          this.puff([def.spout.x - 0.1 + ((n % 3) - 1) * 0.1, def.y + def.r * 0.85, ((n % 5) - 2) * 0.22], this.m.spray, 0.16 + (n % 3) * 0.04, 0.5, [def.way * (1.2 + (n % 4) * 0.5), 1.4 + (n % 3) * 0.6, 0]);
+          // What the wheel has carried round runs off its low side.
+          if (n % 2 === 0) this.puff([def.x + def.way * def.r * (0.55 + (n % 4) * 0.1), def.y - def.r * 0.75, ((n % 5) - 2) * 0.25], this.m.spray, 0.12, 0.6, [def.way * 0.3, -1, 0]);
+        }
+      }
+    });
     for (const hen of this.hens) {
-      const home = hen.here && game.phase === "home";
+      const home = (hen.here && game.phase === "home") || (!hen.here && this.arrival !== null && this.arrival.t < ARRIVE.wait + 0.5);
       const beat = Math.sin(this.clock * (home ? 12 : 1.6));
       hen.head.setLocalEulerAngles(home ? 16 + beat * 8 : beat * 8, beat * 10, 0);
       hen.wings.forEach((wing, index) => wing.setLocalEulerAngles(0, 0, (index === 0 ? 1 : -1) * (home ? 30 + beat * 30 : 0)));
@@ -762,7 +944,15 @@ export class Stage {
     const midY = (level.top + level.bottom) / 2;
     const room = level.top - level.bottom + 1.4;
     const slack = Math.max(0, (room - seen) / 2);
-    const want = Math.min(midY + slack, Math.max(midY - slack, game.egg.y - seen * 0.12));
+    // On a tall screen there is room to spare: give it to the top, where the bar of the HUD is.
+    const lift = Math.max(0, Math.min(0.5, (seen - (room - 0.9)) / 2));
+    let want = Math.min(midY + slack, Math.max(midY - slack, game.egg.y - seen * 0.12)) + lift;
+    if (this.holdAsk) {
+      const covered = (this.holdAsk.cover / Math.max(1, this.canvas.clientHeight)) * seen;
+      this.held = Math.min(want, this.holdAsk.lowest - covered + seen / 2);
+      this.holdAsk = null;
+    }
+    if (this.held !== null) want = this.held;
     this.lookY = this.snap ? want : this.lookY + (want - this.lookY) * Math.min(1, dt * 3);
     this.snap = false;
 
@@ -846,7 +1036,20 @@ export class Stage {
         this.shake = Math.max(this.shake, 0.35);
         break;
       case "soft":
-        this.burst(event.x, event.y - 0.4, m.dust, 5, 0.3, 1.6);
+        // Into water with a splash, into straw with a cloud of it.
+        if (game.wheels.some((wheel) => wheel.wet && Math.hypot(event.x - wheel.x, event.y - wheel.y) < wheel.def.r + 0.7)) {
+          this.burst(event.x, event.y - 0.2, m.spray, 10, 0.24, 3.4);
+        } else {
+          this.burst(event.x, event.y - 0.4, m.hay, 8, 0.26, 2.4);
+          this.burst(event.x, event.y - 0.4, m.hayDark, 5, 0.18, 1.6);
+        }
+        break;
+      case "sluice":
+        this.burst(event.x, event.y, m.dust, 5, 0.2, 1.4);
+        this.shake = Math.max(this.shake, 0.15);
+        break;
+      case "water":
+        this.burst(event.x, event.y, m.spray, 12, 0.3, 3.2);
         break;
       case "knock":
         this.burst(event.x, event.y, m.dust, 7, 0.34, 2.4);

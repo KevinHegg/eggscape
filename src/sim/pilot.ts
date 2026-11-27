@@ -50,10 +50,27 @@ export function sculleryPlan(drop = GOOD_TOSS, options: { bridge?: number | fals
   ];
 }
 
+/**
+ * The third screen played properly: a bale on the sluice pan at once; then, while the wheel
+ * has him, one under the long drop at the right wall and one in the hole in the bottom floor.
+ * Heights are written as if the mill stood where the larder does: it hangs two storeys down.
+ */
+export function millPlan(options: { sluice?: number | false; cushion?: boolean | number; stopHole?: boolean } = {}): Move[] {
+  const { sluice = 0.3, cushion = true, stopHole = true } = options;
+  const at = (when: Move["when"], x: number, y: number): Move => ({ when, x, y: y - STOREY * 2 });
+  const riding = (game: Game): boolean => game.egg.x > -0.2 && game.wheels.some((wheel) => wheel.wet);
+  return [
+    ...(sluice === false ? [] : [at((game) => game.time > sluice, 1.75, 30)]),
+    ...(cushion === false ? [] : [at(typeof cushion === "number" ? (game) => game.time > cushion : riding, 3.2, 21.2)]),
+    ...(stopHole ? [at((game) => game.egg.x > 1.2, 0.6, 19.2)] : []),
+  ];
+}
+
 /** Each room played properly, by its key. */
 export const PLANS: Record<string, () => Move[]> = {
   larder: () => larderPlan(),
   scullery: () => sculleryPlan(),
+  mill: () => millPlan(),
 };
 
 /** A driver for tests and `?auto`: makes each move, in order, as soon as its moment comes. */

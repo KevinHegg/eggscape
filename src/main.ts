@@ -62,6 +62,15 @@ let flung = false;
 let lastKnock = 0;
 /** The pan he went into hangs under a gap, not the one on the stove. */
 let friedHung = false;
+/** He is being shown coming down from the roost above, and cannot be let go until he has landed. */
+let arriving = false;
+
+/** What is said as each room begins: the one thing in it that will not wait. */
+const OPENING: Record<string, [string, string]> = {
+  larder: ["catch", "Tap where he will come down. A bale takes a moment to get there"],
+  scullery: ["bridge", "Quick: a bale in that gap, or he is in the pan under it"],
+  mill: ["sluice", "The wheel is dry. A bale on the gold pan by the tank lets the water in"],
+};
 
 function show(id: "title" | "result" | "run"): void {
   $("title").hidden = id !== "title";
@@ -72,7 +81,7 @@ function show(id: "title" | "result" | "run"): void {
 
 /** The bar that waits for him to be let go: there whenever he is sitting ready and nothing else is up. */
 function drawReady(): void {
-  const waiting = Boolean(game) && game!.phase === "ready" && $("title").hidden && $("result").hidden && !driver;
+  const waiting = Boolean(game) && game!.phase === "ready" && $("title").hidden && $("result").hidden && !driver && !stage.arriving;
   $("ready").hidden = !waiting;
   if (game) $("ready-name").textContent = game.level.name;
 }
@@ -134,12 +143,12 @@ function fresh(index = room, arrive: { x: number; y: number; turn: number } | nu
 }
 
 function begin(): void {
-  if (!game || game.phase !== "ready") return;
+  if (!game || game.phase !== "ready" || stage.arriving) return;
   runs += 1;
   game.start();
   show("run");
-  if (game.level.key === "larder") hint("catch", "Tap where he will come down. A bale takes a moment to get there");
-  else hint("bridge", "Quick: a bale in that gap, or he is in the pan under it");
+  const opening = OPENING[game.level.key];
+  if (opening) hint(opening[0], opening[1]);
 }
 
 /** The same room again, at once: from the shelf, or from the roost above it. */
@@ -153,9 +162,9 @@ function descend(): void {
   if (!game || game.phase !== "home" || room >= LEVELS.length - 1) return;
   const egg = game.egg;
   fresh(room + 1, { x: egg.x, y: egg.y, turn: egg.turn });
+  arriving = true;
   show("run");
-  sound.toss();
-  if (auto) begin();
+  sound.cluck();
 }
 
 /** The whole house again, from the larder shelf. */
@@ -197,6 +206,14 @@ function narrate(event: GameEvent, current: Game): void {
       $("shell").classList.remove("hit");
       void $("shell").offsetWidth;
       $("shell").classList.add("hit");
+      break;
+    case "sluice":
+      sound.sluice();
+      // It is not dry any more: stop saying so.
+      for (const line of Array.from($("toast").querySelectorAll("p.hint"))) line.remove();
+      break;
+    case "water":
+      sound.mill();
       break;
     case "fling":
       flung = true;
@@ -243,6 +260,11 @@ function coach(current: Game): void {
   if (current.level.key === "scullery" && egg.x < 0.3 && egg.x > -1.6 && egg.y > current.level.top - 4.5) {
     hint("drop", "A long drop at the wall. Get a bale under it");
   }
+  // In the mill, the time the wheel has him is the time to get ready for what comes after it.
+  const wheel = current.wheels[0];
+  if (wheel && wheel.wet && Math.hypot(egg.x - wheel.x, egg.y - wheel.y) < wheel.def.r && egg.x > wheel.x - 0.6) {
+    hint("ahead", "While the wheel has him: a bale under the drop at the wall, and one in the hole");
+  }
 }
 
 function verdict(current: Game): { eyebrow: string; title: string; line: string } {
@@ -262,6 +284,9 @@ function verdict(current: Game): { eyebrow: string; title: string; line: string 
     case "broken":
       return { eyebrow: "A great fall", title: "Humpty Dumpty", line: overAt < 4 ? "A long drop, and nothing under him. Tap the floor where he will come down, and do it early: the bale takes a moment." : "That was harder than a shell can take. Straw and sacks are soft; wood, stone and iron are not." };
     case "fried":
+      if (friedHung && current.level.wheels.length > 0) {
+        return { eyebrow: "The Queen's breakfast", title: "Sunny side up", line: "The wheel was dry, and it gave under him. A bale on the gold pan by the tank lets the water in: do it as he is let go, because the water takes a moment to come down." };
+      }
       return friedHung
         ? { eyebrow: "The Queen's breakfast", title: "Sunny side up", line: "Through the gap and into the pan hung under it. Bridge the gap with a bale, and do it as soon as he is let go." }
         : { eyebrow: "The Queen's breakfast", title: "Sunny side up", line: "Down the hole and into her pan. A bale dropped in the hole stops it: tap it before he gets there." };
@@ -337,6 +362,13 @@ function showResult(current: Game): void {
     other.hidden = true;
   }
   show("result");
+  if (home) {
+    // The card sits over the bottom of the screen, which is where the nest is. Look lower, so
+    // that he is seen on it; and from a roost, the hatch he is about to drop to as well.
+    const card = $("result").getBoundingClientRect();
+    const cover = card.width > window.innerWidth * 0.7 ? Math.max(0, window.innerHeight - card.top) : 0;
+    stage.hold(last ? current.level.nest.y0 - 1.4 : LEVELS[room + 1]!.start.y - 1.9, cover);
+  }
 }
 
 function advance(current: Game, steps: number): void {
@@ -435,7 +467,7 @@ window.addEventListener("keydown", (event) => {
   const key = event.key.toLowerCase();
   if (key === "r") restart();
   else if (key === "m") toggleSound();
-  else if ((key === " " || key === "enter") && game?.phase === "ready") begin();
+  else if ((key === " " || key === "enter") && game?.phase === "ready" && $("result").hidden && $("title").hidden) begin();
 });
 
 // ------------------------------------------------------------------ the loop
@@ -450,12 +482,22 @@ stage.app.on("update", (dt: number) => {
   coach(current);
   drawHud(current);
   stage.sync(current, dt);
+  landed();
   if (current.over && !resultShown && resultAt >= 0 && current.time >= resultAt) {
     showResult(current);
     // The scripted player does not stop to read: off the roost and on down.
     if (auto && current.phase === "home" && room < LEVELS.length - 1) descend();
   }
 });
+
+/** He has come down on the hatch: now he can be let go. */
+function landed(): void {
+  if (!arriving || stage.arriving) return;
+  arriving = false;
+  sound.bale();
+  drawReady();
+  if (auto) begin();
+}
 
 await loadPhysics();
 fresh(0);
@@ -492,6 +534,7 @@ if (auto) begin();
     coach(game);
     drawHud(game);
     stage.sync(game, seconds);
+    landed();
     if (game.over && !resultShown && resultAt >= 0 && game.time >= resultAt) showResult(game);
     return { phase: game.phase, time: game.time, egg: game.egg, cracks: game.cracks, bales: game.balesLeft };
   },

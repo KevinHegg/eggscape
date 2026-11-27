@@ -28,6 +28,8 @@ export const SHELL = 2;
 const KNOCK_GRACE = 0.3;
 /** Seconds something soft still counts after he has left it, so being thrown off a cushion is not a knock. */
 const SOFT_GRACE = 0.06;
+/** Seconds the straw of a burst bale goes on breaking his fall: it is still under him, on its way to the floor. */
+const STRAW_GRACE = 0.6;
 
 /** Seconds he may stand still before a cook has him, and when the warning comes. */
 export const IDLE = 8;
@@ -49,6 +51,19 @@ export const FLING_TOP = 11;
 const FLING_LEAST = 1.2;
 
 /**
+ * A water wheel. Dry, it is loose on its axle and gives under whatever lands on it; with the
+ * water on, it turns one way at this rate (radians a second) and is not easily stopped.
+ */
+export const WHEEL_TURN = 1.3;
+/** Seconds from the sluice opening to the water reaching the wheel. */
+export const RACE = 0.6;
+/** How hard the water pushes (radians a second, each second), and how stiffly a dry wheel turns. */
+const WHEEL_PUSH = 40;
+const WHEEL_DRAG = 0.6;
+const WHEEL_BALL = 1;
+const WHEEL_DENSITY = 0.48;
+
+/**
  * The egg: half an ellipse below its waist and a taller half above, turned about his long axis
  * (local y). No flat anywhere on him, so no slope here is gentle enough for him to lie on.
  */
@@ -64,7 +79,7 @@ export function eggOutline(count: number): Array<{ y: number; r: number }> {
   return outline;
 }
 
-export type Look = "stone" | "wood" | "wall" | "sack" | "nest" | "iron";
+export type Look = "stone" | "wood" | "board" | "wall" | "bed" | "nest" | "iron";
 
 /** A fixed piece of the kitchen: a box with its centre, size and tilt (radians, anticlockwise). */
 export interface Block {
@@ -73,7 +88,7 @@ export interface Block {
   w: number;
   h: number;
   turn: number;
-  /** Straw and sacks: nothing that lands on them is hurt. */
+  /** Straw, in a bed on a floor or banked up a wall: nothing that lands on it is hurt. */
   soft: boolean;
   look: Look;
 }
@@ -102,6 +117,28 @@ export interface PitDef {
   pan: number;
   /** The pan hangs on a bracket just under the hole, not on a stove on the floor. */
   hung: boolean;
+}
+
+/**
+ * A water wheel with a cistern over it. A bale on the pan at the end of the sluice lever lets
+ * the water in, and it stays in. Until then the wheel is loose: his weight turns it the way he
+ * is leaning, which is the wrong way.
+ */
+export interface WheelDef {
+  /** The axle. */
+  x: number;
+  y: number;
+  /** Out to the tips of the paddles, and the drum in the middle. */
+  r: number;
+  drum: number;
+  paddles: number;
+  /** Which way the water turns it: +1 carries what is on top of it to the right. */
+  way: 1 | -1;
+  /** The pan on the sluice lever: the middle of its top face, and how wide it is. */
+  pan: { x: number; y: number; w: number };
+  /** The cistern, and where its trough ends over the wheel. The view's business only. */
+  tank: { x0: number; y0: number; x1: number; y1: number };
+  spout: { x: number; y: number };
 }
 
 /**
@@ -137,6 +174,7 @@ export interface LevelDef {
   shove: number;
   blocks: Block[];
   seesaws: SeesawDef[];
+  wheels: WheelDef[];
   pits: PitDef[];
   sockets: SocketDef[];
   /** The nest at the bottom: once he is inside this box he has done the room. */
@@ -180,7 +218,7 @@ const WELL = { x0: PIT.x - PIT.well / 2, x1: PIT.x + PIT.well / 2 };
 
 /**
  * The first screen. Three things to do with a bale, top to bottom: catch him at the foot of
- * the long drop; drop one on the see-saw to throw him across to the flour sacks; and stop the
+ * the long drop; drop one on the see-saw to throw him across to a bed of straw; and stop the
  * hole to the frying pan before he rolls into it.
  */
 export const LARDER: LevelDef = {
@@ -209,8 +247,8 @@ export const LARDER: LevelDef = {
     box(SEAT_WALL, 20.8, 2.8, 21.7, "stone"),
     box(-0.9, 20.8, SEAT_WALL, 21.1, "stone"),
 
-    // The flour sacks he is thrown on to, and the floor with the hole in it.
-    slab(-4, lowAt(-4) + 0.4, -2.5, lowAt(-2.5) + 0.4, 0.4, "sack", true),
+    // The bed of straw he is thrown on to, and the floor with the hole in it.
+    slab(-4, lowAt(-4) + 0.4, -2.5, lowAt(-2.5) + 0.4, 0.4, "bed", true),
     slab(-4, lowAt(-4), WELL.x0, lowAt(WELL.x0), 0.5, "stone"),
     // The well: two ledges a bale deep, lying along the slope, and the hole between them.
     slab(WELL.x0 - 0.12, lowAt(WELL.x0 - 0.12) - WELL_DEEP, PIT.x - PIT.w / 2, lowAt(PIT.x - PIT.w / 2) - WELL_DEEP, 0.4, "stone"),
@@ -227,6 +265,7 @@ export const LARDER: LevelDef = {
     box(3.7, FLOOR, 4, FLOOR + 3.8, "nest", true),
   ],
   seesaws: [{ x: 0.7, y: 21.55, seat: 1.25, load: 1.3, side: 1, tip: 0.31, cast: 0.7 }],
+  wheels: [],
   pits: [{ x: PIT.x, y: lowAt(PIT.x) - WELL_DEEP, w: PIT.w, pan: FLOOR + 0.7, hung: false }],
   sockets: [
     { x: PIT.x, y0: lowAt(PIT.x) - 1.2, y1: lowAt(PIT.x) + 1.4, reach: 1, seat: { y: lowAt(PIT.x) - WELL_DEEP / 2 + 0.08, turn: LOW_TURN } },
@@ -246,6 +285,13 @@ function lowered(level: LevelDef, by: number): LevelDef {
     start: { x: level.start.x, y: level.start.y - by },
     blocks: level.blocks.map((block) => ({ ...block, y: block.y - by })),
     seesaws: level.seesaws.map((saw) => ({ ...saw, y: saw.y - by })),
+    wheels: level.wheels.map((wheel) => ({
+      ...wheel,
+      y: wheel.y - by,
+      pan: { ...wheel.pan, y: wheel.pan.y - by },
+      tank: { ...wheel.tank, y0: wheel.tank.y0 - by, y1: wheel.tank.y1 - by },
+      spout: { x: wheel.spout.x, y: wheel.spout.y - by },
+    })),
     pits: level.pits.map((pit) => ({ ...pit, y: pit.y - by, pan: pit.pan - by })),
     sockets: level.sockets.map((socket) => ({
       x: socket.x,
@@ -292,7 +338,7 @@ const PLUG_WELL = { x0: PLUG.x - PLUG.well / 2, x1: PLUG.x + PLUG.well / 2 };
 const SCULLERY_HERE: LevelDef = {
   key: "scullery",
   name: "The Scullery",
-  ends: "nest",
+  ends: "roost",
   hatch: true,
   left: -4,
   right: 4,
@@ -311,9 +357,9 @@ const SCULLERY_HERE: LevelDef = {
     // The shelf under the hatch, the gap in it with a ledge each side a bale deep, and the rest of it.
     slab(GAP_WELL.x1, rackAt(GAP_WELL.x1), 4, RACK.y, 0.4, "wood"),
     // The far ledge and the end of the shelf beyond are padded: he comes across the gap fast.
-    slab(GAP_WELL.x0 - 0.12, rackAt(GAP_WELL.x0 - 0.12) - GAP_DEEP, GAP.x - GAP.w / 2, rackAt(GAP.x - GAP.w / 2) - GAP_DEEP, 0.4, "sack", true),
+    slab(GAP_WELL.x0 - 0.12, rackAt(GAP_WELL.x0 - 0.12) - GAP_DEEP, GAP.x - GAP.w / 2, rackAt(GAP.x - GAP.w / 2) - GAP_DEEP, 0.4, "bed", true),
     slab(GAP.x + GAP.w / 2, rackAt(GAP.x + GAP.w / 2) - GAP_DEEP, GAP_WELL.x1 + 0.12, rackAt(GAP_WELL.x1 + 0.12) - GAP_DEEP, 0.4, "wood"),
-    slab(GAP_WELL.x0 - 0.2, rackAt(GAP_WELL.x0 - 0.2), GAP_WELL.x0 - 0.04, rackAt(GAP_WELL.x0 - 0.04), 0.4, "sack", true),
+    slab(GAP_WELL.x0 - 0.2, rackAt(GAP_WELL.x0 - 0.2), GAP_WELL.x0 - 0.04, rackAt(GAP_WELL.x0 - 0.04), 0.4, "bed", true),
     slab(-2.5, rackAt(-2.5), GAP_WELL.x0 - 0.2, rackAt(GAP_WELL.x0 - 0.2), 0.4, "wood"),
     // The sides of the pan's flue, hung under the gap.
     box(GAP.x - GAP.w / 2 - 0.2, rackAt(GAP.x) - GAP_DEEP - 2, GAP.x - GAP.w / 2, rackAt(GAP.x) - GAP_DEEP - 0.7, "iron"),
@@ -327,8 +373,8 @@ const SCULLERY_HERE: LevelDef = {
     box(TIP.wall - 0.68, TIP.y - 0.75, TIP.wall, TIP.y + 0.15, "stone"),
     box(TIP.wall, TIP.y - 0.75, TIP.x + 1.6, TIP.y - 0.45, "stone"),
 
-    // The sacks he is thrown on to, and the floor with the hole in it.
-    slab(PLUG_WELL.x1 + 0.05, sinkAt(PLUG_WELL.x1 + 0.05) + 0.4, 4, sinkAt(4) + 0.4, 0.4, "sack", true),
+    // The bed of straw he is thrown on to, and the floor with the hole in it.
+    slab(PLUG_WELL.x1 + 0.05, sinkAt(PLUG_WELL.x1 + 0.05) + 0.4, 4, sinkAt(4) + 0.4, 0.4, "bed", true),
     slab(PLUG_WELL.x1, sinkAt(PLUG_WELL.x1), 4, sinkAt(4), 0.5, "stone"),
     slab(PLUG_WELL.x0 - 0.12, sinkAt(PLUG_WELL.x0 - 0.12) - PLUG_DEEP, PLUG.x - PLUG.w / 2, sinkAt(PLUG.x - PLUG.w / 2) - PLUG_DEEP, 0.4, "stone"),
     slab(PLUG.x + PLUG.w / 2, sinkAt(PLUG.x + PLUG.w / 2) - PLUG_DEEP, PLUG_WELL.x1 + 0.12, sinkAt(PLUG_WELL.x1 + 0.12) - PLUG_DEEP, 0.4, "stone"),
@@ -336,12 +382,13 @@ const SCULLERY_HERE: LevelDef = {
     box(PLUG.x - PLUG.w / 2 - 0.25, FLOOR + 1.9, PLUG.x - PLUG.w / 2, sinkAt(PLUG.x) - PLUG_DEEP - 0.7, "iron"),
     box(PLUG.x + PLUG.w / 2, FLOOR + 1.9, PLUG.x + PLUG.w / 2 + 0.25, sinkAt(PLUG.x) - PLUG_DEEP - 0.5, "iron"),
 
-    // The Empress Hen's nest, bottom left, with straw banked up the wall behind it.
+    // The nest, bottom left, with straw banked up the wall behind it.
     box(-4, FLOOR, -1.5, FLOOR + 0.5, "nest", true),
     box(-1.5, FLOOR, -1.2, FLOOR + 1, "nest", true),
     box(-4, FLOOR, -3.7, FLOOR + 3.8, "nest", true),
   ],
   seesaws: [{ x: TIP.x, y: TIP.y, seat: 1.25, load: 1.3, side: -1, tip: 0.31, cast: 0.7 }],
+  wheels: [],
   pits: [
     { x: GAP.x, y: rackAt(GAP.x) - GAP_DEEP, w: GAP.w, pan: rackAt(GAP.x) - GAP_DEEP - 1.9, hung: true },
     { x: PLUG.x, y: sinkAt(PLUG.x) - PLUG_DEEP, w: PLUG.w, pan: FLOOR + 0.7, hung: false },
@@ -357,8 +404,113 @@ const SCULLERY_HERE: LevelDef = {
 
 export const SCULLERY: LevelDef = lowered(SCULLERY_HERE, STOREY);
 
+/** The mill's wheel, and how far outside its paddles the shelf beside it stops. */
+const MILL = { x: 0, y: 27.15, r: 1.75, clear: 0.2 };
+/** The end of the shelf he comes in on, up on the wheel's left shoulder; and that shelf, which falls to the right. */
+const HEAD = { x: MILL.x - (MILL.r + MILL.clear) * Math.SQRT1_2, y: MILL.y + (MILL.r + MILL.clear) * Math.SQRT1_2 };
+const headAt = (x: number): number => HEAD.y + 0.36 * (HEAD.x - x);
+/**
+ * Nothing he could come to rest on is within a paddle's reach: a paddle that came down on him
+ * there would pin him. So the wheel drops him, and what it drops him on is well below it: a
+ * bed of straw that falls to the right and stops short of the wall.
+ */
+const TAIL = { x: 0.85, y: 24.4, end: 2.75 };
+const tailAt = (x: number): number => TAIL.y - 0.36 * (x - TAIL.x);
+/** The pan the dry wheel lets him down into: a tray from the left wall to the high end of that bed. */
+const TRAY = { x0: -4, x1: TAIL.x, y: 23.9 };
+/** The bottom floor, which falls to the left, over the hole and on to the nest. */
+const BASE = { y: 20.45, fall: 0.36 };
+const baseAt = (x: number): number => BASE.y - BASE.fall * (4 - x);
+const HOLE = { x: 0.6, w: 1.1 };
+const HOLE_WELL = { x0: HOLE.x - PLUG.well / 2, x1: HOLE.x + PLUG.well / 2 };
+/** Where the bale under the drop at the right wall goes. */
+const MILL_CATCH = 4 - BALE_W / 2 - 0.02;
+/** The pan on the sluice lever, up by the cistern. */
+const SLUICE = { x: 1.75, y: 29.95, w: 1.3 };
+
+/**
+ * The third screen, written as if it stood where the first does. He comes in through the hatch
+ * at the top left and rolls on to a water wheel. The wheel is dry, and a dry wheel gives under
+ * him and lets him down into a pan: a bale on the sluice lever lets the water in, and then it
+ * carries him over the top and drops him on a bed of straw. While it does there is time to
+ * get ready for what comes after: the long drop at the right wall, and the hole in the bottom
+ * floor. Three things to do and four bales: one to spare.
+ */
+const MILL_HERE: LevelDef = {
+  key: "mill",
+  name: "The Mill",
+  ends: "nest",
+  hatch: true,
+  left: -4,
+  right: 4,
+  top: 31,
+  bottom: 13,
+  start: { x: -3.5, y: 30.2 },
+  // A backward spin: he dithers under the hatch for a moment before the shelf takes him.
+  shove: 3,
+  bales: 4,
+  spare: 1,
+  blocks: [
+    box(-4.8, 12.6, -4, 31.4, "wall"),
+    box(4, 12.6, 4.8, 31.4, "wall"),
+    box(-4, 13.4, 4, FLOOR, "stone"),
+
+    // The shelf under the hatch, which ends just clear of the wheel's paddles.
+    slab(-4, headAt(-4), HEAD.x, HEAD.y, 0.3, "wood"),
+    // The tray the dry wheel lets him down into.
+    box(TRAY.x0, TRAY.y - 0.2, TRAY.x1, TRAY.y, "iron"),
+    box(TRAY.x1 - 0.2, TRAY.y, TRAY.x1, TAIL.y - 0.3, "iron"),
+    // A splash board hung beside the wheel: now and then a paddle carries him clean over the
+    // top, and without it he would clear the straw as well.
+    box(2.45, 25.6, 2.6, 29.2, "board"),
+    // The bed of straw the wheel drops him on, and the board it lies on.
+    slab(TAIL.x - 0.2, tailAt(TAIL.x - 0.2), TAIL.end, tailAt(TAIL.end), 0.35, "bed", true),
+    slab(TAIL.x - 0.2, tailAt(TAIL.x - 0.2) - 0.35, TAIL.end, tailAt(TAIL.end) - 0.35, 0.2, "wood"),
+
+    // The bottom floor with the hole in it, and the flue to the pan.
+    slab(HOLE_WELL.x1, baseAt(HOLE_WELL.x1), 4, baseAt(4), 0.5, "stone"),
+    slab(HOLE_WELL.x0 - 0.12, baseAt(HOLE_WELL.x0 - 0.12) - PLUG_DEEP, HOLE.x - HOLE.w / 2, baseAt(HOLE.x - HOLE.w / 2) - PLUG_DEEP, 0.4, "stone"),
+    slab(HOLE.x + HOLE.w / 2, baseAt(HOLE.x + HOLE.w / 2) - PLUG_DEEP, HOLE_WELL.x1 + 0.12, baseAt(HOLE_WELL.x1 + 0.12) - PLUG_DEEP, 0.4, "stone"),
+    slab(-1.9, baseAt(-1.9), HOLE_WELL.x0 - 0.04, baseAt(HOLE_WELL.x0 - 0.04), 0.5, "stone"),
+    box(HOLE.x - HOLE.w / 2 - 0.25, FLOOR + 1.9, HOLE.x - HOLE.w / 2, baseAt(HOLE.x) - PLUG_DEEP - 0.7, "iron"),
+    box(HOLE.x + HOLE.w / 2, FLOOR + 1.9, HOLE.x + HOLE.w / 2 + 0.25, baseAt(HOLE.x) - PLUG_DEEP - 0.5, "iron"),
+
+    // The Empress Hen's nest, bottom left, with straw banked up the wall behind it.
+    box(-4, FLOOR, -1.5, FLOOR + 0.5, "nest", true),
+    box(-1.5, FLOOR, -1.2, FLOOR + 1, "nest", true),
+    box(-4, FLOOR, -3.7, FLOOR + 3.8, "nest", true),
+  ],
+  seesaws: [],
+  wheels: [
+    {
+      x: MILL.x,
+      y: MILL.y,
+      r: MILL.r,
+      drum: 0.5,
+      paddles: 6,
+      way: 1,
+      pan: SLUICE,
+      tank: { x0: 2.75, y0: 29.3, x1: 4, y1: 30.55 },
+      spout: { x: 0.95, y: 29.3 },
+    },
+  ],
+  pits: [
+    // Anything that comes out of the bottom of the wheel is in the tray.
+    { x: (TRAY.x0 + TRAY.x1 - 0.2) / 2, y: MILL.y - MILL.r - 0.05, w: TRAY.x1 - 0.2 - TRAY.x0, pan: TRAY.y + 0.05, hung: true },
+    { x: HOLE.x, y: baseAt(HOLE.x) - PLUG_DEEP, w: HOLE.w, pan: FLOOR + 0.7, hung: false },
+  ],
+  sockets: [
+    { x: SLUICE.x, y0: SLUICE.y - 0.65, y1: 31, reach: 2.3, seat: { y: SLUICE.y + BALE_H / 2 + 0.02, turn: 0 } },
+    { x: MILL_CATCH, y0: baseAt(MILL_CATCH) - 0.4, y1: baseAt(MILL_CATCH) + 2.8, reach: 0.95 },
+    { x: HOLE.x, y0: baseAt(HOLE.x) - 1.2, y1: baseAt(HOLE.x) + 1.4, reach: 1, seat: { y: baseAt(HOLE.x) - PLUG_DEEP / 2 + 0.08, turn: SINK_TURN } },
+  ],
+  nest: { x0: -3.7, x1: -1.5, y0: FLOOR + 0.4, y1: FLOOR + 1.9 },
+};
+
+export const MILLROOM: LevelDef = lowered(MILL_HERE, STOREY * 2);
+
 /** The house, from the top down. Each room is a game of its own; the roost between two is a waypoint. */
-export const LEVELS: LevelDef[] = [LARDER, SCULLERY];
+export const LEVELS: LevelDef[] = [LARDER, SCULLERY, MILLROOM];
 
 export type Phase = "ready" | "run" | "home" | "fried" | "broken" | "caught";
 
@@ -373,6 +525,8 @@ export type GameEvent =
   | { type: "crack"; cracks: number; x: number; y: number }
   | { type: "broken"; x: number; y: number }
   | { type: "fling"; speed: number }
+  | { type: "sluice"; x: number; y: number }
+  | { type: "water"; x: number; y: number }
   | { type: "warn" }
   | { type: "caught" }
   | { type: "fried"; x: number; y: number }
@@ -449,6 +603,8 @@ export class Game {
   private readonly soft = new Set<number>();
   /** `hit` is the speed of the hardest bale to come down on it since it last threw. */
   private readonly planks: Array<{ body: RAPIER.RigidBody; def: SeesawDef; hit: number; up: boolean; spin: number }> = [];
+  /** `openAt` is when a bale came down on its sluice pan (before that, -1); `wet` once the water has reached it. */
+  private readonly mills: Array<{ body: RAPIER.RigidBody; def: WheelDef; pan: RAPIER.Collider; wood: RAPIER.Collider[]; openAt: number; wet: boolean }> = [];
   /** The padded seats: he sinks into one and stays put. */
   private readonly seats = new Set<number>();
   private flungAt = -1;
@@ -459,6 +615,7 @@ export class Game {
   private nextId = 1;
   private last = { x: 0, y: 0 };
   private softUntil = -1;
+  private strawUntil = -1;
   private knockUntil = -1;
   private warned = false;
   private homeAt = -1;
@@ -530,6 +687,45 @@ export class Game {
       this.planks.push({ body, def, hit: 0, up: false, spin: 0 });
     }
 
+    for (const def of level.wheels) {
+      // Like a plank, the wheel cannot move, only turn; and all its weight is a ball on the axle.
+      const body = this.world.createRigidBody(
+        RAPIER.RigidBodyDesc.dynamic()
+          .setTranslation(def.x, def.y, 0)
+          .enabledTranslations(false, false, false)
+          .enabledRotations(false, false, true)
+          .setCanSleep(false)
+          .setCcdEnabled(true)
+          .setAngularDamping(WHEEL_DRAG),
+      );
+      this.world.createCollider(RAPIER.ColliderDesc.ball(WHEEL_BALL).setDensity(WHEEL_DENSITY).setCollisionGroups(0), body);
+      const wood = [this.world.createCollider(RAPIER.ColliderDesc.ball(def.drum).setDensity(0).setFriction(0.6).setRestitution(0), body)];
+      // One paddle stands straight up to begin with, so he cannot roll over the top of a dry wheel.
+      const inner = def.drum * 0.6;
+      for (let index = 0; index < def.paddles; index += 1) {
+        const turn = Math.PI / 2 + (index / def.paddles) * Math.PI * 2;
+        const mid = (inner + def.r) / 2;
+        wood.push(
+          this.world.createCollider(
+            RAPIER.ColliderDesc.cuboid((def.r - inner) / 2, 0.06, 0.8)
+              .setTranslation(Math.cos(turn) * mid, Math.sin(turn) * mid, 0)
+              .setRotation(quat(turn))
+              .setDensity(0)
+              // Slippery: between two rough paddles he wedged, and went all the way round.
+              .setFriction(0.2)
+              .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min)
+              .setRestitution(0),
+            body,
+          ),
+        );
+      }
+      const pan = this.world.createCollider(
+        RAPIER.ColliderDesc.cuboid(def.pan.w / 2, 0.05, 0.6).setTranslation(def.pan.x, def.pan.y - 0.05, 0).setFriction(1).setRestitution(0),
+        ground,
+      );
+      this.mills.push({ body, def, pan, wood, openAt: -1, wet: false });
+    }
+
     this.eggBody = this.world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
         .setTranslation(level.start.x, level.start.y, 0)
@@ -577,6 +773,19 @@ export class Game {
       const p = plank.body.translation();
       return { x: p.x, y: p.y, turn: turnOf(plank.body.rotation()), def: plank.def };
     });
+  }
+
+  /** `flow` is how far the water has got from the cistern to the wheel: 0 shut, 1 there. */
+  get wheels(): Array<Pose & { def: WheelDef; open: boolean; flow: number; wet: boolean }> {
+    return this.mills.map((mill) => ({
+      x: mill.def.x,
+      y: mill.def.y,
+      turn: turnOf(mill.body.rotation()),
+      def: mill.def,
+      open: mill.openAt >= 0,
+      flow: mill.openAt < 0 ? 0 : Math.min(1, (this.time - mill.openAt) / RACE),
+      wet: mill.wet,
+    }));
   }
 
   drain(): GameEvent[] {
@@ -643,9 +852,11 @@ export class Game {
     const before = this.eggBody.linvel();
     this.last = { x: before.x, y: before.y };
     for (const bale of this.live) bale.fall = Math.max(0, -bale.body.linvel().y);
+    this.drive();
     this.world.step();
     this.time += STEP;
     this.weigh();
+    this.sluice();
     this.stop();
     if (this.phase !== "run") return;
 
@@ -690,6 +901,42 @@ export class Game {
         bale.spent = true;
         plank.hit = Math.max(plank.hit, bale.fall);
       }
+    }
+  }
+
+  /** A bale on a sluice pan lets the water in, and a moment later it is on the wheel. */
+  private sluice(): void {
+    for (const mill of this.mills) {
+      if (mill.openAt < 0) {
+        let on = false;
+        this.world.contactPairsWith(mill.pan, (other) => {
+          if (!this.live.some((bale) => bale.collider.handle === other.handle)) return;
+          this.world.contactPair(mill.pan, other, (manifold) => {
+            if (manifold.numContacts() > 0) on = true;
+          });
+        });
+        if (!on) continue;
+        mill.openAt = this.time;
+        this.events.push({ type: "sluice", x: mill.def.pan.x, y: mill.def.pan.y });
+      }
+      if (!mill.wet && this.time >= mill.openAt + RACE) {
+        mill.wet = true;
+        mill.body.setAngularDamping(0);
+        // Paddles running with water are a soft landing: he comes down in it with a splash.
+        for (const collider of mill.wood) this.soft.add(collider.handle);
+        this.events.push({ type: "water", x: mill.def.spout.x, y: mill.def.y + mill.def.r });
+      }
+    }
+  }
+
+  /** The water pushes a wet wheel round. It pushes hard, but something wedged in the wheel can still hold it. */
+  private drive(): void {
+    for (const mill of this.mills) {
+      if (!mill.wet) continue;
+      const spin = mill.body.angvel().z;
+      const want = -mill.def.way * WHEEL_TURN;
+      const push = Math.min(WHEEL_PUSH * STEP, Math.max(-WHEEL_PUSH * STEP, want - spin));
+      mill.body.setAngvel({ x: 0, y: 0, z: spin + push }, true);
     }
   }
 
@@ -778,7 +1025,14 @@ export class Game {
         this.world.removeRigidBody(bale.body);
         this.live.splice(this.live.indexOf(bale), 1);
         this.burst += 1;
+        this.strawUntil = this.time + STRAW_GRACE;
       }
+      return;
+    }
+    // A bale that burst under him a moment ago: he comes down on the floor in the middle of its straw.
+    if (this.time <= this.strawUntil) {
+      this.strawUntil = -1;
+      this.events.push({ type: "soft", jolt, x: p.x, y: p.y });
       return;
     }
     if (this.time < this.knockUntil) return;

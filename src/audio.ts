@@ -328,6 +328,20 @@ export class Sound {
     this.rubble(6, 0.5);
   }
 
+  /** A sluice gate drawn up: iron on wood, and the first of the water behind it. */
+  sluice(): void {
+    this.tone("square", 180, 120, 0.08, 0.25);
+    this.tone("sawtooth", 90, 140, 0.35, 0.18, 0.05);
+    this.hiss("bandpass", 900, 1800, 0.6, 0.35, 0.1);
+  }
+
+  /** The water reaching the wheel, and the wheel taking it up with a creak. */
+  mill(): void {
+    this.hiss("lowpass", 700, 2600, 0.2, 0.6);
+    this.hiss("bandpass", 1800, 900, 1.6, 0.4, 0.1);
+    this.tone("sawtooth", 55, 70, 1.2, 0.16, 0.15);
+  }
+
   /** Something heavy going into the water. */
   splash(): void {
     this.hiss("lowpass", 500, 2400, 0.12, 0.7);

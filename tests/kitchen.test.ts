@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { before, test } from "node:test";
-import { Game, IDLE, LARDER, LEVELS, SCULLERY, STOREY, loadPhysics, type GameEvent, type Input, type LevelDef } from "../src/sim/kitchen";
-import { GOOD_DROP, PLANS, larderPlan, pilot, sculleryPlan, seated } from "../src/sim/pilot";
+import { Game, IDLE, LARDER, LEVELS, MILLROOM, RACE, SCULLERY, STEP, STOREY, WHEEL_TURN, loadPhysics, type GameEvent, type Input, type LevelDef } from "../src/sim/kitchen";
+import { GOOD_DROP, PLANS, larderPlan, millPlan, pilot, sculleryPlan, seated } from "../src/sim/pilot";
 
 before(async () => {
   await loadPhysics();
@@ -222,6 +222,74 @@ test("scullery: whenever the first two bales are thrown, he comes to rest in the
 test("scullery: the same taps give the same run, to the last bit", () => {
   const a = scullery(pilot(sculleryPlan())).game;
   const b = scullery(pilot(sculleryPlan())).game;
+  assert.equal(a.time, b.time);
+  assert.deepEqual(a.egg, b.egg);
+});
+
+// ------------------------------------------------------------------ the mill
+
+const mill = (hands: (game: Game) => Input, limit = 40) => run(hands, limit, MILLROOM);
+
+test("mill: three bales in the right places, and one to spare", () => {
+  const { game, events } = mill(pilot(millPlan()));
+  assert.equal(game.phase, "home");
+  assert.equal(game.cracks, 0);
+  assert.equal(game.balesLeft, 1);
+  assert.equal(count(events, "sluice"), 1);
+  assert.equal(count(events, "water"), 1);
+});
+
+test("mill: left alone, the dry wheel gives under him and lets him down into the pan", () => {
+  const { game } = mill(() => ({}));
+  assert.equal(game.phase, "fried");
+  assert.ok(game.time < 6);
+  assert.ok(game.wheels[0]!.turn > 0.5, "the wheel should have turned back under him");
+});
+
+test("mill: the water takes its moment to come down, and then the wheel turns at its own rate", () => {
+  const game = new Game(MILLROOM);
+  game.start();
+  const at: Record<string, number> = {};
+  let before = 0;
+  while (game.time < 4) {
+    if (Math.abs(game.time - 3) < STEP / 2) before = game.wheels[0]!.turn;
+    // No one on the wheel: he is left sitting ready while the bale goes on the pan.
+    game.step(game.time < STEP ? { bale: { x: 1.75, y: 30 - STOREY * 2 } } : {});
+    for (const event of game.drain()) at[event.type] ??= game.time;
+  }
+  assert.ok(at.sluice !== undefined && at.water !== undefined);
+  assert.ok(Math.abs(at.water - at.sluice - RACE) < 0.05, `the water took ${(at.water - at.sluice).toFixed(2)}s`);
+  const turned = before - game.wheels[0]!.turn;
+  assert.ok(Math.abs(turned - WHEEL_TURN) < 0.1, `it turned ${turned.toFixed(2)} in a second`);
+});
+
+test("mill: whenever the water is let in during the first two seconds, he gets home whole", () => {
+  for (let at = 0.05; at < 2.2; at += 0.15) {
+    const { game } = mill(pilot(millPlan({ sluice: at })));
+    assert.equal(game.stars, 3, `water let in at ${at.toFixed(2)}s: ${game.phase}, ${game.cracks} cracks`);
+  }
+});
+
+test("mill: let in too late, the water does not save him", () => {
+  assert.equal(mill(pilot(millPlan({ sluice: 3 }))).game.phase, "fried");
+});
+
+test("mill: with nothing under the drop at the wall he gets home with a crack", () => {
+  for (const at of [0.1, 0.3, 0.9, 1.6]) {
+    const { game } = mill(pilot(millPlan({ sluice: at, cushion: false })));
+    assert.equal(game.phase, "home", `water at ${at}s`);
+    assert.equal(game.cracks, 1, `water at ${at}s`);
+    assert.equal(game.stars, 2, `water at ${at}s`);
+  }
+});
+
+test("mill: with the hole left open he rolls into the pan", () => {
+  assert.equal(mill(pilot(millPlan({ stopHole: false }))).game.phase, "fried");
+});
+
+test("mill: the same taps give the same run, to the last bit", () => {
+  const a = mill(pilot(millPlan())).game;
+  const b = mill(pilot(millPlan())).game;
   assert.equal(a.time, b.time);
   assert.deepEqual(a.egg, b.egg);
 });
