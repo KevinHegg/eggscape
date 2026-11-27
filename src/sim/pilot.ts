@@ -1,10 +1,15 @@
-import { STOREY, type Game, type Input } from "./kitchen";
+import { BUTTERY, CISTERN, SCULLERY, STOREY, type Game, type Input, type LevelDef } from "./kitchen";
 
 /** What a player does on a screen, as a list of things to wait for and where to put the bale. */
 export interface Move {
   when: (game: Game) => boolean;
   x: number;
   y: number;
+}
+
+/** A bale for the room's mine, once the first thing in the room has been seen to. Its height is the house's own. */
+function clear(level: LevelDef, after: number): Move[] {
+  return level.mines.map((mine) => ({ when: (game: Game) => game.time > after, x: mine.x, y: mine.y + 0.3 }));
 }
 
 /** Whether he has come to rest in a see-saw's seat. */
@@ -38,13 +43,14 @@ export function larderPlan(drop = GOOD_DROP, stopHole = true): Move[] {
  * `toss` as a number is a time to throw that third bale at, whatever he is doing.
  * Heights are written as if the scullery stood where the larder does: it hangs a storey down.
  */
-export function sculleryPlan(options: { bridge?: number | false; cushion?: boolean; toss?: number | false; stopHole?: boolean } = {}): Move[] {
-  const { bridge = 0.5, cushion = true, toss, stopHole = true } = options;
+export function sculleryPlan(options: { bridge?: number | false; cushion?: boolean; toss?: number | false; stopHole?: boolean; mine?: number | false } = {}): Move[] {
+  const { bridge = 0.5, cushion = true, toss, stopHole = true, mine = 1.3 } = options;
   const at = (when: Move["when"], x: number, y: number): Move => ({ when, x, y: y - STOREY });
   // He has come down the long drop and is on his way to the see-saw.
   const coming = (game: Game): boolean => game.egg.x > -2.4 && game.egg.x < 0 && game.egg.y + STOREY < 25;
   return [
     ...(bridge === false ? [] : [at((game) => game.time > bridge, -0.9, 27.7)]),
+    ...(mine === false ? [] : clear(SCULLERY, mine)),
     ...(cushion ? [at((game) => game.time > 3.2, -3.1, 24.3)] : []),
     ...(toss === false ? [] : [at(typeof toss === "number" ? (game) => game.time > toss : coming, -1.3, 23.5)]),
     ...(stopHole ? [at((game) => game.egg.x > 1.6 && game.egg.y + STOREY > 22, 0.6, 18.9)] : []),
@@ -75,14 +81,15 @@ export function millPlan(options: { sluice?: number | false; cushion?: boolean |
  * the left. `first` is a time; `second` is how far round the door has gone (in quarters) since
  * he came back to it; `toss` as a number is a time to throw at, whatever he is doing.
  */
-export function butteryPlan(options: { first?: number | false; toss?: boolean | number; second?: number | false } = {}): Move[] {
-  const { first = 0.3, toss = true, second = 2.1 } = options;
+export function butteryPlan(options: { first?: number | false; toss?: boolean | number; second?: number | false; mine?: number | false } = {}): Move[] {
+  const { first = 0.3, toss = true, second = 2.1, mine = 1.5 } = options;
   const at = (when: Move["when"], x: number, y: number): Move => ({ when, x, y: y - STOREY * 3 });
   const round = (game: Game): number => -(game.doors[0]?.turn ?? 0) / (Math.PI / 2);
   // Back in the door after the see-saw: it is turning again, and has already been a quarter round.
   const again = (game: Game): boolean => game.doors[0]?.turning === true && round(game) > 1.001;
   return [
     ...(first === false ? [] : [at((game) => game.time > first, -0.7, 29.5)]),
+    ...(mine === false ? [] : clear(BUTTERY, mine)),
     ...(toss === false ? [] : [at(toss === true ? settled : (game) => game.time > toss, 1.7, 20.4)]),
     ...(second === false ? [] : [at((game) => again(game) && round(game) - 1 >= second, -0.7, 29.5)]),
   ];
@@ -93,8 +100,8 @@ export function butteryPlan(options: { first?: number | false; toss?: boolean | 
  * spout, and then, once he has dropped in, one on the sluice pan. `sluice` as a number is a
  * time to throw that one at, whatever he is doing.
  */
-export function cisternPlan(options: { raft?: number | false; plug?: number | false; sluice?: number | false } = {}): Move[] {
-  const { raft = 1, plug = 2, sluice } = options;
+export function cisternPlan(options: { raft?: number | false; plug?: number | false; sluice?: number | false; mine?: number | false } = {}): Move[] {
+  const { raft = 1, plug = 2, sluice, mine = 3 } = options;
   const at = (when: Move["when"], x: number, y: number): Move => ({ when, x, y: y - STOREY * 4 });
   const aboard = (game: Game): boolean => {
     const tank = game.tanks[0];
@@ -103,6 +110,7 @@ export function cisternPlan(options: { raft?: number | false; plug?: number | fa
   return [
     ...(raft === false ? [] : [at((game) => game.time > raft, 0.6, 19)]),
     ...(plug === false ? [] : [at((game) => game.time > plug, -0.6, 19.5)]),
+    ...(mine === false ? [] : clear(CISTERN, mine)),
     ...(sluice === false ? [] : [at(typeof sluice === "number" ? (game) => game.time > sluice : aboard, -1.5, 27.2)]),
   ];
 }

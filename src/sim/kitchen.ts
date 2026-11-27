@@ -92,6 +92,14 @@ const RAFT_LEAN = 0.22;
 /** One with nobody on it bobs there this long, and then the water takes it out. */
 export const WASH = 0.4;
 /** How fast a dumbwaiter's car goes, and how much its floor and its roof are tilted. */
+/**
+ * A mine: a plate set flush in a shelf or a floor, this wide. It goes off under him, and that
+ * is the end of him; or under a bale, which is how it is got rid of. Set off by a bale it
+ * still reaches this far, and cracks him and throws him if he is that near.
+ */
+export const MINE_W = 0.7;
+export const MINE_BLAST = 1.6;
+export const MINE_SHOVE = 4;
 export const LIFT_SPEED = 3;
 export const LIFT_TILT = 0.1;
 /** How fast something has to be going to do damage: a barrel to straw and to him. */
@@ -308,6 +316,14 @@ export interface BarrelDef {
   pit: { x: number; y: number; w: number };
 }
 
+/** A mine: the middle of its plate, which lies in the face of a shelf; how that shelf leans; and how wide the plate is. */
+export interface MineDef {
+  x: number;
+  y: number;
+  turn: number;
+  w: number;
+}
+
 /** A feather bed on a shelf: he wallows down it at a crawl, whatever he was doing before. Its top face runs from one point to another. */
 export interface MatDef {
   x0: number;
@@ -345,6 +361,7 @@ export interface LevelDef {
   lifts: LiftDef[];
   barrels: BarrelDef[];
   mats: MatDef[];
+  mines: MineDef[];
   pits: PitDef[];
   /** Places there is no way out of: the hook has him out of one in `CAGE` seconds. */
   cages: Array<{ x0: number; x1: number; y0: number; y1: number }>;
@@ -445,6 +462,7 @@ export const LARDER: LevelDef = {
   barrels: [],
   mats: [],
   cages: [],
+  mines: [],
   pits: [{ x: PIT.x, y: lowAt(PIT.x) - WELL_DEEP, w: PIT.w, pan: FLOOR + 0.7, hung: false }],
   sockets: [
     { x: PIT.x, y0: lowAt(PIT.x) - 1.2, y1: lowAt(PIT.x) + 1.4, reach: 1, seat: { y: lowAt(PIT.x) - WELL_DEEP / 2 + 0.08, turn: LOW_TURN } },
@@ -493,6 +511,7 @@ function lowered(level: LevelDef, by: number): LevelDef {
       openings: lift.openings.map((opening) => ({ side: opening.side, y0: opening.y0 - by, y1: opening.y1 - by })),
       pan: { ...lift.pan, y: lift.pan.y - by },
     })),
+    mines: level.mines.map((mine) => ({ ...mine, y: mine.y - by })),
     barrels: level.barrels.map((barrel) => ({
       ...barrel,
       y: barrel.y - by,
@@ -568,7 +587,8 @@ const sunkAt = (x: number): number => DRAIN_Y - SINK.fall * (DRAIN_LIP - x);
  * The second screen, written as if it stood where the first does and then lowered a storey.
  * He comes in through the hatch at the top right and rolls down a long shelf to a gap over a
  * pan: bridge it. Then the long drop at the far wall, which wants a bale under it; the see-saw,
- * which has to be timed; and the hole in the bottom floor. Four things to do and five bales.
+ * which has to be timed; and the hole in the bottom floor; and beyond the hole, a mine in the
+ * floor, which a bale sets off. Five things to do and six bales.
  */
 const SCULLERY_HERE: LevelDef = {
   key: "scullery",
@@ -582,7 +602,7 @@ const SCULLERY_HERE: LevelDef = {
   start: { x: 3.5, y: 30.2 },
   // A backward spin: he dithers under the hatch for a moment before the shelf takes him.
   shove: -3,
-  bales: 5,
+  bales: 6,
   spare: 1,
   blocks: [
     box(-4.8, 12.6, -4, 31.4, "wall"),
@@ -640,6 +660,7 @@ const SCULLERY_HERE: LevelDef = {
   lifts: [],
   barrels: [],
   mats: [],
+  mines: [{ x: -1.25, y: sunkAt(-1.25), turn: SINK_TURN, w: MINE_W }],
   pits: [
     { x: GAP.x, y: rackAt(GAP.x) - GAP_DEEP, w: GAP.w, pan: rackAt(GAP.x) - GAP_DEEP - GAP.hang, hung: true },
     { x: DRAIN.x, y: DRAIN_Y - BALE_H, w: DRAIN.w, pan: FLOOR + 0.7, hung: false },
@@ -754,6 +775,7 @@ const MILL_HERE: LevelDef = {
       spout: { x: 0.95, y: 29.3 },
     },
   ],
+  mines: [],
   pits: [
     // Anything that comes out of the bottom of the wheel is in the tray.
     { x: (TRAY.x0 + TRAY.x1 - 0.2) / 2, y: MILL.y - MILL.r - 0.05, w: TRAY.x1 - 0.2 - TRAY.x0, pan: TRAY.y + 0.05, hung: true },
@@ -821,7 +843,7 @@ const BUTTERY_HERE: LevelDef = {
   bottom: 13,
   start: { x: -3.5, y: TURN.y + 4.2 },
   shove: 3,
-  bales: 4,
+  bales: 5,
   spare: 1,
   blocks: [
     box(-4.8, 12.6, -4, 31.4, "wall"),
@@ -866,6 +888,7 @@ const BUTTERY_HERE: LevelDef = {
   lifts: [],
   barrels: [],
   mats: [],
+  mines: [{ x: 1.4, y: backAt(1.4), turn: Math.atan(BACKWAY.fall), w: MINE_W }],
   pits: [{ x: TURN.x, y: TURN.y - DRUM + 0.05, w: 2.1, pan: TURN.y - DRUM - 0.8, hung: true }],
   cages: [],
   sockets: [
@@ -901,7 +924,8 @@ const GUTTER = { flat: 0.45, x: -2.3, drop: 0.5 };
  * the left wall, and out of that into a pan, unless a bale is stood in the spout; then it
  * brings him up to the top of the right wall, and he rolls off it and drops on to the roost.
  * But a raft with nobody on it does not wait: let the water in before he is aboard and it is
- * over the wall and gone. Three bales, and four to do it with.
+ * over the wall and gone. And there is a mine in the last of the shelves. Four bales, and five
+ * to do it with.
  */
 const CISTERN_HERE: LevelDef = {
   key: "cistern",
@@ -914,7 +938,7 @@ const CISTERN_HERE: LevelDef = {
   bottom: 13,
   start: { x: -3.5, y: 30.2 },
   shove: 3,
-  bales: 4,
+  bales: 5,
   spare: 1,
   blocks: [
     box(-4.8, 12.6, -4, 31.4, "wall"),
@@ -967,6 +991,7 @@ const CISTERN_HERE: LevelDef = {
   lifts: [],
   barrels: [],
   mats: [],
+  mines: [{ x: -1.6, y: runC(-1.6), turn: -Math.atan(RUN.fall), w: MINE_W }],
   pits: [{ x: -3.1, y: VAT.lip - GUTTER.drop, w: 1.8, pan: 16.85, hung: true }],
   cages: [],
   sockets: [
@@ -1069,6 +1094,7 @@ const SERVERY_HERE: LevelDef = {
   ],
   barrels: [],
   mats: [],
+  mines: [],
   pits: [],
   cages: [],
   sockets: [],
@@ -1165,6 +1191,7 @@ const CELLAR_HERE: LevelDef = {
     },
   ],
   mats: [{ x0: RUN_END, y0: runwayAt(RUN_END), x1: GAPE.x0, y1: runwayAt(GAPE.x0), crawl: 0.3 }],
+  mines: [],
   pits: [{ x: VAULT.x, y: skidAt(SKID.end), w: VAULT.w, pan: VAULT.pan, hung: true }],
   cages: [],
   sockets: [
@@ -1211,6 +1238,7 @@ export type GameEvent =
   | { type: "smash"; x: number; y: number }
   | { type: "bung"; x: number; y: number }
   | { type: "flat"; x: number; y: number }
+  | { type: "blast"; by: "egg" | "bale"; near: boolean; x: number; y: number }
   | { type: "caged"; x: number; y: number }
   | { type: "warn" }
   | { type: "caught" }
@@ -1351,6 +1379,7 @@ export class Game {
     over: boolean;
   }> = [];
   /** The barrels: chocked, on their way, or down the pit; whether the treadle has been trodden; and the crates, while they stand. */
+  private readonly charges: Array<{ def: MineDef; live: boolean }>;
   private readonly casks: Array<{
     def: BarrelDef;
     body: RAPIER.RigidBody;
@@ -1621,6 +1650,7 @@ export class Game {
       this.hoists.push({ def, car, roof, doors, pan, plate, gates, y: def.floor, speed: 0, floor: 0, moving: false, up: [], down: [], aboard: false, over: false });
     }
 
+    this.charges = level.mines.map((def) => ({ def, live: true }));
     for (const def of level.barrels) {
       // It stands until its chock is knocked out. It is heavy, and it is not soft.
       const body = this.world.createRigidBody(
@@ -1767,6 +1797,10 @@ export class Game {
     }));
   }
 
+  get mines(): Array<{ def: MineDef; live: boolean }> {
+    return this.charges.map((charge) => ({ def: charge.def, live: charge.live }));
+  }
+
   get barrels(): Array<Pose & { def: BarrelDef; state: "chocked" | "rolling" | "sunk"; trod: boolean; crates: boolean }> {
     return this.casks.map((cask) => {
       const p = cask.body.translation();
@@ -1823,6 +1857,12 @@ export class Game {
       if (Math.abs(x - def.x) <= def.half + 0.4 && y > def.floor - 0.4 && y < def.head) {
         return { x: def.x, y: this.lifted(def.x, hoist.y + def.tall + BALE_H / 2 + 0.12), turn: 0 };
       }
+    }
+    for (const charge of this.charges) {
+      // A tap at a mine is a bale laid on its plate.
+      const def = charge.def;
+      if (!charge.live || Math.hypot(x - def.x, y - def.y - 0.35) > 0.85) continue;
+      return { x: def.x - Math.sin(def.turn) * (BALE_H / 2 + 0.06), y: def.y + Math.cos(def.turn) * (BALE_H / 2 + 0.06), turn: def.turn };
     }
     for (const socket of level.sockets) {
       if (Math.abs(x - socket.x) > socket.reach || y < socket.y0 || y > socket.y1) continue;
@@ -1885,6 +1925,7 @@ export class Game {
     this.stop();
     this.stow();
     this.trundle();
+    this.spring();
     if (this.phase !== "run") return;
 
     this.feel();
@@ -2222,6 +2263,52 @@ export class Game {
           this.events.push({ type: "bung", x: at.x, y: at.y });
         }
       }
+    }
+  }
+
+  /** A mine goes off under him, or under a bale: and a bale is how it is got rid of. */
+  private spring(): void {
+    if (this.phase !== "run") return;
+    const p = this.eggBody.translation();
+    for (const charge of this.charges) {
+      if (!charge.live) continue;
+      const def = charge.def;
+      const cos = Math.cos(def.turn);
+      const sin = Math.sin(def.turn);
+      const over = (at: { x: number; y: number }, reach: number, high: number): boolean => {
+        const along = (at.x - def.x) * cos + (at.y - def.y) * sin;
+        const up = (at.y - def.y) * cos - (at.x - def.x) * sin;
+        return Math.abs(along) < def.w / 2 + reach && up > -0.1 && up < high;
+      };
+      if (over(p, 0.1, 0.75)) {
+        charge.live = false;
+        this.phase = "broken";
+        this.cracks = SHELL + 1;
+        this.events.push({ type: "blast", by: "egg", near: true, x: def.x, y: def.y });
+        this.events.push({ type: "broken", x: p.x, y: p.y });
+        return;
+      }
+      const bale = this.live.find((each) => !each.held && !each.tank && over(each.body.translation(), BALE_W / 2 - 0.2, 1));
+      if (!bale) continue;
+      charge.live = false;
+      this.scrap(bale);
+      // It still reaches a little way: near enough, and he is cracked and thrown.
+      const away = { x: p.x - (def.x - sin * 0.3), y: p.y - (def.y + cos * 0.3) };
+      const far = Math.hypot(away.x, away.y);
+      const near = far < MINE_BLAST;
+      this.events.push({ type: "blast", by: "bale", near, x: def.x, y: def.y });
+      if (!near) continue;
+      const v = this.eggBody.linvel();
+      const push = far > 0.05 ? MINE_SHOVE / far : 0;
+      this.eggBody.setLinvel({ x: v.x + away.x * push, y: v.y + (far > 0.05 ? away.y * push : MINE_SHOVE), z: 0 }, true);
+      this.knockUntil = this.time + KNOCK_GRACE;
+      this.cracks += 1;
+      if (this.cracks > SHELL) {
+        this.phase = "broken";
+        this.events.push({ type: "broken", x: p.x, y: p.y });
+        return;
+      }
+      this.events.push({ type: "crack", cracks: this.cracks, x: p.x, y: p.y });
     }
   }
 

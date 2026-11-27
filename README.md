@@ -33,7 +33,7 @@ properly, or `?room=6` to open it at the sixth room.
 - **Tap** anywhere in the kitchen and a bale is thrown there. It takes about half a second to
   arrive, so tap where he is going to be, not where he is.
 - **Press and slide** to see where the bale will go before you let go.
-- A few bales a room: five, four or three, counted at the bottom left while he is on his way down.
+- A few bales a room: from three to six, counted at the bottom left while he is on his way down.
   Nothing is drawn over the top of the room. **R** starts the room again at once, and so
   does the card at the end of a go; **♪** on a card (or **M**) mutes the sound.
 - The button beside it is **the map**: the whole house in section, every room with its stars
@@ -50,6 +50,13 @@ One bale does three jobs:
    and he meets the far wall.
 3. **A stopper.** Dropped in a hole in the floor, or a gap in a shelf, it fills it, and he
    rolls over the top instead of down into the pan.
+
+There are **mines** here and there: improvised egg explosion devices. A mine is a red plate
+let into a shelf or a floor, with a pennant over it, and it is not hidden. If he rolls on to
+it, it goes off under him and that is the end of him. A bale dropped on it sets it off first,
+at the cost of the bale: any time will do, so long as he is not near, because the blast
+reaches a little way and will crack him and throw him. The Scullery, the Buttery and the
+Cistern each have one.
 
 The Scullery has a see-saw that will not wait for him. He crawls across its red cushion and off
 the far end into a cage; a bale on its gold end while he is still on the red throws him clear.
@@ -128,7 +135,8 @@ npm run check                    # typecheck, tests and build
 src/sim/      rules and physics, headless (Rapier 3D held to one plane, fixed 60 Hz, no DOM,
               no Math.random)
   kitchen.ts    the rooms, the egg, the bales, the see-saws, the water wheel, the revolving
-                door, the cistern, the dumbwaiter, the barrel, the holes, the hook and the one rule
+                door, the cistern, the dumbwaiter, the barrel, the mines, the holes, the hook
+                and the one rule
   pilot.ts      a scripted player for each room, for tests and ?auto
 src/render/   PlayCanvas view; reads the sim, never writes it
   stage.ts      the kitchen as a doll's house with its front off

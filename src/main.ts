@@ -81,6 +81,8 @@ let sunk = false;
 let flattened = false;
 let trodden: "threw" | "empty" | null = null;
 let crushed = false;
+/** A mine went off under him. */
+let mined = false;
 /** He is being shown coming down from the roost above, and cannot be let go until he has landed. */
 let arriving = false;
 
@@ -117,6 +119,15 @@ function show(id: "title" | "result" | "run"): void {
 function drawReady(): void {
   const waiting = Boolean(game) && game!.phase === "ready" && $("title").hidden && $("result").hidden && !driver && !stage.arriving;
   $("ready").hidden = !waiting;
+  // A room with a mine in it says so while there is time to look: twice in a sitting, and then no more.
+  const brief = $("brief");
+  const warn = waiting && game!.level.mines.length > 0 && (told.get("mine") ?? 0) < 2;
+  if (warn && brief.hidden) {
+    const red = document.createElement("b");
+    red.textContent = "The red plate with the pennant is a mine.";
+    brief.replaceChildren(red, " A bale dropped on it sets it off: do that before he gets near it");
+  }
+  brief.hidden = !warn;
   if (game) {
     $("ready-name").textContent = game.level.name;
     $("ready-sub").textContent = `${room + 1} of ${LEVELS.length} · ${game.level.bales} bales`;
@@ -184,6 +195,7 @@ function fresh(index = room, arrive: { x: number; y: number; turn: number } | nu
   flattened = false;
   trodden = null;
   crushed = false;
+  mined = false;
   accumulator = 0;
   $("toast").replaceChildren();
   drawHud(game);
@@ -191,6 +203,7 @@ function fresh(index = room, arrive: { x: number; y: number; turn: number } | nu
 
 function begin(): void {
   if (!game || game.phase !== "ready" || stage.arriving) return;
+  if (!$("brief").hidden) told.set("mine", (told.get("mine") ?? 0) + 1);
   runs += 1;
   game.start();
   show("run");
@@ -316,6 +329,16 @@ function narrate(event: GameEvent, current: Game): void {
       break;
     case "flat":
       flattened = true;
+      break;
+    case "blast":
+      if (event.by === "egg") {
+        mined = true;
+        sound.boom(true);
+      } else {
+        sound.boom(false);
+        sound.straw();
+        toast(event.near ? "Too close!" : "Boom!", event.near ? "bad" : "");
+      }
       break;
     case "unbar":
       unbarred = true;
@@ -444,6 +467,9 @@ function verdict(current: Game): { eyebrow: string; title: string; line: string 
       if (current.cracks > 0) return { eyebrow: "Home", title: "Home, and cracked", line: flung && lastKnock > 0 ? "He met something harder than straw on the way. A gentler throw, or a bale where he hit." : "He is home, with a crack to show his mother." };
       return { eyebrow: "Home", title: "Home", line: `Whole, but it took all the straw in the room. Keep ${spare === 1 ? "one bale" : `${spare} bales`} back for the third star.` };
     case "broken":
+      if (mined) {
+        return { eyebrow: "A great fall", title: "Scrambled", line: "He rolled on to the mine, and it went off under him. A bale dropped on the red plate sets it off first: any time will do, so long as he is not near it." };
+      }
       if (flattened) {
         return { eyebrow: "A great fall", title: "Flattened", line: "The barrel goes down its run whatever is on it, and he was on it. Let it go only when he is down in the bucket, under the rails: then it passes over his head." };
       }
@@ -705,6 +731,10 @@ function drawRoom(g: Element, level: LevelDef, index: number): void {
   for (const door of level.doors) mark(g, "ellipse", { ...line, cx: door.x, cy: door.y, rx: door.r, ry: door.r, stroke: "#4a2f14", "stroke-width": 2.4 });
   for (const barrel of level.barrels) mark(g, "ellipse", { cx: barrel.x, cy: barrel.y, rx: barrel.r, ry: barrel.r, fill: "#7a4e22" });
   for (const pit of level.pits) mark(g, "rect", { x: pit.x - pit.w / 2, y: pit.pan - 0.5, width: pit.w, height: 0.9, fill: "#cf3420" });
+  // A mine: its pennant.
+  for (const mine of level.mines) {
+    mark(g, "path", { d: `M${mine.x} ${mine.y} V${mine.y + 2.6} L${mine.x + 1.1} ${mine.y + 2} L${mine.x} ${mine.y + 1.4}`, fill: "#cf3420", stroke: "#1d1512", "stroke-width": 1, "vector-effect": "non-scaling-stroke" });
+  }
   // The hen at the bottom of it, and the hatch at the top.
   const nest = level.nest;
   mark(g, "ellipse", { cx: (nest.x0 + nest.x1) / 2, cy: nest.y0 + 1, rx: 0.8, ry: 1.3, fill: level.ends === "nest" ? "#e9ac22" : "#fffaf0", stroke: "#1d1512", "stroke-width": 1, "vector-effect": "non-scaling-stroke" });

@@ -146,6 +146,8 @@ export class Stage {
     marks: pc.Entity[];
   }> = [];
   /** The barrel, its chock and pan, the treadle's lever, the crates, and what is left of them. */
+  /** The mines: each as it stands, and the scorch it leaves. */
+  private charges: Array<{ root: pc.Entity; scorch: pc.Entity; spark: pc.Entity }> = [];
   private kegs: Array<{ def: BarrelDef; keg: pc.Entity; chock: pc.Entity; pan: pc.Entity; lever: pc.Entity; crates: pc.Entity; lid: pc.Entity; kick: number; k: number }> = [];
   private flames: pc.Entity[] = [];
   private fried: pc.Entity | null = null;
@@ -417,6 +419,7 @@ export class Stage {
     this.vats = [];
     this.hoists = [];
     this.kegs = [];
+    this.charges = [];
     this.holdAsk = null;
     if (!arrive) {
       this.snap = true;
@@ -434,6 +437,7 @@ export class Stage {
       this.buildTanks(level, here);
       this.buildLifts(level, here);
       this.buildBarrels(level, here);
+      this.buildMines(level, here);
       this.buildCages(level);
       this.buildPans(level);
       this.buildNest(level, here);
@@ -1004,6 +1008,34 @@ export class Stage {
     }
   }
 
+  /**
+   * A mine: a red plate let into the shelf, with a gold button in the middle of it for a bale,
+   * a lit match-cord, and a pennant so that nobody can say they were not told.
+   */
+  private buildMines(level: LevelDef, here: boolean): void {
+    const m = this.m;
+    for (const def of level.mines) {
+      const lean = def.turn * RAD;
+      const root = this.group("mine", this.scene, [def.x, def.y, 0], [0, 0, lean]);
+      this.shape("box", root, [0, 0, 0], [def.w + 0.16, 0.07, 1.34], m.iron);
+      this.shape("box", root, [0, 0.04, 0], [def.w, 0.08, 1.2], m.vermilion);
+      for (const along of [-1, 1]) for (const z of [-0.5, 0.5]) this.shape("sphere", root, [(along * def.w) / 2.6, 0.09, z], [0.09, 0.06, 0.09], m.iron);
+      this.shape("cylinder", root, [0, 0.1, 0.15], [0.26, 0.08, 0.26], m.gold);
+      const spark = this.shape("sphere", root, [0, 0.2, 0.15], [0.12, 0.12, 0.12], m.fire);
+      // The pennant stands upright, whatever the shelf does.
+      const staff = this.group("staff", root, [def.w / 2 + 0.16, 0, -0.66], [0, 0, -lean]);
+      this.shape("box", staff, [0, 0.55, 0], [0.045, 1.1, 0.045], m.iron);
+      this.shape("box", staff, [0.2, 0.92, 0], [0.38, 0.28, 0.03], m.vermilion);
+      this.shape("sphere", staff, [0.2, 0.92, 0.03], [0.15, 0.19, 0.03], m.egg);
+      this.shape("box", staff, [0.2, 0.92, 0.05], [0.03, 0.2, 0.01], m.ink, [0, 0, 25]);
+      const scorch = this.group("scorch", this.scene, [def.x, def.y, 0], [0, 0, lean]);
+      this.shape("box", scorch, [0, 0.01, 0], [def.w + 0.9, 0.03, 1.4], m.ink);
+      for (const [along, z, size] of [[-0.7, 0.4, 0.3], [0.75, -0.3, 0.36], [0.2, 0.62, 0.24]] as const) this.shape("box", scorch, [along, 0.012, z], [size, 0.03, size], m.ink, [0, 40, 0]);
+      scorch.enabled = false;
+      if (here) this.charges.push({ root, scorch, spark });
+    }
+  }
+
   /** A cage: iron bars across the front and the back of it, low enough to see him over. */
   private buildCages(level: LevelDef): void {
     const m = this.m;
@@ -1493,6 +1525,15 @@ export class Stage {
       }
     });
 
+    game.mines.forEach((state, index) => {
+      const charge = this.charges[index];
+      if (!charge) return;
+      charge.root.enabled = state.live;
+      charge.scorch.enabled = !state.live;
+      const flicker = 0.1 + Math.abs(Math.sin(this.clock * 11 + index)) * 0.1;
+      charge.spark.setLocalScale(flicker, flicker * 1.3, flicker);
+    });
+
     game.barrels.forEach((state, index) => {
       const keg = this.kegs[index];
       if (!keg) return;
@@ -1706,6 +1747,20 @@ export class Stage {
       case "splash":
         this.burst(event.x, event.y, m.spray, 18, 0.3, 4.4);
         this.shake = Math.max(this.shake, 0.2);
+        break;
+      case "blast":
+        this.burst(event.x, event.y + 0.3, m.fire, 18, 0.55, 6.5);
+        this.burst(event.x, event.y + 0.3, m.ember, 12, 0.4, 4.5);
+        this.burst(event.x, event.y + 0.6, m.steam, 9, 0.7, 2.4);
+        this.burst(event.x, event.y + 0.2, m.iron, 6, 0.16, 7);
+        if (event.by === "bale") {
+          this.burst(event.x, event.y + 0.4, m.hay, 16, 0.4, 5.5);
+          this.burst(event.x, event.y + 0.4, m.hayDark, 8, 0.28, 4);
+        } else {
+          this.burst(event.x, event.y + 0.5, m.egg, 14, 0.24, 7);
+          this.burst(event.x, event.y + 0.5, m.yolk, 8, 0.2, 5);
+        }
+        this.shake = Math.max(this.shake, event.by === "egg" ? 1 : 0.7);
         break;
       case "hoist":
         this.burst(event.x, event.y - 0.2, m.dust, 5, 0.2, 1.4);

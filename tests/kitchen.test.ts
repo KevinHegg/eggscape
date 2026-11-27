@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { before, test } from "node:test";
 import { BUTTERY, CAGE, CELLAR, CISTERN, DOOR_LAPS, DOOR_TURN, Game, IDLE, LARDER, LEVELS, LIFT_SPEED, MILLROOM, RACE, RISE, SCULLERY, SEAT_IDLE, SERVERY, STEP, STOREY, WHEEL_TURN, loadPhysics, type GameEvent, type Input, type LevelDef } from "../src/sim/kitchen";
-import { GOOD_DROP, PLANS, butteryPlan, cellarPlan, cisternPlan, larderPlan, millPlan, pilot, sculleryPlan, serveryPlan } from "../src/sim/pilot";
+import { GOOD_DROP, PLANS, butteryPlan, cellarPlan, cisternPlan, larderPlan, millPlan, pilot, sculleryPlan, serveryPlan, type Move } from "../src/sim/pilot";
 
 before(async () => {
   await loadPhysics();
@@ -313,7 +313,7 @@ const buttery = (hands: (game: Game) => Input, limit = 40) => run(hands, limit, 
 /** Where the door stopped, each time it stopped. */
 const ports = (events: GameEvent[]): string[] => events.flatMap((event) => (event.type === "port" ? [event.port] : []));
 
-test("buttery: three bales, and one to spare: out on the right, thrown back up, round again and out on the left", () => {
+test("buttery: four bales, and one to spare: out on the right, thrown back up, round again and out on the left", () => {
   const { game, events } = buttery(pilot(butteryPlan()));
   assert.deepEqual(ports(events), ["right", "left"]);
   assert.equal(count(events, "unbar"), 1);
@@ -321,7 +321,7 @@ test("buttery: three bales, and one to spare: out on the right, thrown back up, 
   assert.equal(count(events, "release"), 1);
   assert.equal(game.phase, "home");
   assert.equal(game.cracks, 0);
-  assert.equal(game.balesLeft, BUTTERY.bales - 3);
+  assert.equal(game.balesLeft, BUTTERY.bales - 4);
   assert.equal(game.stars, 3);
 });
 
@@ -421,11 +421,11 @@ test("buttery: the same taps give the same run, to the last bit", () => {
 
 const cistern = (hands: (game: Game) => Input, limit = 40) => run(hands, limit, CISTERN);
 
-test("cistern: a raft, a stopper and then the water: three bales, and one to spare", () => {
+test("cistern: a raft, a stopper, the mine and then the water: four bales, and one to spare", () => {
   const { game, events } = cistern(pilot(cisternPlan()));
   assert.equal(game.phase, "home");
   assert.equal(game.cracks, 0);
-  assert.equal(game.balesLeft, CISTERN.bales - 3);
+  assert.equal(game.balesLeft, CISTERN.bales - 4);
   assert.equal(game.stars, 3);
   assert.equal(count(events, "plug"), 1);
   assert.equal(count(events, "wash"), 0);
@@ -705,4 +705,84 @@ test("servery: three bales on the car's roof are no staircase to the way out, fo
   const { game } = servery(pilot([0.3, 0.5, 0.7].map((at) => ({ when: (g: Game) => g.time >= at, x: roof.x, y: roof.y }))));
   assert.equal(game.phase, "caught");
   assert.deepEqual(game.lifts[0]!.gates, [true, false]);
+});
+
+// ------------------------------------------------------------------ mines
+
+const MINED: Array<[LevelDef, (mine: number | false) => Move[]]> = [
+  [SCULLERY, (mine) => sculleryPlan({ mine })],
+  [BUTTERY, (mine) => butteryPlan({ mine })],
+  [CISTERN, (mine) => cisternPlan({ mine })],
+];
+const blasts = (events: GameEvent[]) => events.flatMap((event) => (event.type === "blast" ? [event] : []));
+/** The room played properly but for its mine, which gets its bale at a time of its own. */
+function mineAt(level: LevelDef, plan: Move[], at: number): (game: Game) => Input {
+  const hands = pilot(plan);
+  const mine = level.mines[0]!;
+  let thrown = false;
+  return (game) => {
+    if (thrown || game.time <= at) return hands(game);
+    thrown = true;
+    return { bale: { x: mine.x, y: mine.y + 0.3 } };
+  };
+}
+
+test("mines: three rooms have one, each in the face of a shelf he rolls along", () => {
+  assert.deepEqual(LEVELS.filter((level) => level.mines.length > 0).map((level) => level.key), ["scullery", "buttery", "cistern"]);
+});
+
+test("mines: left alone, a mine goes off under him and that is the end of him", () => {
+  for (const [level, plan] of MINED) {
+    const { game, events } = run(pilot(plan(false)), 40, level);
+    assert.equal(game.phase, "broken", level.name);
+    assert.deepEqual(blasts(events).map((event) => event.by), ["egg"], level.name);
+    assert.ok(Math.hypot(game.egg.x - level.mines[0]!.x, game.egg.y - level.mines[0]!.y) < 1.2, level.name);
+  }
+});
+
+test("mines: a bale on it sets it off, and neither the bale nor the mine is there afterwards", () => {
+  for (const [level, plan] of MINED) {
+    const { game, events } = run(pilot(plan(1.5)), 40, level);
+    const [blast] = blasts(events);
+    assert.ok(blast && blast.by === "bale" && !blast.near, level.name);
+    assert.equal(blasts(events).length, 1, level.name);
+    assert.equal(game.mines[0]!.live, false, level.name);
+    assert.equal(game.phase, "home", level.name);
+    assert.equal(game.cracks, 0, level.name);
+  }
+});
+
+test("mines: a tap anywhere about a mine lays the bale on its plate", () => {
+  for (const [level] of MINED) {
+    const game = new Game(level);
+    const mine = level.mines[0]!;
+    for (const [dx, dy] of [[0, 0.3], [0.5, 0.7], [-0.6, 0.1], [0.2, 1]] as const) {
+      const at = game.aim(mine.x + dx, mine.y + dy);
+      assert.ok(Math.hypot(at.x - mine.x, at.y - mine.y) < 0.45, `${level.name}: ${dx}, ${dy}`);
+      assert.equal(at.turn, mine.turn);
+    }
+    game.dispose();
+  }
+});
+
+test("mines: there are seconds to do it in, and not just one moment", () => {
+  for (const [level, plan, times] of [
+    [SCULLERY, sculleryPlan({ mine: false }), [0.2, 1.5, 3, 4.5, 6, 7.2]],
+    [BUTTERY, butteryPlan({ mine: false }), [0.8, 2, 4, 6, 7.2]],
+    [CISTERN, cisternPlan({ mine: false }), [0.2, 1.5, 3, 4.5, 6]],
+  ] as const) {
+    for (const at of times) {
+      const { game } = run(mineAt(level, [...plan], at), 40, level);
+      assert.equal(game.phase, "home", `${level.name}, at ${at}`);
+      assert.equal(game.cracks, 0, `${level.name}, at ${at}`);
+    }
+  }
+});
+
+test("mines: set off when he is nearly on it, it cracks him and throws him", () => {
+  const { game, events } = run(mineAt(CISTERN, cisternPlan({ mine: false }), 6.8), 40, CISTERN);
+  const [blast] = blasts(events);
+  assert.ok(blast && blast.by === "bale" && blast.near);
+  assert.ok(game.cracks >= 1);
+  assert.ok(game.stars < 3);
 });

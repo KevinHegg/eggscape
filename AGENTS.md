@@ -146,6 +146,14 @@ them in passing; they are kept as they were on purpose.
   bucket, and the cushion under the end of the run only once the barrel has gone by. The
   feather bed beyond the gap (`MatDef`) is what gives time for that; the hint for it is
   said when the crates go, not before, or it is an invitation to have the bale flattened.
+- A mine (`MineDef`) is a plate in the face of a shelf with no collider of its own: it is a
+  rule, not a body. Him within reach of the plate: broken. A loose bale on it: the bale and
+  the mine are both gone, and if he is within `MINE_BLAST` he is cracked and thrown. A tap
+  about a mine lays the bale on its plate (`aim`). It is a job that can be done at any time
+  before he gets there, so it costs a bale and attention, not timing: a room that gets one
+  gets a bale more. What is said about it is said while he sits ready on the hatch (`#brief`),
+  twice in a sitting, because once he is let go there is no time to read. The user's idea
+  (2026-11-27): "IEDs, improvised egg explosion devices", "don't need to be hidden".
 - The map (`drawMap` in `src/main.ts`) is drawn from the `LevelDef`s, so a new room is on it
   without being asked. `?room=n` opens the house at room n and takes it as reached.
 - A bale that bursts under him goes on breaking his fall for `STRAW_GRACE`: without that, he
