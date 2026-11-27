@@ -1,8 +1,8 @@
 # The Great Eggscape: working rules
 
 A mobile-first physics game. The Egg King falls through the Queen's kitchen by himself, and the
-player's only move is to tap a place and have a straw bale thrown there. Prototype stage: five
-rooms, The Larder, The Scullery, The Mill, The Buttery and The Cistern, built to find out whether that one verb is fun,
+player's only move is to tap a place and have a straw bale thrown there. Prototype stage: seven
+rooms, The Larder, The Scullery, The Mill, The Buttery, The Cistern, The Servery and The Cellar, built to find out whether that one verb is fun,
 how one room hands him on to the next, and whether a room can bring a new contraption without
 a new control. The user's verdict on the Larder alone: "This is good."; on the first two
 rooms: "These are playing well."
@@ -124,6 +124,30 @@ them in passing; they are kept as they were on purpose.
   not wait at a way out, the water takes it (`WASH`), so the water has to be kept back
   until he is aboard. That stops all three being thrown at once. Three shelves bring him
   to it, which is the time there is to set up. Bales in a cistern do not burst.
+- The Servery's contraption is a dumbwaiter (`LiftDef`): a kinematic car that goes where the
+  bales send it, one landing up for each bale on its pan and one down for each on its roof,
+  at `LIFT_SPEED`. Bales that land on either are made fast (`held`) and never burst. A tap
+  anywhere in the shaft is a bale for the roof. Bridge, fetch, up: three bales in an order
+  that cannot be thrown at once.
+  - The car has its own doors, and rails along its roof, that are shut whenever it is moving
+    or not against a way through the shaft. Without them a rising floor rubbed him against
+    the corner of an opening and cracked him. They are shut for him alone (collision groups):
+    a bale for the roof is wider than the rails are apart.
+  - It will not start while he is half in at a door (`astride`), and waits for him.
+  - A gate stands across each landing he leaves or comes in by, shut unless the car is there.
+    Without the one at the way out, three bales stacked on the roof at the bottom were a
+    staircase to it. Random play (three or four bales, hundreds of runs) found that.
+- The Cellar's contraption is a barrel (`BarrelDef`): fixed until a bale is on its pan, then a
+  free ball that nothing stops. Its rails over the gap are for it alone (collision groups);
+  over the treadle it throws whoever is in the bucket, by rule, at `toss`; faster than
+  `BARREL_HURT` it flattens him and any bale it touches; the crates are taken out of its way
+  as it reaches them; and in the pit it is steered to the middle, fixed, and lidded with
+  boards, because a round barrel left a notch he sat in. So: the pan only when he is in the
+  bucket, and the cushion under the end of the run only once the barrel has gone by. The
+  feather bed beyond the gap (`MatDef`) is what gives time for that; the hint for it is
+  said when the crates go, not before, or it is an invitation to have the bale flattened.
+- The map (`drawMap` in `src/main.ts`) is drawn from the `LevelDef`s, so a new room is on it
+  without being asked. `?room=n` opens the house at room n and takes it as reached.
 - A bale that bursts under him goes on breaking his fall for `STRAW_GRACE`: without that, he
   dropped through the place where it had been and cracked on the floor he had just been
   saved from.
@@ -190,7 +214,7 @@ them in passing; they are kept as they were on purpose.
 
 - Development: `npm run dev` (port 5180); `?auto` lets the scripted player play
 - Tests: `npm test`; full acceptance: `npm run check`
-- Trace a run event by event: `npx tsx scripts/kitchen.ts [room=scullery|mill|buttery|cistern] [time:x,y ...]`
+- Trace a run event by event: `npx tsx scripts/kitchen.ts [room=scullery|mill|buttery|cistern|servery|cellar] [time:x,y ...]`
   (heights as if the room stood where the Larder does)
 - In a browser console, `__egg.step(seconds, { x, y })` drives the game where frames do not
   tick (a hidden tab); set `__egg.stage.app.timeScale = 0` first, `__egg.restart()` to begin,

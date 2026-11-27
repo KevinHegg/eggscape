@@ -1,7 +1,7 @@
 import "./style.css";
 import { Sound } from "./audio";
 import { Stage } from "./render/stage";
-import { Game, IDLE, LEVELS, STEP, loadPhysics, type GameEvent, type Input } from "./sim/kitchen";
+import { Game, IDLE, LEVELS, STEP, loadPhysics, type GameEvent, type Input, type LevelDef } from "./sim/kitchen";
 import { PLANS, pilot, seated } from "./sim/pilot";
 
 const STORAGE_KEY = "eggscape:kitchen:v2";
@@ -36,6 +36,12 @@ function save(): void {
 
 const saved = load();
 const auto = new URLSearchParams(location.search).has("auto");
+/** `?room=6` opens the house at that room, counting from one, and takes it as reached. */
+const asked = Math.floor(Number(new URLSearchParams(location.search).get("room")));
+if (asked >= 1 && asked <= LEVELS.length && asked - 1 > saved.reached) {
+  saved.reached = asked - 1;
+  save();
+}
 const stage = new Stage($("stage"));
 const sound = new Sound();
 sound.muted = saved.muted;
@@ -71,6 +77,10 @@ let reentered = false;
 let plugged = false;
 let washed: "spout" | "weir" | null = null;
 let sunk = false;
+/** In the cellar: the barrel has him; the treadle went, and whether it threw him; and a bale was in the barrel's way. */
+let flattened = false;
+let trodden: "threw" | "empty" | null = null;
+let crushed = false;
 /** He is being shown coming down from the roost above, and cannot be let go until he has landed. */
 let arriving = false;
 
@@ -81,6 +91,19 @@ const OPENING: Record<string, [string, string]> = {
   mill: ["sluice", "The wheel is dry. A bale on the gold pan by the tank lets the water in"],
   buttery: ["door", "The left shutter is barred. A bale on the gold pan stops the door at the next shutter it comes to"],
   cistern: ["raft", "The cistern is dry. A bale in the bottom of it, before he drops in"],
+  servery: ["hoist", "The lift is at the bottom. A bale on the gold pan hauls it up a landing, and its roof is his bridge"],
+  cellar: ["barrel", "Not yet. Once he is down in the bucket, a bale on the gold pan lets the barrel go"],
+};
+
+/** What each room has in it, for the map. */
+const FEATURE: Record<string, string> = {
+  larder: "A see-saw",
+  scullery: "A see-saw that will not wait",
+  mill: "A water wheel",
+  buttery: "A revolving door",
+  cistern: "A raft",
+  servery: "A dumbwaiter",
+  cellar: "A barrel",
 };
 
 function show(id: "title" | "result" | "run"): void {
@@ -96,7 +119,7 @@ function drawReady(): void {
   $("ready").hidden = !waiting;
   if (game) {
     $("ready-name").textContent = game.level.name;
-    $("ready-sub").textContent = `Room ${room + 1} of ${LEVELS.length} · ${game.level.bales} bales`;
+    $("ready-sub").textContent = `${room + 1} of ${LEVELS.length} · ${game.level.bales} bales`;
   }
 }
 
@@ -158,6 +181,9 @@ function fresh(index = room, arrive: { x: number; y: number; turn: number } | nu
   plugged = false;
   washed = null;
   sunk = false;
+  flattened = false;
+  trodden = null;
+  crushed = false;
   accumulator = 0;
   $("toast").replaceChildren();
   drawHud(game);
@@ -257,6 +283,40 @@ function narrate(event: GameEvent, current: Game): void {
       sunk = true;
       sound.splash();
       break;
+    case "hoist":
+      sound.clockwork();
+      for (const line of Array.from($("toast").querySelectorAll("p.hint"))) line.remove();
+      break;
+    case "landing":
+      sound.thud(12);
+      sound.shutter();
+      break;
+    case "roll":
+      sound.groan();
+      for (const line of Array.from($("toast").querySelectorAll("p.hint"))) line.remove();
+      break;
+    case "tread":
+      trodden = event.threw ? "threw" : "empty";
+      sound.seesaw();
+      toast(event.threw ? "Thrown clear!" : "The bucket was empty", event.threw ? "" : "bad");
+      break;
+    case "crush":
+      crushed = true;
+      sound.straw();
+      toast("Flattened!", "bad");
+      break;
+    case "smash":
+      sound.smash();
+      sound.rubble(8);
+      // Not before: a bale in the barrel's way is flattened.
+      if (trodden === "threw") hint("under", "The barrel has gone by. Now a bale under the end of the run, before he comes off it");
+      break;
+    case "bung":
+      sound.boom(false);
+      break;
+    case "flat":
+      flattened = true;
+      break;
     case "unbar":
       unbarred = true;
       sound.shutter();
@@ -319,6 +379,12 @@ function holeOpen(current: Game): boolean {
   );
 }
 
+/** He is down in the bucket under the barrel's rails. */
+function inBucket(current: Game): boolean {
+  const egg = current.egg;
+  return current.barrels.some(({ def }) => egg.x > def.bucket.x0 && egg.x < def.bucket.x1 && egg.y > def.bucket.y0 && egg.y < def.bucket.y1 + 0.3);
+}
+
 function coach(current: Game): void {
   if (current.phase !== "run") return;
   const waits = current.level.seesaws.some((saw) => !saw.pass);
@@ -335,9 +401,21 @@ function coach(current: Game): void {
   if (vat && !plugged && current.egg.y < current.level.top - 4.5 && current.egg.y > vat.def.weir + 2) {
     hint("spout", "The spout in the cistern's left wall runs to the pan. Stand a bale in its mouth");
   }
+  const egg = current.egg;
+  // In the servery, the car is wanted in three places, one after another.
+  const lift = current.lifts[0];
+  if (lift) {
+    const def = lift.def;
+    if (lift.floor > 0 && !lift.aboard && egg.x > def.x + def.half + 0.4 && egg.y < def.floor + def.storey + def.tall) {
+      hint("fetch", "He is over. Now a bale on the roof of the car brings it down to him: the gate is shut until it comes");
+    }
+    if (lift.aboard && !lift.moving && lift.floor === 0) hint("up", "He is aboard. A bale on the gold pan, and up he goes to the way out");
+  }
+  // In the cellar, the barrel is let go when he is in the bucket, and not before.
+  const barrel = current.barrels[0];
+  if (barrel && barrel.state === "chocked" && inBucket(current) && current.idle > 0.3) hint("release", "Now: a bale on the gold pan, and the barrel goes over his head");
   // In the scullery, once the gap is bridged, the long drop at the far wall is next; and then
   // the see-saw, which does not wait for him.
-  const egg = current.egg;
   if (current.level.key === "scullery") {
     const gap = current.level.pits.find((pit) => pit.hung);
     const bridged = gap !== undefined && current.bales.some((bale) => Math.abs(bale.x - gap.x) < 0.6 && Math.abs(bale.y - gap.y) < 0.9);
@@ -366,6 +444,14 @@ function verdict(current: Game): { eyebrow: string; title: string; line: string 
       if (current.cracks > 0) return { eyebrow: "Home", title: "Home, and cracked", line: flung && lastKnock > 0 ? "He met something harder than straw on the way. A gentler throw, or a bale where he hit." : "He is home, with a crack to show his mother." };
       return { eyebrow: "Home", title: "Home", line: `Whole, but it took all the straw in the room. Keep ${spare === 1 ? "one bale" : `${spare} bales`} back for the third star.` };
     case "broken":
+      if (flattened) {
+        return { eyebrow: "A great fall", title: "Flattened", line: "The barrel goes down its run whatever is on it, and he was on it. Let it go only when he is down in the bucket, under the rails: then it passes over his head." };
+      }
+      if (trodden === "threw") {
+        return crushed
+          ? { eyebrow: "A great fall", title: "Humpty Dumpty", line: "The barrel flattened that bale on its way to the crates, and he came off the end of the run with nothing under him. Throw it after the barrel has gone by: there is time." }
+          : { eyebrow: "A great fall", title: "Humpty Dumpty", line: "Off the end of the run, and nothing under him. A bale under the end of it, once the barrel has gone by." };
+      }
       return { eyebrow: "A great fall", title: "Humpty Dumpty", line: overAt < 4 ? "A long drop, and nothing under him. Tap the floor where he will come down, and do it early: the bale takes a moment." : "That was harder than a shell can take. Straw and sacks are soft; wood, stone and iron are not." };
     case "fried":
       if (friedHung && stoppedAt === "bottom") {
@@ -402,6 +488,31 @@ function verdict(current: Game): { eyebrow: string; title: string; line: string 
       }
       if (stoppedAt === "right" && reentered) {
         return { eyebrow: "The Queen's hook", title: "Hooked", line: "Out on the right again, and the see-saw has thrown already. The second time round, brake as he passes the bottom: the bar is off the left-hand shutter now." };
+      }
+      if (current.lifts.length > 0) {
+        const lift = current.lifts[0]!;
+        const def = lift.def;
+        const out = current.egg.x - def.x;
+        const thrown = current.level.bales - current.balesLeft;
+        if (lift.aboard) {
+          return lift.floor === 0
+            ? { eyebrow: "The Queen's hook", title: "Hooked", line: "He sat in the car at the bottom landing until the hook came down. The way out is one landing up: a bale on the gold pan." }
+            : { eyebrow: "The Queen's hook", title: "Hooked", line: "Too far: the car is at the top landing, and the way out is from the one below. A bale on its roof brings it down one." };
+        }
+        if (Math.abs(out) < def.half + 0.2) {
+          return thrown === 0
+            ? { eyebrow: "The Queen's hook", title: "Hooked", line: "Down the shaft, and on to the roof of the car at the bottom of it. A bale on the gold pan hauls the car up a landing, and then its roof is his bridge: do it as he is let go." }
+            : { eyebrow: "The Queen's hook", title: "Hooked", line: "Down the shaft and on to the roof of the car. It has to be one landing up as he comes to it, and no more: one bale on the gold pan, and nothing on the roof until he is over." };
+        }
+        if (out > 0 && current.egg.y < def.floor + def.storey) {
+          return { eyebrow: "The Queen's hook", title: "Hooked", line: "Over the roof, and down to a gate that is shut, because the car is not there. A bale on the roof of the car brings it down to him." };
+        }
+        return { eyebrow: "The Queen's hook", title: "Hooked", line: "He came to the shaft, and the car was not there to be walked over. One bale on the gold pan, at once: its roof is his bridge when it is one landing up." };
+      }
+      if (current.barrels.length > 0 && inBucket(current)) {
+        return current.barrels[0]!.state === "chocked"
+          ? { eyebrow: "The Queen's hook", title: "Hooked", line: "He sat in the bucket until the hook came down. A bale on the gold pan lets the barrel go: it passes over him on the rails, and the treadle beyond throws him out." }
+          : { eyebrow: "The Queen's hook", title: "Hooked", line: "The barrel went by before he was in the bucket, so the treadle threw nothing. Wait until he is down in it, and then the gold pan." };
       }
       if (current.level.tanks.length > 0) {
         const vat = current.tanks[0]!;
@@ -522,6 +633,10 @@ function point(event: PointerEvent): void {
 
 host.addEventListener("pointerdown", (event) => {
   sound.unlock();
+  if (!$("map").hidden) {
+    closeMap();
+    return;
+  }
   // Sitting ready, a tap anywhere in the kitchen lets him go.
   if (game && game.phase === "ready" && !$("ready").hidden) {
     begin();
@@ -549,6 +664,99 @@ host.addEventListener("pointercancel", () => {
   aiming = false;
   stage.aim(null);
 });
+
+// ------------------------------------------------------------------ the map
+
+const SVG = "http://www.w3.org/2000/svg";
+const MAP_INK: Record<string, string> = { stone: "#8d8a84", wood: "#7a4e22", board: "#7a4e22", iron: "#33333a", bed: "#e0a92a", nest: "#e0a92a" };
+
+function mark(parent: Element, name: string, attributes: Record<string, string | number>): SVGElement {
+  const element = document.createElementNS(SVG, name);
+  for (const [key, value] of Object.entries(attributes)) element.setAttribute(key, String(value));
+  parent.append(element);
+  return element;
+}
+
+/** One room of the house in section: its shelves and straw, what it has in it, the pans and the hen. */
+function drawRoom(g: Element, level: LevelDef, index: number): void {
+  const line = { fill: "none", "stroke-linecap": "butt", "vector-effect": "non-scaling-stroke" };
+  mark(g, "rect", { x: -4.4, y: level.bottom, width: 8.8, height: level.top - level.bottom, fill: index === room ? "#f6ecd0" : index <= saved.reached ? "#e9dcb8" : "#cdbf9d" });
+  for (const tank of level.tanks) mark(g, "rect", { x: tank.x0, y: tank.floor, width: tank.x1 - tank.x0, height: tank.weir - tank.floor, fill: "#9cc0ee" });
+  for (const lift of level.lifts) {
+    mark(g, "rect", { x: lift.x - lift.half - 0.15, y: lift.floor - 0.35, width: lift.half * 2 + 0.3, height: lift.head - lift.floor + 0.35, fill: "#b9a57c" });
+    mark(g, "rect", { x: lift.x - lift.half, y: lift.floor, width: lift.half * 2, height: lift.tall, fill: "#7a4e22" });
+  }
+  for (const block of level.blocks) {
+    if (block.look === "wall") continue;
+    const ink = MAP_INK[block.look] ?? "#8d8a84";
+    if (block.h <= 0.6 && block.w > block.h) {
+      const dx = (Math.cos(block.turn) * block.w) / 2;
+      const dy = (Math.sin(block.turn) * block.w) / 2;
+      mark(g, "line", { ...line, x1: block.x - dx, y1: block.y - dy, x2: block.x + dx, y2: block.y + dy, stroke: ink, "stroke-width": 2.4 });
+    } else {
+      mark(g, "rect", { x: block.x - block.w / 2, y: block.y - block.h / 2, width: block.w, height: block.h, fill: ink });
+    }
+  }
+  for (const saw of level.seesaws) {
+    mark(g, "line", { ...line, x1: saw.x - saw.side * saw.load, y1: saw.y, x2: saw.x + saw.side * saw.seat, y2: saw.y, stroke: "#4a2f14", "stroke-width": 2.4 });
+    mark(g, "line", { ...line, x1: saw.x - saw.side * saw.load, y1: saw.y, x2: saw.x - saw.side * (saw.load - 0.9), y2: saw.y, stroke: "#e9ac22", "stroke-width": 3.4 });
+  }
+  for (const wheel of level.wheels) mark(g, "ellipse", { ...line, cx: wheel.x, cy: wheel.y, rx: wheel.r, ry: wheel.r, stroke: "#24439a", "stroke-width": 2.4 });
+  for (const door of level.doors) mark(g, "ellipse", { ...line, cx: door.x, cy: door.y, rx: door.r, ry: door.r, stroke: "#4a2f14", "stroke-width": 2.4 });
+  for (const barrel of level.barrels) mark(g, "ellipse", { cx: barrel.x, cy: barrel.y, rx: barrel.r, ry: barrel.r, fill: "#7a4e22" });
+  for (const pit of level.pits) mark(g, "rect", { x: pit.x - pit.w / 2, y: pit.pan - 0.5, width: pit.w, height: 0.9, fill: "#cf3420" });
+  // The hen at the bottom of it, and the hatch at the top.
+  const nest = level.nest;
+  mark(g, "ellipse", { cx: (nest.x0 + nest.x1) / 2, cy: nest.y0 + 1, rx: 0.8, ry: 1.3, fill: level.ends === "nest" ? "#e9ac22" : "#fffaf0", stroke: "#1d1512", "stroke-width": 1, "vector-effect": "non-scaling-stroke" });
+  const safe = game?.phase === "home";
+  if (index === room) mark(g, "ellipse", { cx: safe ? (nest.x0 + nest.x1) / 2 + 1.1 : level.start.x, cy: safe ? nest.y0 + 1.6 : level.start.y - 0.2, rx: 0.75, ry: 1.5, fill: "#fff6e6", stroke: "#cf3420", "stroke-width": 2, "vector-effect": "non-scaling-stroke" });
+}
+
+function drawMap(): void {
+  const host = $("floors");
+  const top = LEVELS[0]!.top;
+  const bottom = LEVELS[LEVELS.length - 1]!.bottom;
+  const svg = document.createElementNS(SVG, "svg");
+  svg.setAttribute("viewBox", `-4.4 ${-top} 8.8 ${top - bottom}`);
+  svg.setAttribute("preserveAspectRatio", "none");
+  const g = mark(svg, "g", { transform: "scale(1,-1)" });
+  LEVELS.forEach((level, index) => drawRoom(g, level, index));
+  const rows = LEVELS.map((level, index) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = index === room ? "floor here" : "floor";
+    row.disabled = index > saved.reached;
+    const name = document.createElement("b");
+    name.textContent = level.name;
+    const sub = document.createElement("span");
+    const stars = saved.stars[level.key] ?? 0;
+    const tally = document.createElement("i");
+    tally.textContent = "★".repeat(stars) + "☆".repeat(3 - stars);
+    sub.append(tally, ` ${index > saved.reached ? "Not reached yet" : (FEATURE[level.key] ?? "")}`);
+    row.append(name, sub);
+    row.addEventListener("click", () => {
+      sound.unlock();
+      closeMap();
+      won.length = 0;
+      fresh(index);
+      show("run");
+    });
+    return row;
+  });
+  host.replaceChildren(svg, ...rows);
+}
+
+function openMap(): void {
+  sound.unlock();
+  drawMap();
+  $("app").classList.add("mapping");
+  $("map").hidden = false;
+}
+
+function closeMap(): void {
+  $("app").classList.remove("mapping");
+  $("map").hidden = true;
+}
 
 function toggleSound(): void {
   sound.unlock();
@@ -583,9 +791,15 @@ $("let-go").addEventListener("click", () => {
 $("again").addEventListener("click", () => act($("again").dataset.does));
 $("other").addEventListener("click", () => act($("other").dataset.does));
 for (const button of Array.from(document.querySelectorAll("button.sound"))) button.addEventListener("click", toggleSound);
+for (const button of Array.from(document.querySelectorAll("button.map"))) button.addEventListener("click", openMap);
+$("map-back").addEventListener("click", closeMap);
 window.addEventListener("keydown", (event) => {
   if (event.repeat) return;
   const key = event.key.toLowerCase();
+  if (!$("map").hidden) {
+    if (key === "escape" || key === "enter" || key === " ") closeMap();
+    return;
+  }
   if (key === "r") restart();
   else if (key === "m") toggleSound();
   else if ((key === " " || key === "enter") && game?.phase === "ready" && $("result").hidden && $("title").hidden) begin();
@@ -628,7 +842,12 @@ if (saved.reached > 0) {
   resume.textContent = `From the roost above ${LEVELS[saved.reached]!.name.replace(/^The /, "the ")}`;
   resume.hidden = false;
 }
-show("title");
+if (asked >= 1 && asked <= LEVELS.length) {
+  fresh(asked - 1);
+  show("run");
+} else {
+  show("title");
+}
 if (auto) begin();
 
 /** For driving the game where frames do not tick (a hidden tab): `__egg.step(seconds, { x, y })`. */

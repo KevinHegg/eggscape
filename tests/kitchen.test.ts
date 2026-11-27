@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { before, test } from "node:test";
-import { BUTTERY, CAGE, CISTERN, DOOR_LAPS, DOOR_TURN, Game, IDLE, LARDER, LEVELS, MILLROOM, RACE, RISE, SCULLERY, SEAT_IDLE, STEP, STOREY, WHEEL_TURN, loadPhysics, type GameEvent, type Input, type LevelDef } from "../src/sim/kitchen";
-import { GOOD_DROP, PLANS, butteryPlan, cisternPlan, larderPlan, millPlan, pilot, sculleryPlan } from "../src/sim/pilot";
+import { BUTTERY, CAGE, CELLAR, CISTERN, DOOR_LAPS, DOOR_TURN, Game, IDLE, LARDER, LEVELS, LIFT_SPEED, MILLROOM, RACE, RISE, SCULLERY, SEAT_IDLE, SERVERY, STEP, STOREY, WHEEL_TURN, loadPhysics, type GameEvent, type Input, type LevelDef } from "../src/sim/kitchen";
+import { GOOD_DROP, PLANS, butteryPlan, cellarPlan, cisternPlan, larderPlan, millPlan, pilot, sculleryPlan, serveryPlan } from "../src/sim/pilot";
 
 before(async () => {
   await loadPhysics();
@@ -327,7 +327,7 @@ test("buttery: three bales, and one to spare: out on the right, thrown back up, 
 
 test("buttery: the left-hand shutter is barred: stopped there the first time round, it stays shut and the hook has him", () => {
   // The bale takes its moment to arrive: thrown as he passes the bottom, it stops the door at the left.
-  const { game, events } = buttery(pilot([{ when: (now) => -(now.doors[0]?.turn ?? 0) / (Math.PI / 2) >= 2.1, x: -0.7, y: 30.5 - STOREY * 3 }]));
+  const { game, events } = buttery(pilot([{ when: (now) => -(now.doors[0]?.turn ?? 0) / (Math.PI / 2) >= 2.1, x: -0.7, y: 29.5 - STOREY * 3 }]));
   const stop = events.find((event) => event.type === "port");
   assert.ok(stop && stop.type === "port" && stop.port === "left" && stop.shut);
   assert.equal(count(events, "unbar"), 0);
@@ -335,7 +335,7 @@ test("buttery: the left-hand shutter is barred: stopped there the first time rou
 });
 
 test("buttery: stopped at the bottom, he is in the pan", () => {
-  const { game, events } = buttery(pilot([{ when: (now) => -(now.doors[0]?.turn ?? 0) / (Math.PI / 2) >= 1.1, x: -0.7, y: 30.5 - STOREY * 3 }]));
+  const { game, events } = buttery(pilot([{ when: (now) => -(now.doors[0]?.turn ?? 0) / (Math.PI / 2) >= 1.1, x: -0.7, y: 29.5 - STOREY * 3 }]));
   assert.deepEqual(ports(events), ["bottom"]);
   assert.equal(game.phase, "fried");
 });
@@ -496,4 +496,213 @@ test("cistern: the same taps give the same run, to the last bit", () => {
   const b = cistern(pilot(cisternPlan())).game;
   assert.equal(a.time, b.time);
   assert.deepEqual(a.egg, b.egg);
+});
+
+// ------------------------------------------------------------------ the servery
+
+const servery = (hands: (game: Game) => Input, limit = 40) => run(hands, limit, SERVERY);
+const DOWN5 = STOREY * 5;
+/** Which landing the car came to, each time it stopped. */
+const landings = (events: GameEvent[]): number[] => events.flatMap((event) => (event.type === "landing" ? [event.floor] : []));
+
+test("servery: up to be his bridge, down to fetch him, up to let him out: three bales, and one to spare", () => {
+  const { game, events } = servery(pilot(serveryPlan()));
+  assert.deepEqual(events.flatMap((event) => (event.type === "hoist" ? [event.way] : [])), [1, -1, 1]);
+  assert.deepEqual(landings(events), [1, 0, 1]);
+  assert.equal(game.phase, "home");
+  assert.equal(game.cracks, 0);
+  assert.equal(game.balesLeft, SERVERY.bales - 3);
+  assert.equal(game.stars, 3);
+});
+
+test("servery: left alone he goes down the shaft on to the car's roof, and the hook has him there", () => {
+  const { game } = servery(() => ({}));
+  assert.equal(game.phase, "caught");
+  assert.ok(game.cracks > 0, "the roof is bare board");
+  assert.ok(Math.abs(game.egg.x) < 0.8 && game.lifts[0]!.over, "he should be on the roof of the car");
+});
+
+test("servery: over the roof, and then the gate at the bottom landing is shut, because the car is not there", () => {
+  const { game, events } = servery(pilot(serveryPlan({ fetch: false, up: false })));
+  assert.deepEqual(landings(events), [1]);
+  assert.equal(game.phase, "caught");
+  assert.equal(game.cracks, 0);
+  assert.ok(game.egg.x > 1 && game.egg.x < 1.8, `he should be at the gate, not at ${game.egg.x.toFixed(2)}`);
+  assert.equal(game.lifts[0]!.gate, false);
+});
+
+test("servery: brought down before he is over it, the car is no bridge", () => {
+  const { game } = servery(pilot(serveryPlan({ fetch: 1.2, up: false })));
+  assert.equal(game.phase, "caught");
+  assert.ok(Math.abs(game.egg.x) < 0.8, "he should be down the shaft, on the roof of the car");
+});
+
+test("servery: hauled up two landings, the car is a step too high for him and he stops at it", () => {
+  const { game } = servery(pilot([
+    { when: (now) => now.time > 0.3, x: 2.9, y: 26.2 - DOWN5 },
+    { when: (now) => now.time > 0.6, x: 2.9, y: 26.2 - DOWN5 },
+  ]));
+  assert.equal(game.lifts[0]!.floor, 2);
+  assert.equal(game.phase, "caught");
+  assert.ok(game.egg.x < -0.8, "he should not have got over");
+});
+
+test("servery: hauled up again before he is in it, the car leaves him at the gate", () => {
+  const { game, events } = servery(pilot(serveryPlan({ up: 6.4 })));
+  assert.deepEqual(landings(events), [1, 1]);
+  assert.equal(game.phase, "caught");
+  assert.ok(game.egg.x > 1);
+  // But it does not go without him if he is on his way in at the door.
+  assert.equal(servery(pilot(serveryPlan({ up: 7.5 }))).game.phase, "home");
+});
+
+test("servery: a bale on the pan is a landing up, a bale on the roof is a landing down, and it goes at its own rate", () => {
+  const game = new Game(SERVERY);
+  const def = SERVERY.lifts[0]!;
+  game.start();
+  const wait = (seconds: number, bale?: { x: number; y: number }): void => {
+    game.step(bale ? { bale } : {});
+    for (let step = 1; step < seconds / STEP; step += 1) game.step();
+  };
+  const pan = { x: def.pan.x, y: def.pan.y + 0.5 };
+  const roof = { x: def.x, y: def.floor + 3 };
+  assert.equal(game.lifts[0]!.y, def.floor);
+  game.step({ bale: pan });
+  let began = -1;
+  let arrived = -1;
+  while (game.time < 3) {
+    game.step();
+    if (began < 0 && game.lifts[0]!.moving) began = game.time;
+    if (began >= 0 && arrived < 0 && !game.lifts[0]!.moving) arrived = game.time;
+  }
+  assert.equal(game.lifts[0]!.y, def.floor + def.storey);
+  assert.ok(arrived - began > def.storey / LIFT_SPEED && arrived - began < def.storey / LIFT_SPEED + 0.8, `it took ${(arrived - began).toFixed(2)}s`);
+  assert.ok(Math.abs(game.lifts[0]!.pan - (def.pan.y - def.pan.step)) < 1e-6, "the pan comes down as the car goes up");
+  wait(2, pan);
+  assert.equal(game.lifts[0]!.y, def.floor + 2 * def.storey);
+  wait(3, roof);
+  assert.equal(game.lifts[0]!.y, def.floor + def.storey);
+  assert.deepEqual([game.lifts[0]!.up, game.lifts[0]!.down], [2, 1]);
+});
+
+test("servery: there are a good four seconds in which to bring the car down for him", () => {
+  let home = 0;
+  for (let at = 5; at <= 9; at += 0.5) {
+    if (servery(pilot(serveryPlan({ fetch: at }))).game.phase === "home") home += 1;
+  }
+  assert.equal(home, 9);
+});
+
+test("servery: a tap anywhere in the shaft puts the bale on the car's roof", () => {
+  const game = new Game(SERVERY);
+  const def = SERVERY.lifts[0]!;
+  for (const [dx, up] of [[0, 0.5], [0.6, 1.2], [-0.9, 4], [0.3, 8]] as const) {
+    const at = game.aim(def.x + dx, def.floor + up);
+    assert.equal(at.x, def.x);
+    assert.ok(at.y > def.floor + def.tall && at.y < def.floor + def.tall + 0.6, `aimed ${dx}, ${up}: ${at.y - def.floor}`);
+  }
+});
+
+test("servery: the same taps give the same run, to the last bit", () => {
+  const a = servery(pilot(serveryPlan())).game;
+  const b = servery(pilot(serveryPlan())).game;
+  assert.equal(a.time, b.time);
+  assert.deepEqual(a.egg, b.egg);
+});
+
+// ------------------------------------------------------------------ the cellar
+
+const cellar = (hands: (game: Game) => Input, limit = 40) => run(hands, limit, CELLAR);
+const DOWN6 = STOREY * 6;
+/** When the barrel rolled over the treadle. */
+const trodAt = (hands: (game: Game) => Input): number => {
+  const game = new Game(CELLAR);
+  game.start();
+  while (!game.over && game.time < 40) {
+    game.step(hands(game));
+    if (game.drain().some((event) => event.type === "tread")) return game.time;
+  }
+  return -1;
+};
+
+test("cellar: the barrel let go while he is in the bucket, and a bale under him after it: two bales, and one to spare", () => {
+  const { game, events } = cellar(pilot(cellarPlan()));
+  for (const type of ["roll", "tread", "fling", "smash", "bung"] as const) assert.equal(count(events, type), 1, type);
+  const tread = events.find((event) => event.type === "tread");
+  assert.ok(tread && tread.type === "tread" && tread.threw);
+  assert.equal(count(events, "crush"), 0);
+  assert.equal(game.phase, "home");
+  assert.equal(game.cracks, 0);
+  assert.equal(game.balesLeft, CELLAR.bales - 2);
+  assert.equal(game.stars, 3);
+});
+
+test("cellar: left alone he sits in the bucket under the run until the hook comes, and it is slow to come", () => {
+  const { game } = cellar(() => ({}));
+  const bucket = CELLAR.barrels[0]!.bucket;
+  assert.equal(game.phase, "caught");
+  assert.equal(game.cracks, 0);
+  assert.ok(game.egg.x > bucket.x0 && game.egg.x < bucket.x1 && game.egg.y < bucket.y1);
+  assert.ok(game.time > 5 + SEAT_IDLE - 1.5, `it took ${game.time.toFixed(1)}s`);
+});
+
+test("cellar: let go at once, the barrel has gone by before he is there, and nothing else will throw him", () => {
+  const { game, events } = cellar(pilot(cellarPlan({ release: 0.3, cushion: false })));
+  const tread = events.find((event) => event.type === "tread");
+  assert.ok(tread && tread.type === "tread" && !tread.threw);
+  assert.equal(count(events, "bung"), 1);
+  assert.equal(game.phase, "caught");
+});
+
+test("cellar: let go as he is coming down on to the run, it flattens him", () => {
+  const { game, events } = cellar(pilot(cellarPlan({ release: 2.1, cushion: false })));
+  assert.equal(count(events, "flat"), 1);
+  assert.equal(game.phase, "broken");
+});
+
+test("cellar: with nothing under the end of the run he does not live through the drop", () => {
+  const { game, events } = cellar(pilot(cellarPlan({ cushion: false })));
+  assert.equal(count(events, "bung"), 1);
+  assert.equal(game.phase, "broken");
+});
+
+test("cellar: a bale put down before the barrel has been by is flattened", () => {
+  const hands = () => pilot(cellarPlan({ cushion: false }));
+  const trod = trodAt(hands());
+  const { game, events } = cellar(pilot([...cellarPlan({ cushion: false }), { when: (now) => now.time > trod - 0.4, x: -2.75, y: 18 - DOWN6 }]));
+  assert.equal(count(events, "crush"), 1);
+  assert.equal(game.phase, "broken");
+});
+
+test("cellar: there are a good three seconds after the barrel in which to put the bale down", () => {
+  const trod = trodAt(pilot(cellarPlan({ cushion: false })));
+  let home = 0;
+  for (let after = 1.4; after <= 4.4; after += 0.5) {
+    const { game } = cellar(pilot([...cellarPlan({ cushion: false }), { when: (now) => now.time > trod + after, x: -2.75, y: 18 - DOWN6 }]));
+    if (game.phase === "home" && game.cracks === 0) home += 1;
+  }
+  assert.equal(home, 7);
+});
+
+test("cellar: a bale thrown at the gap goes down between the rails, and does not bridge it", () => {
+  const { game } = cellar(pilot([{ when: (now) => now.time > 0.3, x: 0, y: 23.6 - DOWN6 }]));
+  const bucket = CELLAR.barrels[0]!.bucket;
+  assert.equal(game.phase, "caught");
+  assert.ok(game.egg.x > bucket.x0 && game.egg.x < bucket.x1, "he should be in the bucket, on the bale");
+  assert.ok(game.bales[0]!.y < bucket.y1);
+});
+
+test("cellar: the same taps give the same run, to the last bit", () => {
+  const a = cellar(pilot(cellarPlan())).game;
+  const b = cellar(pilot(cellarPlan())).game;
+  assert.equal(a.time, b.time);
+  assert.deepEqual(a.egg, b.egg);
+});
+
+test("servery: three bales on the car's roof are no staircase to the way out, for the gate there is shut too", () => {
+  const def = SERVERY.lifts[0]!;
+  const roof = { x: def.x, y: def.floor + 1 };
+  const { game } = servery(pilot([0.3, 0.5, 0.7].map((at) => ({ when: (g: Game) => g.time >= at, x: roof.x, y: roof.y }))));
+  assert.equal(game.phase, "caught");
+  assert.deepEqual(game.lifts[0]!.gates, [true, false]);
 });

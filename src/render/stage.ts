@@ -1,5 +1,25 @@
 import * as pc from "playcanvas";
-import { BALE_H, BALE_W, DOOR_SLOT, DOOR_WALL, EGG, PORTS, SHUTTER, eggOutline, type Block, type DoorDef, type Game, type GameEvent, type LevelDef, type Port, type TankDef, type WheelDef } from "../sim/kitchen";
+import {
+  BALE_H,
+  BALE_W,
+  DOOR_SLOT,
+  DOOR_WALL,
+  EGG,
+  LIFT_TILT,
+  PORTS,
+  SHUTTER,
+  eggOutline,
+  type BarrelDef,
+  type Block,
+  type DoorDef,
+  type Game,
+  type GameEvent,
+  type LevelDef,
+  type LiftDef,
+  type Port,
+  type TankDef,
+  type WheelDef,
+} from "../sim/kitchen";
 
 /**
  * The kitchen as it is seen: a doll's house with its front off. Everything in the simulation
@@ -113,6 +133,20 @@ export class Stage {
   private valves: Array<{ root: pc.Entity; tilt: number; k: number }> = [];
   /** The cisterns of the room being played: the water in each, and where it comes in and goes out. */
   private vats: Array<{ def: TankDef; lever: pc.Entity; water: pc.Entity; stream: pc.Entity; spout: pc.Entity; weir: pc.Entity; k: number; drip: number }> = [];
+  /** The dumbwaiter: its car, its ropes, its doors and gates, and the outlines of where a bale goes. */
+  private hoists: Array<{
+    def: LiftDef;
+    car: pc.Entity;
+    rope: pc.Entity;
+    pan: pc.Entity;
+    panRope: pc.Entity;
+    drum: pc.Entity;
+    doors: pc.Entity[];
+    gates: Array<{ entity: pc.Entity; k: number }>;
+    marks: pc.Entity[];
+  }> = [];
+  /** The barrel, its chock and pan, the treadle's lever, the crates, and what is left of them. */
+  private kegs: Array<{ def: BarrelDef; keg: pc.Entity; chock: pc.Entity; pan: pc.Entity; lever: pc.Entity; crates: pc.Entity; lid: pc.Entity; kick: number; k: number }> = [];
   private flames: pc.Entity[] = [];
   private fried: pc.Entity | null = null;
   private mess: pc.Entity | null = null;
@@ -381,6 +415,8 @@ export class Stage {
     this.mills = [];
     this.valves = [];
     this.vats = [];
+    this.hoists = [];
+    this.kegs = [];
     this.holdAsk = null;
     if (!arrive) {
       this.snap = true;
@@ -396,6 +432,8 @@ export class Stage {
       this.buildDoors(level, here);
       this.buildFlaps(level, here);
       this.buildTanks(level, here);
+      this.buildLifts(level, here);
+      this.buildBarrels(level, here);
       this.buildCages(level);
       this.buildPans(level);
       this.buildNest(level, here);
@@ -790,6 +828,179 @@ export class Stage {
       if (board) for (const depth of [-0.5, 0.5]) this.shape("box", this.scene, [board.x, board.y + board.h / 2 + 0.9, depth], [0.06, 1.8, 0.06], m.iron, [0, 0, 0], true);
 
       if (here) this.vats.push({ def, lever, water, stream, spout, weir, k: 0, drip: 0 });
+    }
+  }
+
+  /** A dumbwaiter: the shaft, the car on its rope, the windlass over it, and the gold pan it is hung against. */
+  private buildLifts(level: LevelDef, here: boolean): void {
+    const m = this.m;
+    for (const def of level.lifts) {
+      const foot = def.floor - 0.35;
+      const wide = def.half * 2;
+      const top = def.head + 0.32;
+      // The back of the shaft, and its two walls with the ways through them.
+      this.shape("box", this.scene, [def.x, (foot + def.head) / 2, BACK + 0.12], [wide + 0.3, def.head - foot, 0.08], m.oakDark, [0, 0, 0], true);
+      for (const side of [-1, 1] as const) {
+        const gaps = def.openings.filter((opening) => opening.side === side).sort((a, b) => a.y0 - b.y0);
+        let from = foot;
+        for (const span of [...gaps, { y0: def.head, y1: def.head }]) {
+          if (span.y0 > from + 0.02) {
+            this.shape("box", this.scene, [def.x + side * (def.half + 0.105), (from + span.y0) / 2, -0.1], [0.15, span.y0 - from, 1.7], m.oak, [0, 0, 0], true);
+            // An iron shoe on each end of it, so that a doorway reads as one.
+            for (const y of [from, span.y0]) this.shape("box", this.scene, [def.x + side * (def.half + 0.105), y, -0.1], [0.19, 0.08, 1.74], m.iron, [0, 0, 0], true);
+          }
+          from = span.y1;
+        }
+      }
+      // The head of the shaft: a beam, the windlass, and the rope over to the pulley above the pan.
+      this.shape("box", this.scene, [def.x, def.head, -0.1], [wide + 0.5, 0.14, 1.7], m.oakDark, [0, 0, 0], true);
+      for (const side of [-1, 1]) this.shape("box", this.scene, [def.x + side * 0.42, top - 0.14, -0.3], [0.1, 0.42, 0.5], m.iron, [0, 0, 0], true);
+      const drum = this.group("drum", this.scene, [def.x, top, -0.3]);
+      this.shape("cylinder", drum, [0, 0, 0], [0.42, 0.7, 0.42], m.oak, [90, 0, 0]);
+      this.shape("box", drum, [0, 0, 0.38], [0.5, 0.07, 0.05], m.iron);
+      this.shape("box", drum, [0, 0, 0.38], [0.07, 0.5, 0.05], m.iron);
+      const span = def.pan.x - def.x;
+      this.shape("box", this.scene, [def.x + span / 2, top + 0.16, -0.3], [Math.abs(span), 0.05, 0.05], m.canvas, [0, 0, 0], true);
+      this.shape("cylinder", this.scene, [def.pan.x, top, -0.3], [0.36, 0.12, 0.36], m.iron, [90, 0, 0], true);
+      this.shape("box", this.scene, [def.pan.x, top, (BACK - 0.3) / 2], [0.1, 0.1, -0.3 - BACK], m.iron, [0, 0, 0], true);
+      const rope = this.shape("box", this.scene, [def.x, top, -0.3], [0.05, 1, 0.05], m.canvas);
+      const panRope = this.shape("box", this.scene, [def.pan.x, top, -0.3], [0.05, 1, 0.05], m.canvas);
+
+      // The car: straw on its floor, a gold plate on its roof, and nothing across the front of it.
+      const car = this.group("car", this.scene, [def.x, def.floor, 0]);
+      this.shape("box", car, [0, def.tall / 2, -0.74], [wide, def.tall, 0.06], m.russet);
+      for (const side of [-1, 1]) for (const z of [-0.7, 0.7]) this.shape("box", car, [side * (def.half - 0.05), def.tall / 2, z], [0.08, def.tall, 0.08], m.oakDark);
+      const floor = this.group("floor", car, [0, -0.1, 0], [0, 0, -def.side * LIFT_TILT * RAD]);
+      this.shape("box", floor, [0, 0, 0], [wide, 0.2, 1.5], m.hay);
+      this.shape("box", floor, [0, 0.1, 0], [wide * 0.98, 0.05, 1.42], m.hayDark);
+      for (const along of [-0.4, 0.4]) this.shape("box", floor, [along, 0, 0], [0.07, 0.21, 1.53], m.oakDark);
+      const roof = this.group("roof", car, [0, def.tall - 0.1, 0], [0, 0, def.side * LIFT_TILT * RAD]);
+      this.shape("box", roof, [0, 0, 0], [wide, 0.2, 1.5], m.oak);
+      this.shape("box", roof, [0, 0.1, 0], [wide * 0.92, 0.04, 1.15], m.gold);
+      this.shape("box", roof, [0, 0.2, -0.3], [0.2, 0.2, 0.2], m.iron);
+      // Its padded doors, and the rails of its roof: each is there only while it is shut.
+      const doors: pc.Entity[] = [];
+      for (const side of [-1, 1]) {
+        doors.push(this.shape("box", car, [side * (def.half - 0.04), (def.tall - 0.2) / 2, 0], [0.07, def.tall - 0.2, 1.36], m.hay));
+        const rail = this.group("rail", car, [side * (def.half - 0.04), def.tall, 0]);
+        for (const z of [-0.6, 0, 0.6]) this.shape("box", rail, [0, 0.3, z], [0.05, 0.6, 0.05], m.iron);
+        this.shape("box", rail, [0, 0.58, 0], [0.06, 0.06, 1.3], m.iron);
+        doors.push(rail);
+      }
+
+      // A gate at a landing: red bars that roll up to the lintel when the car is there.
+      const gates = def.gates.map((each) => {
+        const entity = this.group("gate", this.scene, [def.x + each.side * (def.half + 0.13), def.floor + each.floor * def.storey + 1.85, 0]);
+        for (const z of [-0.6, -0.3, 0, 0.3, 0.6]) this.shape("box", entity, [0, -0.9, z], [0.07, 1.8, 0.07], m.vermilion);
+        for (const y of [-0.12, -0.9, -1.7]) this.shape("box", entity, [0, y, 0], [0.09, 0.09, 1.36], m.iron);
+        const k = each.floor === 0 ? 1 : 0;
+        entity.setLocalScale(1, 1 - 0.88 * k, 1);
+        return { entity, k };
+      });
+
+      // The pan, on its two chains.
+      const pan = this.group("pan", this.scene, [def.pan.x, def.pan.y, 0]);
+      this.shape("box", pan, [0, -0.03, 0], [def.pan.w, 0.07, 1.15], m.gold);
+      for (const edge of [-1, 1]) {
+        this.shape("box", pan, [(edge * def.pan.w) / 2, 0.02, 0], [0.06, 0.16, 1.15], m.gold);
+        const lean = Math.atan2(def.pan.w / 2, 1.1);
+        this.shape("box", pan, [(edge * def.pan.w) / 4, 0.55, -0.3], [0.04, Math.hypot(def.pan.w / 2, 1.1), 0.04], m.iron, [0, 0, edge * lean * RAD]);
+      }
+      this.shape("sphere", pan, [0, 1.1, -0.3], [0.14, 0.14, 0.14], m.iron);
+
+      if (!here) {
+        rope.setLocalScale(0.05, top - def.floor - def.tall, 0.05);
+        rope.setLocalPosition(def.x, (top + def.floor + def.tall) / 2, -0.3);
+        panRope.setLocalScale(0.05, top - def.pan.y - 1.1, 0.05);
+        panRope.setLocalPosition(def.pan.x, (top + def.pan.y + 1.1) / 2, -0.3);
+        doors.forEach((door, index) => (door.enabled = index === 0 || index === 3));
+        continue;
+      }
+      const marks = [this.baleShape(this.scene, m.socket), this.baleShape(this.scene, m.socket)];
+      this.hoists.push({ def, car, rope, pan, panRope, drum, doors, gates, marks });
+    }
+  }
+
+  /** A barrel on its run: the rails over the gap, the treadle and the lever to the bucket, the crates, and the pan that lets it go. */
+  private buildBarrels(level: LevelDef, here: boolean): void {
+    const m = this.m;
+    for (const def of level.barrels) {
+      const fall = (def.rails.y1 - def.rails.y0) / (def.rails.x1 - def.rails.x0);
+      const run = (x: number): number => def.rails.y0 + fall * (x - def.rails.x0);
+      const turn = Math.atan(fall) * RAD;
+
+      // Two iron rails across the gap, one at the front and one at the back: he goes down between them.
+      const length = Math.hypot(def.rails.x1 - def.rails.x0, def.rails.y1 - def.rails.y0);
+      for (const z of [-0.64, 0.64]) {
+        this.shape("box", this.scene, [(def.rails.x0 + def.rails.x1) / 2, (def.rails.y0 + def.rails.y1) / 2 - 0.05, z], [length + 0.3, 0.1, 0.1], m.iron, [0, 0, turn], true);
+      }
+      // The bucket under it has iron bands, and stands on the end of a lever.
+      const middle = (def.bucket.x0 + def.bucket.x1) / 2;
+      for (const y of [def.bucket.y0 + 0.12, def.bucket.y0 + 0.6]) {
+        this.shape("box", this.scene, [middle, y, -0.95], [def.bucket.x1 - def.bucket.x0 + 0.34, 0.08, 0.06], m.iron, [0, 0, 0], true);
+      }
+      // The treadle, on the far side of the gap: a copper plate standing a little proud of the run.
+      const tread = (def.tread.x0 + def.tread.x1) / 2;
+      this.shape("box", this.scene, [tread, run(tread) + 0.06, 0], [def.tread.x1 - def.tread.x0, 0.07, 1.36], m.copper, [0, 0, turn]);
+      const pivot = { x: (tread + middle) / 2, y: (run(tread) - 0.75 + def.bucket.y0 - 0.32) / 2 };
+      this.shape("box", this.scene, [pivot.x, pivot.y, (BACK - 0.6) / 2], [0.12, 0.12, -0.6 - BACK], m.iron, [0, 0, 0], true);
+      this.shape("box", this.scene, [tread, run(tread) - 0.42, -0.6], [0.07, 0.7, 0.07], m.iron, [0, 0, 0], true);
+      const reach = Math.hypot(middle - tread, def.bucket.y0 - 0.32 - (run(tread) - 0.75));
+      const slope = Math.atan2(def.bucket.y0 - 0.32 - (run(tread) - 0.75), middle - tread) * RAD;
+      const lever = this.group("lever", this.scene, [pivot.x, pivot.y, -0.6]);
+      const beam = this.group("beam", lever, [0, 0, 0], [0, 0, slope]);
+      this.shape("box", beam, [0, 0, 0], [reach + 0.3, 0.1, 0.1], m.oakDark);
+      this.shape("box", beam, [reach / 2, 0.08, 0.6], [1.1, 0.08, 1.2], m.iron, [0, 0, -slope]);
+
+      // The pan that lets it go, with its arm to the post; and under the post, the chock.
+      const post = def.x - def.r - 0.1;
+      const pan = this.group("pan", this.scene, [def.pan.x, def.pan.y, 0]);
+      this.shape("box", pan, [0, -0.03, 0], [def.pan.w, 0.07, 1.15], m.gold);
+      for (const edge of [-1, 1]) this.shape("box", pan, [(edge * def.pan.w) / 2, 0.02, 0], [0.06, 0.16, 1.15], m.gold);
+      this.shape("box", pan, [(post - def.pan.x) / 2, -0.1, -0.5], [def.pan.x - post, 0.09, 0.1], m.oakDark);
+      const foot = run(post) + 0.02;
+      this.shape("box", this.scene, [post, (def.pan.y + foot + 0.5) / 2, -0.5], [0.07, def.pan.y - foot - 0.5, 0.07], m.iron, [0, 0, 0], true);
+      const chock = this.group("chock", this.scene, [post + 0.02, foot + 0.2, 0]);
+      this.shape("box", chock, [0, 0, 0], [0.34, 0.34, 1.1], m.vermilion, [0, 0, 45]);
+      this.shape("box", chock, [0, 0.3, -0.5], [0.07, 0.5, 0.07], m.iron);
+
+      // The barrel: its head has a cross on it and a red bung, so that it is seen to turn.
+      const keg = this.group("barrel", this.scene, [def.x, def.y, 0]);
+      this.shape("cylinder", keg, [0, 0, 0], [def.r * 2, 1.36, def.r * 2], m.oak, [90, 0, 0]);
+      for (const z of [-0.5, 0.5]) this.shape("cylinder", keg, [0, 0, z], [def.r * 2.05, 0.1, def.r * 2.05], m.iron, [90, 0, 0]);
+      this.shape("cylinder", keg, [0, 0, 0.68], [def.r * 1.84, 0.03, def.r * 1.84], m.russet, [90, 0, 0]);
+      this.shape("box", keg, [0, 0, 0.71], [def.r * 1.8, 0.09, 0.02], m.oakDark);
+      this.shape("box", keg, [0, 0, 0.71], [0.09, def.r * 1.8, 0.02], m.oakDark);
+      this.shape("sphere", keg, [def.r * 0.45, def.r * 0.45, 0.72], [0.22, 0.22, 0.08], m.vermilion);
+
+      // The crates across the floor below, and the boards of them that end up over the pit.
+      const crate = (def.crates.y1 - def.crates.y0) / 3;
+      const wide = def.crates.x1 - def.crates.x0;
+      const crates = this.group("crates", this.scene, [(def.crates.x0 + def.crates.x1) / 2, def.crates.y0, 0]);
+      for (let index = 0; index < 3; index += 1) {
+        const y = (index + 0.5) * crate;
+        const skew = (index - 1) * 5;
+        this.shape("box", crates, [0, y, 0], [wide, crate - 0.04, 1.3], m.oak, [0, skew, 0]);
+        for (const edge of [-0.4, 0.4]) this.shape("box", crates, [0, y + edge * crate, 0], [wide + 0.04, 0.07, 1.34], m.oakDark, [0, skew, 0]);
+        this.shape("box", crates, [0, y, 0.66], [wide * 0.5, 0.07, 0.03], m.iron, [0, skew, 35]);
+      }
+      const lid = this.group("lid", this.scene, [def.pit.x, def.pit.y + 0.03, 0]);
+      [-0.5, -0.02, 0.46].forEach((z, index) => this.shape("box", lid, [(index - 1) * 0.05, 0, z], [def.pit.w + 0.24, 0.08, 0.42], index === 1 ? m.oakDark : m.oak, [0, (index - 1) * 4, 0]));
+      lid.enabled = false;
+
+      if (here) this.kegs.push({ def, keg, chock, pan, lever, crates, lid, kick: 0, k: 0 });
+    }
+    // A feather bed: a quilt over the straw, buttoned down.
+    for (const mat of level.mats) {
+      const length = Math.hypot(mat.x1 - mat.x0, mat.y1 - mat.y0);
+      const quilt = this.group("quilt", this.scene, [(mat.x0 + mat.x1) / 2, (mat.y0 + mat.y1) / 2, 0], [0, 0, Math.atan2(mat.y1 - mat.y0, mat.x1 - mat.x0) * RAD]);
+      this.shape("box", quilt, [0, 0.04, -0.05], [length, 0.1, 1.5], m.canvas, [0, 0, 0], true);
+      const buttons = Math.max(2, Math.round(length / 0.34));
+      for (let index = 0; index < buttons; index += 1) {
+        const along = -length / 2 + ((index + 0.5) * length) / buttons;
+        this.shape("sphere", quilt, [along, 0.08, index % 2 ? 0.45 : 0.1], [0.09, 0.05, 0.09], m.vermilion, [0, 0, 0], true);
+        this.shape("box", quilt, [along + length / buttons / 2, 0.07, -0.05], [0.02, 0.07, 1.5], m.plasterWarm, [0, 0, 0], true);
+      }
     }
   }
 
@@ -1245,6 +1456,59 @@ export class Stage {
       vat.weir.enabled = state.over === "weir";
     });
 
+    game.lifts.forEach((state, index) => {
+      const lift = this.hoists[index];
+      if (!lift) return;
+      const def = lift.def;
+      const top = def.head + 0.32;
+      lift.car.setLocalPosition(def.x, state.y, 0);
+      const hang = Math.max(0.05, top - state.y - def.tall);
+      lift.rope.setLocalScale(0.05, hang, 0.05);
+      lift.rope.setLocalPosition(def.x, top - hang / 2, -0.3);
+      lift.pan.setLocalPosition(def.pan.x, state.pan, 0);
+      const drop = Math.max(0.05, top - state.pan - 1.1);
+      lift.panRope.setLocalScale(0.05, drop, 0.05);
+      lift.panRope.setLocalPosition(def.pan.x, top - drop / 2, -0.3);
+      lift.drum.setLocalEulerAngles(0, 0, (state.y - def.floor) * 150);
+      state.doors.forEach((door, at) => {
+        const entity = lift.doors[at];
+        if (entity) entity.enabled = !door.open;
+      });
+      state.gates.forEach((open, at) => {
+        const gate = lift.gates[at];
+        if (!gate) return;
+        gate.k += ((open ? 1 : 0) - gate.k) * Math.min(1, dt * 12);
+        gate.entity.setLocalScale(1, 1 - 0.88 * gate.k, 1);
+      });
+      // Where the next bale goes: on the pan, and on the roof of the car.
+      const pulse = 1 + Math.sin(this.clock * 4) * 0.03;
+      const [onPan, onRoof] = lift.marks;
+      if (onPan && onRoof) {
+        onPan.enabled = onRoof.enabled = !game.over;
+        onPan.setLocalPosition(def.pan.x, state.pan + (state.up + 0.5) * (BALE_H + 0.01), 0);
+        onPan.setLocalScale(pulse, pulse, 1);
+        onRoof.setLocalPosition(def.x, state.y + def.tall + 0.02 + (state.down + 0.5) * (BALE_H + 0.01), 0);
+        onRoof.setLocalEulerAngles(0, 0, def.side * LIFT_TILT * RAD);
+        onRoof.setLocalScale(pulse, pulse, 1);
+      }
+    });
+
+    game.barrels.forEach((state, index) => {
+      const keg = this.kegs[index];
+      if (!keg) return;
+      const def = keg.def;
+      keg.keg.setLocalPosition(state.x, state.y, 0);
+      keg.keg.setLocalEulerAngles(0, 0, state.turn * RAD);
+      keg.k += ((state.state === "chocked" ? 0 : 1) - keg.k) * Math.min(1, dt * 10);
+      keg.pan.setLocalPosition(def.pan.x, def.pan.y - 0.14 * keg.k, 0);
+      keg.pan.setLocalEulerAngles(0, 0, 5 * keg.k);
+      keg.chock.enabled = state.state === "chocked";
+      keg.crates.enabled = state.crates;
+      keg.lid.enabled = state.state === "sunk";
+      keg.kick = Math.max(0, keg.kick - dt * 3);
+      keg.lever.setLocalEulerAngles(0, 0, Math.sin(keg.kick * Math.PI) * 16);
+    });
+
     // The hook is let down in front of the house as his time runs out, and goes back up if he gets away.
     if (this.claw && this.ending?.kind !== "caught") {
       const hook = game.phase === "run" ? game.hook : 0;
@@ -1442,6 +1706,49 @@ export class Stage {
       case "splash":
         this.burst(event.x, event.y, m.spray, 18, 0.3, 4.4);
         this.shake = Math.max(this.shake, 0.2);
+        break;
+      case "hoist":
+        this.burst(event.x, event.y - 0.2, m.dust, 5, 0.2, 1.4);
+        this.shake = Math.max(this.shake, 0.12);
+        break;
+      case "landing":
+        this.burst(event.x - 0.7, event.y, m.dust, 4, 0.2, 1.4);
+        this.burst(event.x + 0.7, event.y, m.dust, 4, 0.2, 1.4);
+        this.shake = Math.max(this.shake, 0.18);
+        break;
+      case "roll": {
+        const keg = this.kegs[0];
+        if (keg) this.burst(keg.def.x - keg.def.r, keg.def.y - keg.def.r * 0.7, m.vermilion, 6, 0.16, 3);
+        this.burst(event.x, event.y, m.dust, 6, 0.24, 1.8);
+        this.shake = Math.max(this.shake, 0.3);
+        break;
+      }
+      case "tread": {
+        const keg = this.kegs[0];
+        if (keg) keg.kick = 1;
+        this.burst(event.x, event.y - 0.6, m.dust, 6, 0.22, 2);
+        if (event.threw) {
+          this.burst(egg.x, egg.y - 0.3, m.hay, 10, 0.26, 3);
+          this.burst(egg.x, egg.y - 0.3, m.hayDark, 5, 0.2, 2);
+        }
+        this.shake = Math.max(this.shake, 0.3);
+        break;
+      }
+      case "crush":
+        this.burst(event.x, event.y, m.hay, 16, 0.5, 4.5);
+        this.burst(event.x, event.y, m.hayDark, 8, 0.3, 3);
+        this.shake = Math.max(this.shake, 0.4);
+        break;
+      case "smash":
+        this.burst(event.x, event.y, m.oak, 14, 0.4, 5);
+        this.burst(event.x, event.y - 0.4, m.oakDark, 10, 0.3, 4);
+        this.burst(event.x, event.y + 0.4, m.dust, 6, 0.3, 2);
+        this.shake = Math.max(this.shake, 0.6);
+        break;
+      case "bung":
+        this.burst(event.x, event.y + 0.8, m.dust, 12, 0.34, 3);
+        this.burst(event.x, event.y + 0.8, m.oak, 6, 0.24, 2.4);
+        this.shake = Math.max(this.shake, 0.7);
         break;
       case "knock":
         this.burst(event.x, event.y, m.dust, 7, 0.34, 2.4);

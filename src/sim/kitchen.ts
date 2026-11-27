@@ -91,6 +91,11 @@ const FLOAT_DEEP = 0.2;
 const RAFT_LEAN = 0.22;
 /** One with nobody on it bobs there this long, and then the water takes it out. */
 export const WASH = 0.4;
+/** How fast a dumbwaiter's car goes, and how much its floor and its roof are tilted. */
+export const LIFT_SPEED = 3;
+export const LIFT_TILT = 0.1;
+/** How fast something has to be going to do damage: a barrel to straw and to him. */
+const BARREL_HURT = 1.2;
 export const DOOR_TURN = Math.PI / 3;
 const QUARTER = Math.PI / 2;
 /** How many times round it will carry him before the clockwork has run down. */
@@ -250,6 +255,68 @@ export interface TankDef {
   tap: { x: number; y: number };
 }
 
+/**
+ * A dumbwaiter: a car in a shaft, hung against a gold pan. Every bale on the pan hauls the car
+ * up a landing, and every bale on its roof takes it down one. With the car a landing below
+ * him its roof is his way over the shaft; its own floor falls to one side, and he goes out
+ * that way wherever the shaft has an opening.
+ */
+export interface LiftDef {
+  /** The middle of the shaft, and half the width of the car. */
+  x: number;
+  half: number;
+  /**
+   * The car's floor at the bottom landing; how far apart the landings are; the highest of them,
+   * counting the bottom as nought; and the car, from its floor to the top of its roof.
+   */
+  floor: number;
+  storey: number;
+  floors: number;
+  tall: number;
+  /** The side its floor falls to. Its roof falls the other way. */
+  side: 1 | -1;
+  /** The top of the shaft, where the windlass is. */
+  head: number;
+  /** The ways through the shaft's walls. */
+  openings: Array<{ side: 1 | -1; y0: number; y1: number }>;
+  /** The landings with a gate across them. A gate is shut unless the car is there. */
+  gates: Array<{ side: 1 | -1; floor: number }>;
+  /** The pan: the middle of its top face with the car at the bottom, how wide it is, and how far it comes down for each landing the car goes up. */
+  pan: { x: number; y: number; w: number; step: number };
+}
+
+/**
+ * A barrel on a rack, held by a chock. A bale on the pan knocks the chock out and the barrel
+ * goes down its run: over the rails across the gap, over the treadle, off the end, through
+ * the crates and into the pit. Nothing stops it, and nothing in its way is spared.
+ */
+export interface BarrelDef {
+  /** Where it stands, and how big it is. */
+  x: number;
+  y: number;
+  r: number;
+  pan: { x: number; y: number; w: number };
+  /** The rails over the gap in its run: a barrel's length apart, with nothing between them. */
+  rails: { x0: number; y0: number; x1: number; y1: number };
+  /** The bucket under the gap; the treadle beyond it; and how whoever is in the bucket is thrown when the barrel is on the treadle. */
+  bucket: { x0: number; x1: number; y0: number; y1: number };
+  tread: { x0: number; x1: number };
+  toss: { x: number; y: number };
+  /** The crates across its way lower down. */
+  crates: { x0: number; x1: number; y0: number; y1: number };
+  /** The pit it ends in: the middle, the floor it is cut in, and how wide. */
+  pit: { x: number; y: number; w: number };
+}
+
+/** A feather bed on a shelf: he wallows down it at a crawl, whatever he was doing before. Its top face runs from one point to another. */
+export interface MatDef {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  crawl: number;
+}
+
 export interface LevelDef {
   /** A short name for code and saved games, and the name the player sees. */
   key: string;
@@ -275,6 +342,9 @@ export interface LevelDef {
   doors: DoorDef[];
   flaps: FlapDef[];
   tanks: TankDef[];
+  lifts: LiftDef[];
+  barrels: BarrelDef[];
+  mats: MatDef[];
   pits: PitDef[];
   /** Places there is no way out of: the hook has him out of one in `CAGE` seconds. */
   cages: Array<{ x0: number; x1: number; y0: number; y1: number }>;
@@ -371,6 +441,9 @@ export const LARDER: LevelDef = {
   doors: [],
   flaps: [],
   tanks: [],
+  lifts: [],
+  barrels: [],
+  mats: [],
   cages: [],
   pits: [{ x: PIT.x, y: lowAt(PIT.x) - WELL_DEEP, w: PIT.w, pan: FLOOR + 0.7, hung: false }],
   sockets: [
@@ -413,6 +486,23 @@ function lowered(level: LevelDef, by: number): LevelDef {
       pan: { ...tank.pan, y: tank.pan.y - by },
       tap: { x: tank.tap.x, y: tank.tap.y - by },
     })),
+    lifts: level.lifts.map((lift) => ({
+      ...lift,
+      floor: lift.floor - by,
+      head: lift.head - by,
+      openings: lift.openings.map((opening) => ({ side: opening.side, y0: opening.y0 - by, y1: opening.y1 - by })),
+      pan: { ...lift.pan, y: lift.pan.y - by },
+    })),
+    barrels: level.barrels.map((barrel) => ({
+      ...barrel,
+      y: barrel.y - by,
+      pan: { ...barrel.pan, y: barrel.pan.y - by },
+      rails: { ...barrel.rails, y0: barrel.rails.y0 - by, y1: barrel.rails.y1 - by },
+      bucket: { ...barrel.bucket, y0: barrel.bucket.y0 - by, y1: barrel.bucket.y1 - by },
+      crates: { ...barrel.crates, y0: barrel.crates.y0 - by, y1: barrel.crates.y1 - by },
+      pit: { ...barrel.pit, y: barrel.pit.y - by },
+    })),
+    mats: level.mats.map((mat) => ({ ...mat, y0: mat.y0 - by, y1: mat.y1 - by })),
     pits: level.pits.map((pit) => ({ ...pit, y: pit.y - by, pan: pit.pan - by })),
     cages: level.cages.map((cage) => ({ ...cage, y0: cage.y0 - by, y1: cage.y1 - by })),
     sockets: level.sockets.map((socket) => ({
@@ -547,6 +637,9 @@ const SCULLERY_HERE: LevelDef = {
   doors: [],
   flaps: [],
   tanks: [],
+  lifts: [],
+  barrels: [],
+  mats: [],
   pits: [
     { x: GAP.x, y: rackAt(GAP.x) - GAP_DEEP, w: GAP.w, pan: rackAt(GAP.x) - GAP_DEEP - GAP.hang, hung: true },
     { x: DRAIN.x, y: DRAIN_Y - BALE_H, w: DRAIN.w, pan: FLOOR + 0.7, hung: false },
@@ -644,6 +737,9 @@ const MILL_HERE: LevelDef = {
   doors: [],
   flaps: [],
   tanks: [],
+  lifts: [],
+  barrels: [],
+  mats: [],
   cages: [],
   wheels: [
     {
@@ -674,7 +770,8 @@ const MILL_HERE: LevelDef = {
 export const MILLROOM: LevelDef = lowered(MILL_HERE, STOREY * 2);
 
 /** The buttery's revolving door, and how far out its drum comes. */
-const TURN = { x: -1, y: 26, r: 1.5 };
+/** The whole of it hangs a little down from the ceiling, so that the brake over the drum has room for its bale. */
+const TURN = { x: -1, y: 25, r: 1.5 };
 const DRUM = TURN.r + 0.06 + DOOR_WALL;
 /** Half the width of the slot in the top of the drum. */
 const SLOT = DRUM * Math.sin((DOOR_SLOT * Math.PI) / 180);
@@ -690,12 +787,17 @@ const backAt = (x: number): number => BACKWAY.y + BACKWAY.fall * (x - BACKWAY.x)
 /** The part of it over the see-saw is a flap, hinged to let him up through it. */
 const FLAP = { x0: 2.45, x1: 4 };
 /** The shelves under the two side doors: each begins at the lip of its shutter and falls away from the drum. */
-const SILL = { out: 1.1, y: TURN.y - 1.32, left: 1.85, right: 3.3 };
+const SILL = { out: 1.1, y: TURN.y - 1.32, left: 1.7, right: 3.3 };
 const sillAt = (out: number): number => SILL.y - 0.36 * (out - SILL.out);
 /** The pan on the brake lever, up over the drum. */
-const BRAKE = { x: TURN.x + 0.3, y: 30.15, w: 1.5 };
-/** The see-saw in the corner under the right-hand shelf: its seat is against the wall. */
-const TOSS = { x: 2.6, y: 22, seat: 1.25, load: 1.75, tip: 0.31 };
+const BRAKE = { x: TURN.x + 0.3, y: TURN.y + 4.15, w: 1.5 };
+/**
+ * The see-saw in the corner under the right-hand shelf: its seat is against the wall. It stands
+ * well down from that shelf, so that it can be seen there is room over its gold end for a bale.
+ */
+const TOSS = { x: 2.6, y: TURN.y - 5.2, seat: 1.25, load: 1.75, tip: 0.31 };
+/** How hard it throws: enough to take him from down there up through the flap. */
+const TOSS_THROW = Math.sqrt(12.2 * 12.2 + 2 * G * 1.2);
 
 /**
  * The fourth screen, written as if it stood where the first does. He comes in through the hatch
@@ -717,7 +819,7 @@ const BUTTERY_HERE: LevelDef = {
   right: 4,
   top: 31,
   bottom: 13,
-  start: { x: -3.5, y: 30.2 },
+  start: { x: -3.5, y: TURN.y + 4.2 },
   shove: 3,
   bales: 4,
   spare: 1,
@@ -738,16 +840,17 @@ const BUTTERY_HERE: LevelDef = {
     box(TURN.x - 1.05, TURN.y - DRUM - 1.05, TURN.x + 1.05, TURN.y - DRUM - 0.85, "iron"),
 
     // The corner the right-hand shelf drops him into: straw up the wall, and a ledge for the see-saw to stand on.
-    box(3.93, TOSS.y + 1.7, 4, TOSS.y + 3.4, "nest", true),
+    box(3.93, TOSS.y + 1.7, 4, TOSS.y + 4.6, "nest", true),
     box(0.45, TOSS.y - 1.2, 4, TOSS.y - 0.75, "stone"),
     box(0.45, TOSS.y - 0.75, 0.7, TOSS.y + 0.75, "stone"),
 
-    // The roost, bottom left, with straw banked high up the wall behind it.
+    // The roost, bottom left. The straw up the wall behind it is thin, and goes all the way up
+    // to the shelf he comes off: a bank with a top to it was a ledge, and he could catch it.
     box(-4, FLOOR, -1.5, FLOOR + 0.5, "nest", true),
     box(-1.5, FLOOR, -1.2, FLOOR + 1, "nest", true),
-    box(-4, FLOOR, -3.7, FLOOR + 3.8, "nest", true),
+    box(-4, FLOOR, -3.88, TURN.y - 0.6, "nest", true),
   ],
-  seesaws: [{ x: TOSS.x, y: TOSS.y, seat: TOSS.seat, load: TOSS.load, side: 1, tip: TOSS.tip, cast: 0.012, throw: 12.2 }],
+  seesaws: [{ x: TOSS.x, y: TOSS.y, seat: TOSS.seat, load: TOSS.load, side: 1, tip: TOSS.tip, cast: 0.012, throw: TOSS_THROW }],
   wheels: [],
   doors: [
     {
@@ -760,12 +863,15 @@ const BUTTERY_HERE: LevelDef = {
   ],
   flaps: [{ x0: FLAP.x0, y0: backAt(FLAP.x0), x1: FLAP.x1, y1: backAt(FLAP.x1) }],
   tanks: [],
+  lifts: [],
+  barrels: [],
+  mats: [],
   pits: [{ x: TURN.x, y: TURN.y - DRUM + 0.05, w: 2.1, pan: TURN.y - DRUM - 0.8, hung: true }],
   cages: [],
   sockets: [
-    { x: BRAKE.x, y0: BRAKE.y - 0.7, y1: 31, reach: 1.25, seat: { y: BRAKE.y + BALE_H / 2 + 0.02, turn: 0 } },
+    { x: BRAKE.x, y0: BRAKE.y - 0.7, y1: BRAKE.y + 1.85, reach: 1.25, seat: { y: BRAKE.y + BALE_H / 2 + 0.02, turn: 0 } },
     // The gold end of the see-saw, under the shelf.
-    { x: TOSS.x - 0.9, y0: TOSS.y - 0.5, y1: TOSS.y + 1.8, reach: 1, seat: { y: TOSS.y + 0.9 * Math.sin(TOSS.tip) + 0.48, turn: -TOSS.tip } },
+    { x: TOSS.x - 0.9, y0: TOSS.y - 0.5, y1: TOSS.y + 2.6, reach: 1, seat: { y: TOSS.y + 0.9 * Math.sin(TOSS.tip) + 0.48, turn: -TOSS.tip } },
   ],
   nest: { x0: -3.7, x1: -1.5, y0: FLOOR + 0.4, y1: FLOOR + 1.9 },
 };
@@ -793,14 +899,14 @@ const GUTTER = { flat: 0.45, x: -2.3, drop: 0.5 };
  * last of them tips him into a cistern with nothing in it. A bale in the bottom of it breaks
  * his fall, and when the water is let in the bale is a raft: it brings him up to the spout in
  * the left wall, and out of that into a pan, unless a bale is stood in the spout; then it
- * brings him up to the top of the right wall, and he rolls off it and drops into the nest.
+ * brings him up to the top of the right wall, and he rolls off it and drops on to the roost.
  * But a raft with nobody on it does not wait: let the water in before he is aboard and it is
  * over the wall and gone. Three bales, and four to do it with.
  */
 const CISTERN_HERE: LevelDef = {
   key: "cistern",
   name: "The Cistern",
-  ends: "nest",
+  ends: "roost",
   hatch: true,
   left: -4,
   right: 4,
@@ -858,6 +964,9 @@ const CISTERN_HERE: LevelDef = {
       tap: { x: 0.95, y: 23.1 },
     },
   ],
+  lifts: [],
+  barrels: [],
+  mats: [],
   pits: [{ x: -3.1, y: VAT.lip - GUTTER.drop, w: 1.8, pan: 16.85, hung: true }],
   cages: [],
   sockets: [
@@ -872,7 +981,203 @@ const CISTERN_HERE: LevelDef = {
 
 export const CISTERN: LevelDef = lowered(CISTERN_HERE, STOREY * 4);
 
-export const LEVELS: LevelDef[] = [LARDER, SCULLERY, MILLROOM, BUTTERY, CISTERN];
+/** The servery's dumbwaiter: where its car stands, and how high the way over its roof is with the car at the first landing. */
+const HOIST = { x: 0, half: 0.8, floor: 17, storey: 2.5, tall: 1.9, head: 27.1 };
+const SHAFT = HOIST.half + 0.02;
+const OVER = HOIST.floor + HOIST.storey + HOIST.tall;
+const FIRST = HOIST.floor + HOIST.storey;
+/** The shelf that brings him to the shaft, on the left, and the one that brings him back to it lower down, on the right. */
+const toShaft = (x: number): number => OVER + 0.1 + 0.36 * (-SHAFT - x);
+const backToShaft = (x: number): number => HOIST.floor + 0.1 + 0.36 * (x - SHAFT);
+
+/**
+ * The sixth screen, written as if it stood where the first does. A dumbwaiter stands in the
+ * middle of it, hung against a gold pan: every bale on the pan hauls the car up a landing,
+ * and every bale on the car's roof takes it down one. He comes in at the top right, and the
+ * long shelf brings him round to the left of the shaft at the height of the car's roof when
+ * the car is one landing up: so it has to be hauled up one, to be his bridge. On the far side
+ * he comes down to the bottom landing, where there is a gate that is shut unless the car is
+ * there: so it has to be brought down again to fetch him. And the way out is from the first
+ * landing, on the left: so, once he is in it, up it goes again. Three bales, and four to do
+ * it with.
+ */
+const SERVERY_HERE: LevelDef = {
+  key: "servery",
+  name: "The Servery",
+  ends: "roost",
+  hatch: true,
+  left: -4,
+  right: 4,
+  top: 31,
+  bottom: 13,
+  start: { x: 3.5, y: 30.2 },
+  shove: -3,
+  bales: 4,
+  spare: 1,
+  blocks: [
+    box(-4.8, 12.6, -4, 31.4, "wall"),
+    box(4, 12.6, 4.8, 31.4, "wall"),
+    box(-4, 13.4, 4, FLOOR, "stone"),
+
+    // The long shelf under the hatch, right across the room over the head of the shaft.
+    slab(-2.6, 29.6 - 0.36 * 6.6, 4, 29.6, 0.3, "wood"),
+    box(-4, toShaft(-4) - 0.2, -3.9, 28.4, "nest", true),
+    // Where he comes down from it: a bed, and a shelf to the shaft at the height of the car's roof.
+    slab(-4, toShaft(-4), -2, toShaft(-2), 0.3, "bed", true),
+    slab(-2, toShaft(-2), -SHAFT, toShaft(-SHAFT), 0.3, "wood"),
+
+    // Off the roof on the far side, and down to the bottom landing.
+    slab(SHAFT, OVER - 0.1, 2.7, OVER - 0.1 - 0.36 * (2.7 - SHAFT), 0.3, "wood"),
+    box(3.9, backToShaft(4) - 0.2, 4, OVER + 0.2, "nest", true),
+    slab(SHAFT, backToShaft(SHAFT), 2.4, backToShaft(2.4), 0.3, "wood"),
+    slab(2.4, backToShaft(2.4), 4, backToShaft(4), 0.3, "bed", true),
+
+    // Out of the car at the first landing, on the left, and off the end of that into the roost.
+    slab(-2.7, FIRST - 0.1 - 0.36 * (2.7 - SHAFT), -SHAFT, FIRST - 0.1, 0.3, "wood"),
+    box(-0.98, FLOOR, 0.98, HOIST.floor - 0.35, "stone"),
+    box(-4, FLOOR, -1.9, FLOOR + 0.5, "nest", true),
+    box(-1.9, FLOOR, -1.6, FLOOR + 1, "nest", true),
+    box(-4, FLOOR, -3.9, FLOOR + 5.2, "nest", true),
+  ],
+  seesaws: [],
+  wheels: [],
+  doors: [],
+  flaps: [],
+  tanks: [],
+  lifts: [
+    {
+      x: HOIST.x,
+      half: HOIST.half,
+      floor: HOIST.floor,
+      storey: HOIST.storey,
+      floors: 2,
+      tall: HOIST.tall,
+      side: -1,
+      head: HOIST.head,
+      openings: [
+        { side: -1, y0: FIRST - 0.1, y1: FIRST + 1.6 },
+        { side: -1, y0: OVER + 0.1, y1: OVER + 1.85 },
+        { side: 1, y0: HOIST.floor + 0.1, y1: HOIST.floor + 1.8 },
+        { side: 1, y0: OVER - 0.1, y1: OVER + 1.8 },
+      ],
+      gates: [
+        { side: 1, floor: 0 },
+        { side: -1, floor: 1 },
+      ],
+      pan: { x: 2.9, y: 25.6, w: 1.6, step: 0.9 },
+    },
+  ],
+  barrels: [],
+  mats: [],
+  pits: [],
+  cages: [],
+  sockets: [],
+  nest: { x0: -3.9, x1: -1.9, y0: FLOOR + 0.4, y1: FLOOR + 1.9 },
+};
+
+export const SERVERY: LevelDef = lowered(SERVERY_HERE, STOREY * 5);
+
+/** The cellar's barrel run: its height at the right wall, and its fall to the left. */
+const RUNWAY = { y: 24.6, fall: 0.3 };
+const runwayAt = (x: number): number => RUNWAY.y - RUNWAY.fall * (4 - x);
+const RUNWAY_TURN = Math.atan(RUNWAY.fall);
+/** The gap in it, with the bucket under; where the run ends; and the skid along the floor below. */
+const GAPE = { x0: -0.9, x1: 0.9, deep: 1.75 };
+const RUN_END = -2.1;
+const SKID = { y: 17.65, fall: 0.3, end: -0.55 };
+const skidAt = (x: number): number => SKID.y - SKID.fall * (x + 4);
+/** The pit at the foot of the skid, with the Queen's last pan in the bottom of it: just big enough for a barrel. */
+const VAULT = { x: 0.4, w: 1.76, pan: 14.95 };
+const CASK = { r: 0.85, at: 3.35 };
+const UNDER_RUN = -2.75;
+
+/**
+ * The seventh screen, written as if it stood where the first does. A barrel stands chocked at
+ * the top of its run, and he comes down on the run in front of it. Half way down there is a
+ * gap with rails over it: the barrel goes over on the rails, and he goes down between them
+ * into a bucket. That is where he has to be when the barrel is let go: it passes over his
+ * head, and on the far side of the gap it rolls over a treadle that throws the bucket up, and
+ * him out of it, on to the run behind the barrel. The barrel goes off the end, down to the
+ * floor, through the crates that are in his way and into the pit, which it stops. He follows
+ * it down, and wants a bale under him when he comes off the end: but not before the barrel
+ * has been by, or it is flattened. Two bales, and three to do it with.
+ */
+const CELLAR_HERE: LevelDef = {
+  key: "cellar",
+  name: "The Cellar",
+  ends: "nest",
+  hatch: true,
+  left: -4,
+  right: 4,
+  top: 31,
+  bottom: 13,
+  start: { x: -3.5, y: 30.2 },
+  shove: 3,
+  bales: 3,
+  spare: 1,
+  blocks: [
+    box(-4.8, 12.6, -4, 31.4, "wall"),
+    box(4, 12.6, 4.8, 31.4, "wall"),
+    box(-4, 13.4, 4, FLOOR, "stone"),
+
+    // The shelf under the hatch, and the padded board that stops him at the end of it.
+    slab(-4, 29.6, 0.7, 29.6 - 0.36 * 4.7, 0.3, "wood"),
+    box(2, 26.4, 2.3, 28.8, "nest", true),
+
+    // The run: the rack the barrel stands on, the bed he comes down on, and beyond the gap a feather bed.
+    slab(2.2, runwayAt(2.2), 4, runwayAt(4), 0.3, "wood"),
+    slab(GAPE.x1, runwayAt(GAPE.x1), 2.2, runwayAt(2.2), 0.3, "bed", true),
+    slab(RUN_END, runwayAt(RUN_END), GAPE.x0, runwayAt(GAPE.x0), 0.3, "bed", true),
+    // The bucket under the gap.
+    box(GAPE.x0 + 0.1, runwayAt(0) - GAPE.deep - 0.2, GAPE.x1 - 0.1, runwayAt(0) - GAPE.deep, "nest", true),
+    box(GAPE.x0 - 0.05, runwayAt(0) - GAPE.deep - 0.2, GAPE.x0 + 0.1, runwayAt(0) - GAPE.deep + 0.75, "nest", true),
+    box(GAPE.x1 - 0.1, runwayAt(0) - GAPE.deep - 0.2, GAPE.x1 + 0.05, runwayAt(0) - GAPE.deep + 0.95, "nest", true),
+
+    // The skid along the floor, on its plinth; the pit, with its tray; and the far side of the pit.
+    box(-4, FLOOR, SKID.end, 16.2, "stone"),
+    box(-4, 16.2, -2.4, 16.7, "stone"),
+    slab(-4, skidAt(-4), SKID.end, skidAt(SKID.end), 0.45, "wood"),
+    box(VAULT.x - VAULT.w / 2, VAULT.pan - 0.2, VAULT.x + VAULT.w / 2, VAULT.pan, "iron"),
+    box(VAULT.x + VAULT.w / 2, FLOOR, VAULT.x + VAULT.w / 2 + 0.6, skidAt(SKID.end), "stone"),
+
+    // The Empress Hen's nest, bottom right.
+    box(VAULT.x + VAULT.w / 2 + 0.6, FLOOR, 4, FLOOR + 0.5, "nest", true),
+    box(3.9, FLOOR, 4, FLOOR + 4.6, "nest", true),
+  ],
+  seesaws: [],
+  wheels: [],
+  doors: [],
+  flaps: [],
+  tanks: [],
+  lifts: [],
+  barrels: [
+    {
+      x: CASK.at - CASK.r * Math.sin(RUNWAY_TURN),
+      y: runwayAt(CASK.at) + CASK.r * Math.cos(RUNWAY_TURN),
+      r: CASK.r,
+      pan: { x: 3.15, y: 28.2, w: 1.5 },
+      rails: { x0: GAPE.x0, y0: runwayAt(GAPE.x0), x1: GAPE.x1, y1: runwayAt(GAPE.x1) },
+      bucket: { x0: GAPE.x0 + 0.1, x1: GAPE.x1 - 0.1, y0: runwayAt(0) - GAPE.deep, y1: runwayAt(0) - GAPE.deep + 1.2 },
+      tread: { x0: -1.6, x1: -1.1 },
+      toss: { x: -1, y: 7.5 },
+      crates: { x0: -1.6, x1: -1.1, y0: skidAt(-1.35) - 0.1, y1: skidAt(-1.35) + 1.8 },
+      pit: { x: VAULT.x, y: skidAt(SKID.end), w: VAULT.w },
+    },
+  ],
+  mats: [{ x0: RUN_END, y0: runwayAt(RUN_END), x1: GAPE.x0, y1: runwayAt(GAPE.x0), crawl: 0.3 }],
+  pits: [{ x: VAULT.x, y: skidAt(SKID.end), w: VAULT.w, pan: VAULT.pan, hung: true }],
+  cages: [],
+  sockets: [
+    { x: 3.15, y0: 27.5, y1: 30.2, reach: 1.2, seat: { y: 28.2 + BALE_H / 2 + 0.02, turn: 0 } },
+    // Under the end of the run, on the skid.
+    { x: UNDER_RUN, y0: skidAt(UNDER_RUN) - 1.2, y1: skidAt(UNDER_RUN) + 3.5, reach: 1.25, seat: { y: skidAt(UNDER_RUN) + BALE_H / 2 + 0.05, turn: -Math.atan(SKID.fall) } },
+  ],
+  nest: { x0: VAULT.x + VAULT.w / 2 + 0.6, x1: 3.9, y0: FLOOR + 0.4, y1: FLOOR + 1.9 },
+};
+
+export const CELLAR: LevelDef = lowered(CELLAR_HERE, STOREY * 6);
+
+export const LEVELS: LevelDef[] = [LARDER, SCULLERY, MILLROOM, BUTTERY, CISTERN, SERVERY, CELLAR];
 
 export type Phase = "ready" | "run" | "home" | "fried" | "broken" | "caught";
 
@@ -898,6 +1203,14 @@ export type GameEvent =
   | { type: "spill"; over: "spout" | "weir"; x: number; y: number }
   | { type: "wash"; id: number; over: "spout" | "weir"; x: number; y: number }
   | { type: "splash"; x: number; y: number }
+  | { type: "hoist"; way: 1 | -1; id: number; x: number; y: number }
+  | { type: "landing"; floor: number; x: number; y: number }
+  | { type: "roll"; x: number; y: number }
+  | { type: "tread"; threw: boolean; x: number; y: number }
+  | { type: "crush"; id: number; x: number; y: number }
+  | { type: "smash"; x: number; y: number }
+  | { type: "bung"; x: number; y: number }
+  | { type: "flat"; x: number; y: number }
   | { type: "caged"; x: number; y: number }
   | { type: "warn" }
   | { type: "caught" }
@@ -925,6 +1238,8 @@ interface Bale {
   /** In a cistern, where there is nowhere for it to burst to; and washed out of one. */
   tank: boolean;
   washed: boolean;
+  /** Made fast to the pan or the roof of a dumbwaiter: it goes where that goes. */
+  held: boolean;
 }
 
 interface Incoming {
@@ -1016,6 +1331,39 @@ export class Game {
     /** He has ridden it to a way out: it has done its work, and stays where it is. */
     rode: boolean;
   }> = [];
+  /** The dumbwaiters: where each car is, which landing it is bound for, and the bales made fast to its pan and its roof. */
+  private readonly hoists: Array<{
+    def: LiftDef;
+    car: RAPIER.RigidBody;
+    roof: RAPIER.Collider;
+    /** The car's own doors, and the rails along the edges of its roof: each stands open only while the car is at rest against a way through the shaft. */
+    doors: Array<{ collider: RAPIER.Collider; side: 1 | -1; above: boolean; open: boolean }>;
+    pan: RAPIER.RigidBody;
+    plate: RAPIER.Collider;
+    gates: RAPIER.Collider[];
+    y: number;
+    speed: number;
+    floor: number;
+    moving: boolean;
+    up: Bale[];
+    down: Bale[];
+    aboard: boolean;
+    over: boolean;
+  }> = [];
+  /** The barrels: chocked, on their way, or down the pit; whether the treadle has been trodden; and the crates, while they stand. */
+  private readonly casks: Array<{
+    def: BarrelDef;
+    body: RAPIER.RigidBody;
+    collider: RAPIER.Collider;
+    pan: RAPIER.Collider;
+    crates: RAPIER.Collider | null;
+    state: "chocked" | "rolling" | "sunk";
+    trod: boolean;
+  }> = [];
+  /** Rails that carry a barrel and nothing else: they are in nobody's way but a barrel's. */
+  private readonly rails = new Set<number>();
+  /** Somewhere the hook is slow to come to: a seat, a dumbwaiter's car, the bucket under a barrel's run. */
+  private waiting = false;
   /** The padded seats: he sinks into one and stays put. And the cushions he only wallows across. */
   private readonly seats = new Set<number>();
   /** The balls that stand in for the weight of a plank or a wheel: they touch nothing, and are in nothing's way. */
@@ -1204,6 +1552,103 @@ export class Game {
       this.gates.push({ body, def, pan, shutters, state: "still", turned: 0, wound: 0, target: -1, braked: false, open: null, at: null, out: false, barred: Boolean(def.bar) });
     }
 
+    for (const def of level.lifts) {
+      // The shaft: a wall either side of the car, with ways through. Smooth, so that he slides up and down them.
+      const foot = def.floor - 0.35;
+      for (const side of [-1, 1] as const) {
+        const gaps = def.openings.filter((opening) => opening.side === side).sort((a, b) => a.y0 - b.y0);
+        let from = foot;
+        for (const span of [...gaps, { y0: def.head, y1: def.head }]) {
+          if (span.y0 > from + 0.02) {
+            this.world.createCollider(
+              RAPIER.ColliderDesc.cuboid(0.075, (span.y0 - from) / 2, 1)
+                .setTranslation(def.x + side * (def.half + 0.105), (from + span.y0) / 2, 0)
+                .setFriction(0.1)
+                .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min)
+                .setRestitution(0),
+              ground,
+            );
+          }
+          from = span.y1;
+        }
+      }
+      // The car goes where the bales send it, and nothing he does can move it.
+      const car = this.world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(def.x, def.floor, 0));
+      // Its floor is quilted, and falls to the side he leaves by; its roof is bare board, and falls the other way.
+      const pad = this.world.createCollider(
+        RAPIER.ColliderDesc.cuboid(def.half, 0.1, 0.8)
+          .setTranslation(0, -0.1, 0)
+          .setRotation(quat(-def.side * LIFT_TILT))
+          .setFriction(0.6)
+          .setRestitution(0),
+        car,
+      );
+      this.soft.add(pad.handle);
+      const roof = this.world.createCollider(
+        RAPIER.ColliderDesc.cuboid(def.half, 0.1, 0.8)
+          .setTranslation(0, def.tall - 0.1, 0)
+          .setRotation(quat(def.side * LIFT_TILT))
+          .setFriction(0.8)
+          .setRestitution(0),
+        car,
+      );
+      // Doors to the car and rails to its roof go up and down with it, so that he is never
+      // rubbed against the shaft: against a corner of that, a rising floor would have him out like a pip.
+      const doors: Array<{ collider: RAPIER.Collider; side: 1 | -1; above: boolean; open: boolean }> = [];
+      for (const side of [-1, 1] as const) {
+        const door = this.world.createCollider(
+          RAPIER.ColliderDesc.cuboid(0.04, (def.tall - 0.2) / 2, 0.8).setTranslation(side * (def.half - 0.04), (def.tall - 0.2) / 2, 0).setFriction(0.3).setRestitution(0),
+          car,
+        );
+        this.soft.add(door.handle);
+        doors.push({ collider: door, side, above: false, open: false });
+        const rail = this.world.createCollider(RAPIER.ColliderDesc.cuboid(0.04, 0.3, 0.8).setTranslation(side * (def.half - 0.04), def.tall + 0.3, 0).setFriction(0.3).setRestitution(0), car);
+        doors.push({ collider: rail, side, above: true, open: false });
+      }
+      const pan = this.world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(def.pan.x, def.pan.y, 0));
+      const plate = this.world.createCollider(RAPIER.ColliderDesc.cuboid(def.pan.w / 2, 0.05, 0.6).setTranslation(0, -0.05, 0).setFriction(1).setRestitution(0), pan);
+      const gates = def.gates.map((each) => {
+        const gate = this.world.createCollider(
+          RAPIER.ColliderDesc.cuboid(0.05, 0.9, 0.8)
+            .setTranslation(def.x + each.side * (def.half + 0.13), def.floor + each.floor * def.storey + 0.95, 0)
+            .setFriction(0.3)
+            .setRestitution(0),
+          ground,
+        );
+        gate.setEnabled(each.floor !== 0);
+        return gate;
+      });
+      this.hoists.push({ def, car, roof, doors, pan, plate, gates, y: def.floor, speed: 0, floor: 0, moving: false, up: [], down: [], aboard: false, over: false });
+    }
+
+    for (const def of level.barrels) {
+      // It stands until its chock is knocked out. It is heavy, and it is not soft.
+      const body = this.world.createRigidBody(
+        RAPIER.RigidBodyDesc.fixed().setTranslation(def.x, def.y, 0).enabledTranslations(true, true, false).enabledRotations(false, false, true).setCanSleep(false).setCcdEnabled(true),
+      );
+      const collider = this.world.createCollider(RAPIER.ColliderDesc.ball(def.r).setDensity(2).setFriction(0.9).setRestitution(0).setCollisionGroups(0x0003ffff), body);
+      // The rails over the gap are for it alone: he and his bales go down between them.
+      const rail = slab(def.rails.x0, def.rails.y0, def.rails.x1, def.rails.y1, 0.2, "iron");
+      this.rails.add(
+        this.world.createCollider(
+          RAPIER.ColliderDesc.cuboid(rail.w / 2 + 0.05, rail.h / 2, 1).setTranslation(rail.x, rail.y, 0).setRotation(quat(rail.turn)).setFriction(0.9).setRestitution(0).setCollisionGroups(0x00020002),
+          ground,
+        ).handle,
+      );
+      const pan = this.world.createCollider(
+        RAPIER.ColliderDesc.cuboid(def.pan.w / 2, 0.05, 0.6).setTranslation(def.pan.x, def.pan.y - 0.05, 0).setFriction(1).setRestitution(0),
+        ground,
+      );
+      const crates = this.world.createCollider(
+        RAPIER.ColliderDesc.cuboid((def.crates.x1 - def.crates.x0) / 2, (def.crates.y1 - def.crates.y0) / 2, 1)
+          .setTranslation((def.crates.x0 + def.crates.x1) / 2, (def.crates.y0 + def.crates.y1) / 2, 0)
+          .setFriction(0.8)
+          .setRestitution(0),
+        ground,
+      );
+      this.casks.push({ def, body, collider, pan, crates, state: "chocked", trod: false });
+    }
+
     for (const def of level.flaps) {
       const board = slab(def.x0, def.y0, def.x1, def.y1, 0.16, "wood");
       const collider = this.world.createCollider(
@@ -1224,7 +1669,8 @@ export class Game {
     );
     const hull = RAPIER.ColliderDesc.convexHull(eggPoints());
     if (!hull) throw new Error("no hull for the egg");
-    this.eggCollider = this.world.createCollider(hull.setDensity(1).setFriction(0.8).setRestitution(0.05), this.eggBody);
+    // He and his bales are of one kind, which the rails of a barrel run let through.
+    this.eggCollider = this.world.createCollider(hull.setDensity(1).setFriction(0.8).setRestitution(0.05).setCollisionGroups(0x0005ffff), this.eggBody);
     this.eggBody.setGravityScale(0, false);
     this.last = { x: 0, y: 0 };
   }
@@ -1304,6 +1750,30 @@ export class Game {
     }));
   }
 
+  get lifts(): Array<{ def: LiftDef; y: number; floor: number; moving: boolean; pan: number; up: number; down: number; gate: boolean; gates: boolean[]; aboard: boolean; over: boolean; doors: Array<{ side: 1 | -1; above: boolean; open: boolean }> }> {
+    return this.hoists.map((hoist) => ({
+      def: hoist.def,
+      y: hoist.y,
+      floor: hoist.floor,
+      moving: hoist.moving,
+      pan: hoist.def.pan.y - (hoist.def.pan.step * (hoist.y - hoist.def.floor)) / hoist.def.storey,
+      up: hoist.up.length,
+      down: hoist.down.length,
+      gate: !hoist.gates[0]!.isEnabled(),
+      gates: hoist.gates.map((gate) => !gate.isEnabled()),
+      aboard: hoist.aboard,
+      over: hoist.over,
+      doors: hoist.doors.map((door) => ({ side: door.side, above: door.above, open: door.open })),
+    }));
+  }
+
+  get barrels(): Array<Pose & { def: BarrelDef; state: "chocked" | "rolling" | "sunk"; trod: boolean; crates: boolean }> {
+    return this.casks.map((cask) => {
+      const p = cask.body.translation();
+      return { x: p.x, y: p.y, turn: turnOf(cask.body.rotation()), def: cask.def, state: cask.state, trod: cask.trod, crates: cask.crates !== null };
+    });
+  }
+
   get flaps(): Array<{ def: FlapDef; open: boolean }> {
     return this.valves.map((valve) => ({ def: valve.def, open: valve.open }));
   }
@@ -1317,8 +1787,8 @@ export class Game {
   get hook(): number {
     if (this.phase === "caught") return 1;
     if (this.phase !== "run") return 0;
-    const patience = this.inSeat ? SEAT_IDLE : IDLE;
-    const warn = this.inSeat ? SEAT_WARN : IDLE_WARN;
+    const patience = this.waiting ? SEAT_IDLE : IDLE;
+    const warn = this.waiting ? SEAT_WARN : IDLE_WARN;
     return Math.max(0, Math.min(1, Math.max((this.idle - warn) / (patience - warn), this.snared / CAGE)));
   }
 
@@ -1342,6 +1812,18 @@ export class Game {
     const level = this.level;
     const ax = Math.min(level.right - BALE_W / 2 - 0.02, Math.max(level.left + BALE_W / 2 + 0.02, x));
     const ay = Math.min(level.top - 1, Math.max(level.bottom + 1, y));
+    for (const hoist of this.hoists) {
+      // A dumbwaiter has two places for a bale, and both of them move: on its pan, and on its
+      // roof. Anywhere in the shaft is taken to mean the roof.
+      const def = hoist.def;
+      const plate = hoist.pan.translation().y;
+      if (Math.abs(x - def.pan.x) <= def.pan.w / 2 + 0.45 && y > def.pan.y - def.pan.step * def.floors - 0.8 && y < def.pan.y + 2.6) {
+        return { x: def.pan.x, y: this.lifted(def.pan.x, plate + BALE_H / 2 + 0.03), turn: 0 };
+      }
+      if (Math.abs(x - def.x) <= def.half + 0.4 && y > def.floor - 0.4 && y < def.head) {
+        return { x: def.x, y: this.lifted(def.x, hoist.y + def.tall + BALE_H / 2 + 0.12), turn: 0 };
+      }
+    }
     for (const socket of level.sockets) {
       if (Math.abs(x - socket.x) > socket.reach || y < socket.y0 || y > socket.y1) continue;
       if (socket.seat && this.free(socket.x, socket.seat.y, socket.seat.turn)) return { x: socket.x, y: socket.seat.y, turn: socket.seat.turn };
@@ -1356,7 +1838,7 @@ export class Game {
       if (Math.hypot(x - gate.def.x, y - gate.def.y) < gate.def.r + DOOR_WALL + 0.3) return false;
     }
     const shape = new RAPIER.Cuboid(BALE_W / 2 - 0.03, BALE_H / 2 - 0.03, 0.5);
-    return this.world.intersectionWithShape({ x, y, z: 0 }, quat(turn), shape, undefined, undefined, undefined, undefined, (collider) => !this.weights.has(collider.handle)) === null;
+    return this.world.intersectionWithShape({ x, y, z: 0 }, quat(turn), shape, undefined, undefined, undefined, undefined, (collider) => !this.weights.has(collider.handle) && !this.rails.has(collider.handle)) === null;
   }
 
   private lifted(x: number, y: number): number {
@@ -1394,12 +1876,15 @@ export class Game {
     this.revolve();
     this.swing();
     this.flood();
+    this.hoist();
     this.world.step();
     this.time += STEP;
     this.weigh();
     this.sluice();
     this.brake();
     this.stop();
+    this.stow();
+    this.trundle();
     if (this.phase !== "run") return;
 
     this.feel();
@@ -1419,11 +1904,11 @@ export class Game {
         .setAngularDamping(0.6),
     );
     const collider = this.world.createCollider(
-      RAPIER.ColliderDesc.cuboid(BALE_W / 2, BALE_H / 2, 0.4).setDensity(BALE_DENSITY).setFriction(1).setRestitution(0),
+      RAPIER.ColliderDesc.cuboid(BALE_W / 2, BALE_H / 2, 0.4).setDensity(BALE_DENSITY).setFriction(1).setRestitution(0).setCollisionGroups(0x0001ffff),
       body,
     );
     this.soft.add(collider.handle);
-    this.live.push({ id: bale.id, body, collider, fall: 0, spent: false, tank: false, washed: false });
+    this.live.push({ id: bale.id, body, collider, fall: 0, spent: false, tank: false, washed: false, held: false });
     this.events.push({ type: "bale", id: bale.id, x: bale.x, y });
   }
 
@@ -1577,6 +2062,166 @@ export class Game {
         this.scrap(bale);
       }
       this.events.push({ type: "turning", x: gate.def.x, y: gate.def.y });
+    }
+  }
+
+  /**
+   * A dumbwaiter goes to the landing its bales make: one up for each on the pan, one down for
+   * each on the roof. It does not set off while he is half in and half out of it.
+   */
+  private hoist(): void {
+    const p = this.eggBody.translation();
+    for (const hoist of this.hoists) {
+      const def = hoist.def;
+      const floor = Math.max(0, Math.min(def.floors, hoist.up.length - hoist.down.length));
+      const want = def.floor + floor * def.storey;
+      const out = Math.abs(p.x - def.x);
+      const level = p.y > hoist.y - 0.2 && p.y < hoist.y + def.tall - 0.2;
+      hoist.aboard = level && out < def.half - 0.3;
+      hoist.over = out < def.half + 0.2 && p.y >= hoist.y + def.tall - 0.2 && p.y < hoist.y + def.tall + 1.5;
+      const astride = level && out >= def.half - 0.3 && out < def.half + 0.38;
+      const gap = want - hoist.y;
+      const was = hoist.moving;
+      if (Math.abs(gap) < 1e-4 || (astride && !hoist.moving)) {
+        hoist.speed = 0;
+        hoist.moving = false;
+        if (Math.abs(gap) < 1e-4) hoist.y = want;
+      } else {
+        // It gets going over a moment, and eases in to the landing.
+        const wish = Math.sign(gap) * Math.min(LIFT_SPEED, Math.abs(gap) * 6 + 0.3);
+        hoist.speed += Math.max(-10 * STEP, Math.min(10 * STEP, wish - hoist.speed));
+        const move = hoist.speed * STEP;
+        hoist.y = Math.abs(move) >= Math.abs(gap) && Math.sign(move) === Math.sign(gap) ? want : hoist.y + move;
+        hoist.moving = true;
+      }
+      hoist.floor = floor;
+      if (was && !hoist.moving) this.events.push({ type: "landing", floor, x: def.x, y: hoist.y });
+      hoist.car.setNextKinematicTranslation({ x: def.x, y: hoist.y, z: 0 });
+      const plate = def.pan.y - (def.pan.step * (hoist.y - def.floor)) / def.storey;
+      hoist.pan.setNextKinematicTranslation({ x: def.pan.x, y: plate, z: 0 });
+      hoist.up.forEach((bale, index) => bale.body.setNextKinematicTranslation({ x: def.pan.x, y: plate + (index + 0.5) * (BALE_H + 0.01), z: 0 }));
+      hoist.down.forEach((bale, index) => bale.body.setNextKinematicTranslation({ x: def.x, y: hoist.y + def.tall + 0.02 + (index + 0.5) * (BALE_H + 0.01), z: 0 }));
+      for (const door of hoist.doors) {
+        const sill = hoist.y + (door.above ? def.tall : 0);
+        door.open = !hoist.moving && def.openings.some((opening) => opening.side === door.side && opening.y0 <= sill + 0.25 && opening.y1 >= sill + 1.3);
+        // Shut, they are there for him alone: a bale for the roof is wider than the rails are apart.
+        door.collider.setCollisionGroups(door.open ? 0 : 0x00040004);
+      }
+      // The gate at a landing is shut unless the car is standing there.
+      hoist.gates.forEach((gate, index) => gate.setEnabled(Math.abs(hoist.y - (def.floor + def.gates[index]!.floor * def.storey)) > 0.04));
+    }
+  }
+
+  /** A bale that comes down on a dumbwaiter's pan, or on its roof, is made fast there and counts. */
+  private stow(): void {
+    for (const hoist of this.hoists) {
+      for (const bale of this.live) {
+        if (bale.held) continue;
+        const touches = (other: RAPIER.Collider): boolean => {
+          let on = false;
+          this.world.contactPair(bale.collider, other, (manifold) => {
+            if (manifold.numContacts() > 0) on = true;
+          });
+          return on;
+        };
+        const way: 1 | -1 | 0 = touches(hoist.plate) || hoist.up.some((each) => touches(each.collider)) ? 1 : touches(hoist.roof) || hoist.down.some((each) => touches(each.collider)) ? -1 : 0;
+        if (way === 0) continue;
+        bale.held = true;
+        bale.body.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
+        bale.body.setRotation(quat(way > 0 ? 0 : hoist.def.side * LIFT_TILT), true);
+        (way > 0 ? hoist.up : hoist.down).push(bale);
+        const at = bale.body.translation();
+        this.events.push({ type: "hoist", way, id: bale.id, x: at.x, y: at.y });
+      }
+    }
+  }
+
+  /**
+   * A barrel. A bale on its pan lets it go. It flattens straw, and him; on the treadle it
+   * throws whoever is in the bucket; it goes through the crates; and the pit stops it.
+   */
+  private trundle(): void {
+    const p = this.eggBody.translation();
+    for (const cask of this.casks) {
+      const def = cask.def;
+      if (cask.state === "chocked") {
+        let on = false;
+        this.world.contactPairsWith(cask.pan, (other) => {
+          if (!this.live.some((bale) => bale.collider.handle === other.handle)) return;
+          this.world.contactPair(cask.pan, other, (manifold) => {
+            if (manifold.numContacts() > 0) on = true;
+          });
+        });
+        if (!on) continue;
+        cask.state = "rolling";
+        cask.body.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+        this.events.push({ type: "roll", x: def.x, y: def.y });
+        continue;
+      }
+      if (cask.state !== "rolling") continue;
+      const at = cask.body.translation();
+      const v = cask.body.linvel();
+      const fast = Math.hypot(v.x, v.y) > BARREL_HURT;
+      const touches = (other: RAPIER.Collider): boolean => {
+        let on = false;
+        this.world.contactPair(cask.collider, other, (manifold) => {
+          if (manifold.numContacts() > 0) on = true;
+        });
+        return on;
+      };
+      if (fast) {
+        for (const bale of [...this.live]) {
+          if (!touches(bale.collider)) continue;
+          const where = bale.body.translation();
+          this.events.push({ type: "crush", id: bale.id, x: where.x, y: where.y });
+          this.scrap(bale);
+        }
+        if (this.phase === "run" && touches(this.eggCollider)) {
+          this.phase = "broken";
+          this.cracks = SHELL + 1;
+          this.events.push({ type: "flat", x: p.x, y: p.y });
+          this.events.push({ type: "broken", x: p.x, y: p.y });
+        }
+      }
+      // On the treadle: up comes the bucket, and out goes whoever is in it.
+      if (!cask.trod && at.x > def.tread.x0 && at.x < def.tread.x1 && at.y > def.bucket.y1) {
+        cask.trod = true;
+        const inside = this.phase === "run" && p.x > def.bucket.x0 && p.x < def.bucket.x1 && p.y > def.bucket.y0 && p.y < def.bucket.y1;
+        this.events.push({ type: "tread", threw: inside, x: (def.tread.x0 + def.tread.x1) / 2, y: at.y - def.r });
+        if (inside) {
+          this.eggBody.setTranslation({ x: (def.bucket.x0 + def.bucket.x1) / 2, y: p.y, z: 0 }, true);
+          this.eggBody.setLinvel({ x: def.toss.x, y: def.toss.y, z: 0 }, true);
+          this.eggBody.setAngvel({ x: 0, y: 0, z: 4 }, true);
+          this.eggBody.setLinearDamping(0);
+          this.idle = 0;
+          this.warned = false;
+          this.flungAt = this.time;
+          this.softUntil = this.time + SOFT_GRACE * 2;
+          this.events.push({ type: "fling", speed: Math.hypot(def.toss.x, def.toss.y) });
+        }
+      }
+      // Through the crates as if they were not there.
+      const crates = def.crates;
+      if (cask.crates && at.x > crates.x0 - def.r - 0.12 && at.x < crates.x1 + def.r + 0.12 && at.y < crates.y1 + def.r && at.y > crates.y0 - def.r) {
+        this.world.removeCollider(cask.crates, true);
+        cask.crates = null;
+        this.events.push({ type: "smash", x: (crates.x0 + crates.x1) / 2, y: (crates.y0 + crates.y1) / 2 });
+      }
+      // Over the pit it stops going along, and goes down; and at the bottom it stays.
+      // (It is brought to the middle of it: a barrel to one side leaves a notch he would sit in.)
+      if (Math.abs(at.x - def.pit.x) < 0.45 && at.y < def.pit.y + def.r + 0.3) {
+        cask.body.setLinvel({ x: (def.pit.x - at.x) * 8, y: v.y, z: 0 }, true);
+        if (at.y < def.pit.y - 0.3 && Math.abs(v.y) < 0.4) {
+          cask.state = "sunk";
+          cask.body.setBodyType(RAPIER.RigidBodyType.Fixed, true);
+          // What is left of the crates comes down across the top of it: boards, flat, from one side of the pit to the other.
+          this.world.createCollider(
+            RAPIER.ColliderDesc.cuboid(def.pit.w / 2 + 0.12, 0.04, 1).setTranslation(def.pit.x, def.pit.y + 0.03, 0).setFriction(0.8).setRestitution(0),
+            this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed()),
+          );
+          this.events.push({ type: "bung", x: at.x, y: at.y });
+        }
+      }
     }
   }
 
@@ -1785,6 +2430,18 @@ export class Game {
    */
   private wallow(): void {
     const p = this.eggBody.translation();
+    for (const mat of this.level.mats) {
+      if (p.x < Math.min(mat.x0, mat.x1) - 0.05 || p.x > Math.max(mat.x0, mat.x1) + 0.05) continue;
+      const fall = (mat.y1 - mat.y0) / (mat.x1 - mat.x0);
+      const above = p.y - (mat.y0 + fall * (p.x - mat.x0));
+      if (above < 0.2 || above > 0.85) continue;
+      // Towards its low end.
+      const way = (mat.y1 > mat.y0 ? -1 : 1) * Math.sign(mat.x1 - mat.x0);
+      const v = this.eggBody.linvel();
+      this.eggBody.setLinvel({ x: way * mat.crawl, y: Math.min(v.y, 0.5), z: 0 }, true);
+      this.eggBody.setAngvel({ x: 0, y: 0, z: (-way * mat.crawl) / EGG.wide }, true);
+      this.softUntil = Math.max(this.softUntil, this.time + SOFT_GRACE);
+    }
     for (const plank of this.planks) {
       const def = plank.def;
       if (!def.pass) continue;
@@ -1842,7 +2499,7 @@ export class Game {
 
     if (this.time <= this.softUntil) {
       this.events.push({ type: "soft", jolt, x: p.x, y: p.y });
-      for (const bale of jolt >= BURST ? touch.bales.filter((each) => !each.tank) : []) {
+      for (const bale of jolt >= BURST ? touch.bales.filter((each) => !each.tank && !each.held) : []) {
         const at = bale.body.translation();
         this.events.push({ type: "burst", id: bale.id, x: at.x, y: at.y });
         this.scrap(bale);
@@ -1917,16 +2574,22 @@ export class Game {
     // carrying him round is taking him somewhere, however little he moves in it.
     const carried =
       this.gates.some((gate) => gate.state === "turning" && Math.hypot(p.x - gate.def.x, p.y - gate.def.y) < gate.def.r) ||
-      this.cisterns.some((tank) => tank.aboard && tank.rising);
+      this.cisterns.some((tank) => tank.aboard && tank.rising) ||
+      this.hoists.some((hoist) => hoist.moving && (hoist.aboard || hoist.over));
+    // In a dumbwaiter's car, or in the bucket under a barrel's run, the hook is as slow to come as it is to a see-saw's seat.
+    this.waiting =
+      this.inSeat ||
+      this.hoists.some((hoist) => hoist.aboard) ||
+      this.casks.some((cask) => p.x > cask.def.bucket.x0 && p.x < cask.def.bucket.x1 && p.y > cask.def.bucket.y0 && p.y < cask.def.bucket.y1);
     const still = !carried && Math.hypot(p.x - this.anchor.x, p.y - this.anchor.y) < STILL;
     if (!still) this.anchor = { x: p.x, y: p.y };
     this.idle = still ? this.idle + STEP : 0;
     if (!still) this.warned = false;
-    if (this.idle >= (this.inSeat ? SEAT_WARN : IDLE_WARN) && !this.warned) {
+    if (this.idle >= (this.waiting ? SEAT_WARN : IDLE_WARN) && !this.warned) {
       this.warned = true;
       this.events.push({ type: "warn" });
     }
-    if (this.idle >= (this.inSeat ? SEAT_IDLE : IDLE)) {
+    if (this.idle >= (this.waiting ? SEAT_IDLE : IDLE)) {
       this.phase = "caught";
       this.events.push({ type: "caught" });
     }

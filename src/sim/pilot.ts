@@ -82,9 +82,9 @@ export function butteryPlan(options: { first?: number | false; toss?: boolean | 
   // Back in the door after the see-saw: it is turning again, and has already been a quarter round.
   const again = (game: Game): boolean => game.doors[0]?.turning === true && round(game) > 1.001;
   return [
-    ...(first === false ? [] : [at((game) => game.time > first, -0.7, 30.5)]),
-    ...(toss === false ? [] : [at(toss === true ? settled : (game) => game.time > toss, 1.7, 22.6)]),
-    ...(second === false ? [] : [at((game) => again(game) && round(game) - 1 >= second, -0.7, 30.5)]),
+    ...(first === false ? [] : [at((game) => game.time > first, -0.7, 29.5)]),
+    ...(toss === false ? [] : [at(toss === true ? settled : (game) => game.time > toss, 1.7, 20.4)]),
+    ...(second === false ? [] : [at((game) => again(game) && round(game) - 1 >= second, -0.7, 29.5)]),
   ];
 }
 
@@ -107,6 +107,43 @@ export function cisternPlan(options: { raft?: number | false; plug?: number | fa
   ];
 }
 
+/**
+ * The sixth screen played properly: a bale on the pan at once, so that the car's roof is his
+ * bridge; one on the roof when he is over and off it, to bring the car down to the gate; and
+ * one more on the pan when he is in it. `fetch` and `up` as numbers are times to throw at,
+ * whatever he is doing.
+ */
+export function serveryPlan(options: { bridge?: number | false; fetch?: boolean | number; up?: boolean | number } = {}): Move[] {
+  const { bridge = 0.3, fetch = true, up = true } = options;
+  const at = (when: Move["when"], x: number, y: number): Move => ({ when, x, y: y - STOREY * 5 });
+  const crossed = (game: Game): boolean => game.egg.x > 1.3 && game.egg.y + STOREY * 5 < 22.5;
+  const aboard = (game: Game): boolean => game.lifts[0]?.aboard === true && !game.lifts[0].moving;
+  return [
+    ...(bridge === false ? [] : [at((game) => game.time > bridge, 2.9, 26.2)]),
+    ...(fetch === false ? [] : [at(fetch === true ? crossed : (game) => game.time > fetch, 0, 22)]),
+    ...(up === false ? [] : [at(up === true ? aboard : (game) => game.time > up, 2.9, 26.2)]),
+  ];
+}
+
+/**
+ * The seventh screen played properly: the barrel let go once he is in the bucket under its
+ * run, and a bale under the end of the run once the barrel has been through the crates.
+ * Either as a number is a time to throw at, whatever is going on.
+ */
+export function cellarPlan(options: { release?: boolean | number; cushion?: boolean | number } = {}): Move[] {
+  const { release = true, cushion = true } = options;
+  const at = (when: Move["when"], x: number, y: number): Move => ({ when, x, y: y - STOREY * 6 });
+  const bucketed = (game: Game): boolean => {
+    const bucket = game.barrels[0]?.def.bucket;
+    return bucket !== undefined && game.idle > 0.4 && game.egg.x > bucket.x0 && game.egg.x < bucket.x1 && game.egg.y > bucket.y0 && game.egg.y < bucket.y1;
+  };
+  const through = (game: Game): boolean => game.barrels[0]?.crates === false;
+  return [
+    ...(release === false ? [] : [at(release === true ? bucketed : (game) => game.time > release, 3.15, 28.6)]),
+    ...(cushion === false ? [] : [at(cushion === true ? through : (game) => game.time > cushion, -2.75, 18)]),
+  ];
+}
+
 /** Each room played properly, by its key. */
 export const PLANS: Record<string, () => Move[]> = {
   larder: () => larderPlan(),
@@ -114,6 +151,8 @@ export const PLANS: Record<string, () => Move[]> = {
   mill: () => millPlan(),
   buttery: () => butteryPlan(),
   cistern: () => cisternPlan(),
+  servery: () => serveryPlan(),
+  cellar: () => cellarPlan(),
 };
 
 /** A driver for tests and `?auto`: makes each move, in order, as soon as its moment comes. */
