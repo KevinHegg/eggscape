@@ -57,41 +57,32 @@ body {
   pointer-events: none;
 }
 
-#hud-top {
+/* What is left, while he is on his way down: his shell and the bales. Small, and at the
+   bottom, where it covers nothing that has to be seen. Nothing lies over the top of the room. */
+#tally {
   position: absolute;
-  top: calc(10px + var(--safe-top));
   left: 10px;
-  right: 10px;
+  bottom: calc(10px + var(--safe-bottom));
   display: flex;
   align-items: center;
   gap: 7px;
+  height: 30px;
+  padding: 0 9px 0 7px;
+  border: 2px solid var(--ink);
+  border-radius: 15px;
+  background: rgb(240 228 196 / 0.92);
+  box-shadow: 2px 2px 0 rgb(0 0 0 / 0.4);
 }
 
-#shell,
 #bales {
   display: flex;
   align-items: center;
-  gap: 6px;
-  height: 38px;
-  padding: 0 8px;
-  border: 2px solid var(--ink);
-  border-radius: 6px;
-  background: var(--vellum);
-  box-shadow: 2px 2px 0 rgb(0 0 0 / 0.5);
-  font: 700 17px/1 var(--ui);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-#bales {
-  flex: 1;
   gap: 4px;
-  min-width: 0;
 }
 
 .egg {
-  width: 17px;
-  height: 22px;
+  width: 15px;
+  height: 19px;
   flex: none;
   border: 2px solid var(--ink);
   border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%;
@@ -104,7 +95,6 @@ body {
 
 #shell.cracked-2 {
   background: var(--vermilion);
-  color: #fff6e6;
 }
 
 #shell.hit {
@@ -121,8 +111,8 @@ body {
 }
 
 #bales i {
-  width: 22px;
-  height: 14px;
+  width: 19px;
+  height: 12px;
   flex: none;
   border: 2px solid var(--ink);
   border-radius: 3px;
@@ -138,30 +128,37 @@ body {
   animation: knock 0.25s;
 }
 
-#redo,
-#sound {
+/* The sound is turned on and off from the cards, which are up whenever he is not on his way down. */
+.card button.sound,
+#ready button.sound {
   flex: none;
-  width: 38px;
-  height: 38px;
+  width: 34px;
+  min-height: 34px;
+  height: 34px;
   padding: 0;
   border: 2px solid var(--ink);
   border-radius: 50%;
   background: var(--vellum);
   color: var(--ink);
-  font: 700 20px/1 var(--ui);
-  pointer-events: auto;
-  touch-action: none;
-  box-shadow: 2px 2px 0 rgb(0 0 0 / 0.5);
+  font: 700 18px/1 var(--ui);
+  letter-spacing: 0;
+  box-shadow: 0 2px 0 var(--ink);
 }
 
-#sound.off {
+.card button.sound {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+}
+
+button.sound.off {
   opacity: 0.5;
   text-decoration: line-through;
 }
 
 #toast {
   position: absolute;
-  bottom: calc(12px + var(--safe-bottom));
+  bottom: calc(50px + var(--safe-bottom));
   left: 0;
   right: 0;
   display: flex;
@@ -367,12 +364,6 @@ button {
     transform: translateY(-50%);
   }
 
-  #hud-top {
-    left: 50%;
-    right: auto;
-    width: 420px;
-    transform: translateX(-50%);
-  }
 }
 
 .older {
@@ -387,21 +378,6 @@ button {
   color: var(--ink);
 }
 
-/* Which room of the house this is, under the top bar. */
-#room {
-  position: absolute;
-  top: calc(54px + var(--safe-top));
-  left: 0;
-  right: 0;
-  margin: 0;
-  text-align: center;
-  font: 600 13px var(--ui);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--vellum);
-  text-shadow: 0 1px 0 var(--ink), 0 0 6px rgb(29 21 18 / 0.7);
-}
-
 /* He is sitting ready: the room's name, and the button that lets him go. */
 #ready {
   position: absolute;
@@ -410,8 +386,8 @@ button {
   bottom: calc(14px + var(--safe-bottom));
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 8px 8px 8px 14px;
+  gap: 10px;
+  padding: 8px 8px 8px 10px;
   border: 3px solid var(--ink);
   border-radius: 10px;
   background: var(--vellum);
@@ -429,6 +405,13 @@ button {
 #ready p b {
   display: block;
   font: 700 22px var(--display);
+}
+
+#ready p span {
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.75;
 }
 
 #ready button {

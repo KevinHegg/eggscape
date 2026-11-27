@@ -16,22 +16,21 @@
       <div id="stage"></div>
 
       <div id="hud" hidden>
-        <header id="hud-top">
-          <div id="shell" title="The King's shell"><span class="egg" aria-hidden="true"></span><b id="shell-word">Whole</b></div>
+        <div id="tally" hidden>
+          <span id="shell" class="egg" title="The King's shell"></span>
           <div id="bales" title="Bales left to throw"></div>
-          <button type="button" id="redo" title="Start again" aria-label="Start again">↻</button>
-          <button type="button" id="sound" title="Sound" aria-label="Sound">♪</button>
-        </header>
-        <p id="room"></p>
+        </div>
         <div id="toast" aria-live="polite"></div>
         <div id="ready" hidden>
-          <p><b id="ready-name"></b> Look it over, then</p>
+          <button type="button" class="sound" title="Sound" aria-label="Sound">♪</button>
+          <p><b id="ready-name"></b><span id="ready-sub"></span></p>
           <button type="button" class="primary" id="let-go">Let him go</button>
         </div>
       </div>
 
       <section id="title" class="card">
-        <p class="eyebrow">A new try &middot; four rooms of the kitchen</p>
+        <button type="button" class="sound" title="Sound" aria-label="Sound">♪</button>
+        <p class="eyebrow">Five rooms of the kitchen</p>
         <h1>The Great Eggscape</h1>
         <p class="story">The Queen wants an omelette. The Egg King wants his mother.</p>
         <p class="story small">He falls through her kitchen by himself. All you can do is throw straw: <b>tap, and a bale lands there a moment later.</b> Straw is soft. Nothing else in a kitchen is. And keep him moving: if he stops, the Queen's hook comes down for him.</p>
@@ -43,6 +42,7 @@
       </section>
 
       <section id="result" class="card" hidden>
+        <button type="button" class="sound" title="Sound" aria-label="Sound">♪</button>
         <p class="eyebrow" id="result-eyebrow"></p>
         <h2 id="result-title"></h2>
         <div id="result-stars"></div>

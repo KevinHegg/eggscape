@@ -7,8 +7,8 @@ shelves, down drops, on to see-saws, past holes that lead to her frying pan. All
 do is have a straw bale thrown in: **tap, and a bale lands there a moment later.** Straw is
 soft. Nothing else in a kitchen is, bar water.
 
-This is a third try at the game, and so far it is four rooms, one under another: **The
-Larder**, **The Scullery**, **The Mill** and **The Buttery**. They were built to find out whether throwing
+This is a third try at the game, and so far it is five rooms, one under another: **The
+Larder**, **The Scullery**, **The Mill**, **The Buttery** and **The Cistern**. They were built to find out whether throwing
 bales is fun, how one room hands him on to the next, and whether each room can bring a new
 contraption without a new control. The house is one tall building and he falls down through it, but each room is a
 short game of its own: at the bottom of a room a hen keeps a **roost**, and once he is on it he
@@ -32,8 +32,9 @@ properly.
 - **Tap** anywhere in the kitchen and a bale is thrown there. It takes about half a second to
   arrive, so tap where he is going to be, not where he is.
 - **Press and slide** to see where the bale will go before you let go.
-- A few bales a room: five or four. **↻** (or **R**) starts the room
-  again at once; **M** mutes the sound.
+- A few bales a room: five or four, counted at the bottom left while he is on his way down.
+  Nothing is drawn over the top of the room. **R** starts the room again at once, and so
+  does the card at the end of a go; **♪** on a card (or **M**) mutes the sound.
 - At the top of a new room he sits on a hatch until you let him go, so there is time to look
   the room over first.
 
@@ -58,19 +59,31 @@ carries him over the top. While it has him there is time to get ready for what c
 
 The Buttery has a revolving door in it: a drum with one way in, at the top, and three shutters,
 right, bottom and left. It starts turning once he is inside. A bale on the gold pan of its brake
-stops it at the next shutter, and that shutter opens. Right is a long way home that costs two
-more bales; bottom is the pan; left is a straight drop into the nest. Leave it and the
-clockwork runs down with him back at the top, where the hook can reach.
+stops it at the next shutter, and that shutter opens. Left is the way to the roost, and it is
+barred. The bar is roped to the red board outside the right-hand shutter, and only his own
+weight on that board takes it off. So he goes out on the right first, into the seat of a
+see-saw in the corner; a bale on its gold end throws him back up through a flap to the top of
+the door; and the second time round the brake has to go on as he passes the bottom, so that it
+stops at the left. Bottom is the pan. Leave it and the clockwork runs down with him back at the
+top, where the hook can reach.
+
+The Cistern is the last room, and it is dry. Three shelves bring him to it. A bale in the bottom
+of it breaks his fall; then a bale on the gold pan lets the water in, and his bale is a raft.
+The water rises to the lowest way out. That is a spout in the left wall, which runs to a pan,
+unless a bale has been stood in its mouth; then it is the top of the right wall, and he rolls
+off his raft and drops into the Empress Hen's nest. But a raft with nobody on it does not wait
+at the top: let the water in before he is aboard and it is over the wall without him. An egg
+does not float.
 
 - **Only a knock hurts him.** His shell cracks when his velocity changes sharply against
   something hard. Two cracks he can carry; the third, or one great fall, is the end of him.
   Straw is soft wherever it is: in a bale, in a bed on a floor, banked up a wall. So is a
-  wheel with the water running on it.
+  wheel with the water running on it, and the water in the cistern.
 - **The Queen's hook has him if he stops.** It comes down from the top of the house like the
   claw in a fairground machine, and you can see it coming: four seconds of going nowhere, or
   a second and a half in a cage. It waits longer while he sits in a see-saw's seat.
 - **Stars**, for each room: get him through; not a crack on him; bales to spare (two in the
-  Larder and the Buttery, one in the Scullery and the Mill).
+  Larder, one in each of the others).
 
 ## Development
 
@@ -81,7 +94,8 @@ npx tsx scripts/kitchen.ts       # one run, event by event; throws as time:x,y
                                  #   npx tsx scripts/kitchen.ts 1.2:2.9,22.8 2:-1.1,18.9 4.8:0,24.2
                                  #   npx tsx scripts/kitchen.ts room=scullery 0.3:1.3,28.5 2.7:-3,24
                                  #   npx tsx scripts/kitchen.ts room=mill 0.3:1.75,30 2.7:3.2,21.2 4:0.6,19.2
-                                 #   npx tsx scripts/kitchen.ts room=buttery 5.6:2.75,28.6
+                                 #   npx tsx scripts/kitchen.ts room=buttery 0.3:-0.7,30.5 7:1.7,22.6 14.6:-0.7,30.5
+                                 #   npx tsx scripts/kitchen.ts room=cistern 1:0.6,19 2:-0.6,19.5 9.5:-1.5,27.2
 npm run build
 npm run check                    # typecheck, tests and build
 ```
@@ -90,7 +104,7 @@ npm run check                    # typecheck, tests and build
 src/sim/      rules and physics, headless (Rapier 3D held to one plane, fixed 60 Hz, no DOM,
               no Math.random)
   kitchen.ts    the rooms, the egg, the bales, the see-saws, the water wheel, the revolving
-                door, the holes, the hook and the one rule
+                door, the cistern, the holes, the hook and the one rule
   pilot.ts      a scripted player for each room, for tests and ?auto
 src/render/   PlayCanvas view; reads the sim, never writes it
   stage.ts      the kitchen as a doll's house with its front off

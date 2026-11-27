@@ -62,8 +62,15 @@ let flung = false;
 let lastKnock = 0;
 /** The pan he went into hangs under a gap, not the one on the stove. */
 let friedHung = false;
-/** Where the revolving door stopped, if it has. */
+/** Where the revolving door stopped, if it has, and whether that shutter stayed shut; what else has happened to it. */
 let stoppedAt: string | null = null;
+let stoppedShut = false;
+let unbarred = false;
+let reentered = false;
+/** In the cistern: the spout is stopped, the raft has gone without him and which way, and he is under water. */
+let plugged = false;
+let washed: "spout" | "weir" | null = null;
+let sunk = false;
 /** He is being shown coming down from the roost above, and cannot be let go until he has landed. */
 let arriving = false;
 
@@ -72,7 +79,8 @@ const OPENING: Record<string, [string, string]> = {
   larder: ["catch", "Tap where he will come down. A bale takes a moment to get there"],
   scullery: ["bridge", "A bale in the gap in the shelf, before he gets to it"],
   mill: ["sluice", "The wheel is dry. A bale on the gold pan by the tank lets the water in"],
-  buttery: ["door", "The door turns once he is in it. A bale on the gold pan stops it at the next shutter"],
+  buttery: ["door", "The left shutter is barred. A bale on the gold pan stops the door at the next shutter it comes to"],
+  cistern: ["raft", "The cistern is dry. A bale in the bottom of it, before he drops in"],
 };
 
 function show(id: "title" | "result" | "run"): void {
@@ -80,20 +88,16 @@ function show(id: "title" | "result" | "run"): void {
   $("result").hidden = id !== "result";
   $("hud").hidden = id === "title";
   drawReady();
-  measure();
-}
-
-/** Tell the view how much of the top of the screen the bar covers, so that nothing is shown under it. */
-function measure(): void {
-  const bar = $("hud-top").getBoundingClientRect();
-  stage.cover($("hud").hidden || bar.height === 0 ? 0 : bar.bottom + 6);
 }
 
 /** The bar that waits for him to be let go: there whenever he is sitting ready and nothing else is up. */
 function drawReady(): void {
   const waiting = Boolean(game) && game!.phase === "ready" && $("title").hidden && $("result").hidden && !driver && !stage.arriving;
   $("ready").hidden = !waiting;
-  if (game) $("ready-name").textContent = game.level.name;
+  if (game) {
+    $("ready-name").textContent = game.level.name;
+    $("ready-sub").textContent = `Room ${room + 1} of ${LEVELS.length} · ${game.level.bales} bales`;
+  }
 }
 
 function toast(text: string, kind: "" | "hint" | "bad" = ""): void {
@@ -124,12 +128,12 @@ function drawHud(current: Game): void {
   const shell = $("shell");
   shell.classList.toggle("cracked", current.cracks === 1);
   shell.classList.toggle("cracked-2", current.cracks >= 2);
-  $("shell-word").textContent = current.phase === "broken" ? "Broken" : current.cracks === 0 ? "Whole" : current.cracks === 1 ? "Cracked" : "One more";
-  $("room").textContent = `${current.level.name} · room ${room + 1} of ${LEVELS.length}`;
+  // Nothing is shown over the room but this, and this only while he is on his way down it.
+  $("tally").hidden = current.phase === "ready" || !$("title").hidden || !$("result").hidden;
 }
 
 function drawSound(): void {
-  $("sound").classList.toggle("off", sound.muted);
+  for (const button of Array.from(document.querySelectorAll("button.sound"))) button.classList.toggle("off", sound.muted);
 }
 
 /** Set a room up with him sitting ready in it. With `arrive`, he is seen coming down into it from there. */
@@ -148,6 +152,12 @@ function fresh(index = room, arrive: { x: number; y: number; turn: number } | nu
   flung = false;
   friedHung = false;
   stoppedAt = null;
+  stoppedShut = false;
+  unbarred = false;
+  reentered = false;
+  plugged = false;
+  washed = null;
+  sunk = false;
   accumulator = 0;
   $("toast").replaceChildren();
   drawHud(game);
@@ -224,7 +234,38 @@ function narrate(event: GameEvent, current: Game): void {
       for (const line of Array.from($("toast").querySelectorAll("p.hint"))) line.remove();
       break;
     case "water":
-      sound.mill();
+      if (current.level.tanks.length > 0) {
+        sound.splash();
+        if (!plugged) hint("spout", "The spout in the cistern's left wall runs to the pan. Stand a bale in its mouth");
+      } else {
+        sound.mill();
+      }
+      break;
+    case "plug":
+      plugged = true;
+      for (const line of Array.from($("toast").querySelectorAll("p.hint"))) line.remove();
+      break;
+    case "spill":
+      sound.splash();
+      break;
+    case "wash":
+      washed = event.over;
+      sound.splash();
+      toast("The raft has gone without him", "bad");
+      break;
+    case "splash":
+      sunk = true;
+      sound.splash();
+      break;
+    case "unbar":
+      unbarred = true;
+      sound.shutter();
+      toast("The bar is off!");
+      break;
+    case "release":
+      reentered = true;
+      sound.straw();
+      hint("again", "Round again. Brake as he passes the bottom, and it stops at the left");
       break;
     case "fling":
       flung = true;
@@ -241,7 +282,9 @@ function narrate(event: GameEvent, current: Game): void {
     case "port":
       sound.shutter();
       stoppedAt = event.port;
+      stoppedShut = event.shut;
       if (event.port === "top") toast("No way out at the top", "bad");
+      else if (event.shut) toast("Barred!", "bad");
       break;
     case "caged":
       sound.shutter();
@@ -280,7 +323,17 @@ function coach(current: Game): void {
   if (current.phase !== "run") return;
   const waits = current.level.seesaws.some((saw) => !saw.pass);
   if (waits && !flung && current.idle > 0.5 && seated(current)) {
-    hint("seesaw", "Drop a bale on the gold end of the plank. The higher it falls from, the harder he is thrown");
+    if (current.level.seesaws.some((saw) => !saw.pass && saw.throw !== undefined)) hint("back", "A bale on the gold end of the plank throws him back up to the door");
+    else hint("seesaw", "Drop a bale on the gold end of the plank. The higher it falls from, the harder he is thrown");
+  }
+  // In the cistern, once he is sitting on his bale, the water is next.
+  const vat = current.tanks[0];
+  if (vat && !vat.open && current.egg.x > vat.def.x0 && current.egg.x < vat.def.x1 && current.egg.y < vat.def.weir + 1.2 && current.idle > 0.3) {
+    hint("tap", "Now the water: a bale on the gold pan lets it in");
+  }
+  // And while he is still on the shelves, the spout wants stopping.
+  if (vat && !plugged && current.egg.y < current.level.top - 4.5 && current.egg.y > vat.def.weir + 2) {
+    hint("spout", "The spout in the cistern's left wall runs to the pan. Stand a bale in its mouth");
   }
   // In the scullery, once the gap is bridged, the long drop at the far wall is next; and then
   // the see-saw, which does not wait for him.
@@ -311,13 +364,21 @@ function verdict(current: Game): { eyebrow: string; title: string; line: string 
       }
       if (current.stars === 3) return { eyebrow: "Home", title: "Not a mark on him", line: "Into the nest, whole, and with straw to spare. The Empress Hen has counted him twice." };
       if (current.cracks > 0) return { eyebrow: "Home", title: "Home, and cracked", line: flung && lastKnock > 0 ? "He met something harder than straw on the way. A gentler throw, or a bale where he hit." : "He is home, with a crack to show his mother." };
-      if (stoppedAt === "right") return { eyebrow: "Home", title: "Home", line: "Whole, by the long way round. The left-hand shutter is the short way: brake as he is passing the pan, and one bale does it." };
       return { eyebrow: "Home", title: "Home", line: `Whole, but it took all the straw in the room. Keep ${spare === 1 ? "one bale" : `${spare} bales`} back for the third star.` };
     case "broken":
       return { eyebrow: "A great fall", title: "Humpty Dumpty", line: overAt < 4 ? "A long drop, and nothing under him. Tap the floor where he will come down, and do it early: the bale takes a moment." : "That was harder than a shell can take. Straw and sacks are soft; wood, stone and iron are not." };
     case "fried":
       if (friedHung && stoppedAt === "bottom") {
-        return { eyebrow: "The Queen's breakfast", title: "Sunny side up", line: "The door stopped with him at the bottom, and the bottom is over the pan. Brake sooner and he is out on the right; wait until he is passing the pan, and he is out on the left." };
+        return {
+          eyebrow: "The Queen's breakfast",
+          title: "Sunny side up",
+          line: reentered
+            ? "The door stopped with him at the bottom, and the bottom is over the pan. The second time round, wait until he is passing the bottom: then it stops at the left."
+            : "The door stopped with him at the bottom, and the bottom is over the pan. Brake at once and it stops at the right-hand shutter, which is the way to the red board.",
+        };
+      }
+      if (friedHung && current.level.tanks.length > 0) {
+        return { eyebrow: "The Queen's breakfast", title: "Sunny side up", line: "Out of the spout with the bathwater, and the spout runs to the pan. Stand a bale in its mouth before the water gets that high." };
       }
       if (friedHung && current.level.wheels.length > 0) {
         return { eyebrow: "The Queen's breakfast", title: "Sunny side up", line: "The wheel was dry, and it gave under him. A bale on the gold pan by the tank lets the water in: do it as he is let go, because the water takes a moment to come down." };
@@ -332,7 +393,28 @@ function verdict(current: Game): { eyebrow: string; title: string; line: string 
       if (stoppedAt === "top") {
         return current.balesLeft === current.level.bales
           ? { eyebrow: "The Queen's hook", title: "Hooked", line: "The clockwork ran down with him at the top, where there is no way out. A bale on the gold pan stops the door at the next shutter it comes to." }
-          : { eyebrow: "The Queen's hook", title: "Hooked", line: "The door stopped with him at the top, where there is no way out. Brake as he is passing the pan, and it stops at the left-hand shutter." };
+          : reentered
+            ? { eyebrow: "The Queen's hook", title: "Hooked", line: "Round he went a second time, and back to the top, where there is no way out. Brake as he passes the bottom, and it stops at the left." }
+            : { eyebrow: "The Queen's hook", title: "Hooked", line: "The door stopped with him at the top, where there is no way out. Brake sooner: it stops at the next shutter it comes to." };
+      }
+      if (stoppedAt === "left" && stoppedShut && !unbarred) {
+        return { eyebrow: "The Queen's hook", title: "Barred", line: "The door stopped at the left-hand shutter, and that one is barred. The bar is roped to the red board outside the right-hand shutter: he has to go out that way first, and come back." };
+      }
+      if (stoppedAt === "right" && reentered) {
+        return { eyebrow: "The Queen's hook", title: "Hooked", line: "Out on the right again, and the see-saw has thrown already. The second time round, brake as he passes the bottom: the bar is off the left-hand shutter now." };
+      }
+      if (current.level.tanks.length > 0) {
+        const vat = current.tanks[0]!;
+        const inside = current.egg.x > vat.def.x0 && current.egg.x < vat.def.x1 && current.egg.y < vat.def.weir + 1.5;
+        if (washed) {
+          return { eyebrow: "The Queen's hook", title: "Hooked", line: `The water came up before he was aboard, and took his raft ${washed === "weir" ? "over the wall" : "down the spout"} without him. Keep it back until he is nearly there.` };
+        }
+        if (inside && sunk) return { eyebrow: "The Queen's hook", title: "Fished out", line: "An egg does not float. He wants a bale in the cistern under him, and it has to be there before he drops in." };
+        if (inside && !vat.open) {
+          return current.cracks > 0
+            ? { eyebrow: "The Queen's hook", title: "Hooked", line: "He came down in a dry cistern with nothing under him. A bale in the bottom of it, before he drops in." }
+            : { eyebrow: "The Queen's hook", title: "Hooked", line: "He sat on his bale in a dry cistern until the hook came down. A bale on the gold pan lets the water in, and the bale is a raft." };
+        }
       }
       return seated(current) && current.level.seesaws.some((saw) => !saw.pass)
         ? { eyebrow: "The Queen's hook", title: "Hooked", line: flung ? "The plank tipped, but not hard enough to throw him. Let the bale fall from higher." : "He sat in the see-saw until the hook came down for him. Drop a bale on the gold end of the plank." }
@@ -410,7 +492,7 @@ function showResult(current: Game): void {
     // that he is seen on it; and from a roost, the hatch he is about to drop to as well.
     const card = $("result").getBoundingClientRect();
     const cover = card.width > window.innerWidth * 0.7 ? Math.max(0, window.innerHeight - card.top) : 0;
-    stage.hold(last ? current.level.nest.y0 - 1.4 : LEVELS[room + 1]!.start.y - 1.9, cover);
+    stage.hold(last ? current.level.nest.y0 - 1.4 : LEVELS[room + 1]!.start.y - 1.9, cover, current.egg.y + 1.5);
   }
 }
 
@@ -500,11 +582,7 @@ $("let-go").addEventListener("click", () => {
 });
 $("again").addEventListener("click", () => act($("again").dataset.does));
 $("other").addEventListener("click", () => act($("other").dataset.does));
-$("redo").addEventListener("click", () => {
-  sound.unlock();
-  restart();
-});
-$("sound").addEventListener("click", toggleSound);
+for (const button of Array.from(document.querySelectorAll("button.sound"))) button.addEventListener("click", toggleSound);
 window.addEventListener("keydown", (event) => {
   if (event.repeat) return;
   const key = event.key.toLowerCase();
@@ -542,7 +620,6 @@ function landed(): void {
   if (auto) begin();
 }
 
-window.addEventListener("resize", measure);
 await loadPhysics();
 fresh(0);
 drawSound();

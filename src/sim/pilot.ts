@@ -68,22 +68,42 @@ export function millPlan(options: { sluice?: number | false; cushion?: boolean |
 }
 
 /**
- * The fourth screen played properly. The best way is to wait: the brake goes on as the door
- * carries him past the bottom, and he comes out on the left with nothing between him and the
- * nest. The other way is to brake at once, come out on the right, and then put a bale under
- * the long drop at the wall and one in the hole. `brake` as a number is how far round the door
- * has gone (in quarters) when the bale is thrown.
+ * The fourth screen played properly. Brake at once, and the door stops at the right-hand
+ * shutter; he goes out over the red board, which takes the bar off the left-hand one, and into
+ * the seat of the see-saw. A bale on its gold end throws him back up to the door. The second
+ * time round the brake goes on as the door carries him past the bottom, and he comes out on
+ * the left. `first` is a time; `second` is how far round the door has gone (in quarters) since
+ * he came back to it; `toss` as a number is a time to throw at, whatever he is doing.
  */
-export function butteryPlan(options: { brake?: "left" | "right" | number | false; cushion?: boolean; stopHole?: boolean } = {}): Move[] {
-  const { brake = "left", cushion = true, stopHole = true } = options;
+export function butteryPlan(options: { first?: number | false; toss?: boolean | number; second?: number | false } = {}): Move[] {
+  const { first = 0.3, toss = true, second = 2.1 } = options;
   const at = (when: Move["when"], x: number, y: number): Move => ({ when, x, y: y - STOREY * 3 });
-  const quarters = brake === "left" ? 2.1 : brake === "right" ? 0.05 : brake;
   const round = (game: Game): number => -(game.doors[0]?.turn ?? 0) / (Math.PI / 2);
-  const out = (game: Game): boolean => game.egg.x > 1.3 && game.egg.y + STOREY * 3 < 25.2;
+  // Back in the door after the see-saw: it is turning again, and has already been a quarter round.
+  const again = (game: Game): boolean => game.doors[0]?.turning === true && round(game) > 1.001;
   return [
-    ...(quarters === false ? [] : [at((game) => round(game) >= quarters, 2.75, 28.6)]),
-    ...(cushion ? [at(out, 3.2, 21.2)] : []),
-    ...(stopHole ? [at((game) => game.egg.x > 2.2 && game.egg.y + STOREY * 3 < 23.5, 0.4, 19.2)] : []),
+    ...(first === false ? [] : [at((game) => game.time > first, -0.7, 30.5)]),
+    ...(toss === false ? [] : [at(toss === true ? settled : (game) => game.time > toss, 1.7, 22.6)]),
+    ...(second === false ? [] : [at((game) => again(game) && round(game) - 1 >= second, -0.7, 30.5)]),
+  ];
+}
+
+/**
+ * The fifth screen played properly: a bale in the bottom of the cistern, one stood in the
+ * spout, and then, once he has dropped in, one on the sluice pan. `sluice` as a number is a
+ * time to throw that one at, whatever he is doing.
+ */
+export function cisternPlan(options: { raft?: number | false; plug?: number | false; sluice?: number | false } = {}): Move[] {
+  const { raft = 1, plug = 2, sluice } = options;
+  const at = (when: Move["when"], x: number, y: number): Move => ({ when, x, y: y - STOREY * 4 });
+  const aboard = (game: Game): boolean => {
+    const tank = game.tanks[0];
+    return tank !== undefined && game.egg.x > tank.def.x0 && game.egg.x < tank.def.x1 && game.egg.y < tank.def.weir + 1;
+  };
+  return [
+    ...(raft === false ? [] : [at((game) => game.time > raft, 0.6, 19)]),
+    ...(plug === false ? [] : [at((game) => game.time > plug, -0.6, 19.5)]),
+    ...(sluice === false ? [] : [at(typeof sluice === "number" ? (game) => game.time > sluice : aboard, -1.5, 27.2)]),
   ];
 }
 
@@ -93,6 +113,7 @@ export const PLANS: Record<string, () => Move[]> = {
   scullery: () => sculleryPlan(),
   mill: () => millPlan(),
   buttery: () => butteryPlan(),
+  cistern: () => cisternPlan(),
 };
 
 /** A driver for tests and `?auto`: makes each move, in order, as soon as its moment comes. */

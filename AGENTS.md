@@ -1,8 +1,8 @@
 # The Great Eggscape: working rules
 
 A mobile-first physics game. The Egg King falls through the Queen's kitchen by himself, and the
-player's only move is to tap a place and have a straw bale thrown there. Prototype stage: four
-rooms, The Larder, The Scullery, The Mill and The Buttery, built to find out whether that one verb is fun,
+player's only move is to tap a place and have a straw bale thrown there. Prototype stage: five
+rooms, The Larder, The Scullery, The Mill, The Buttery and The Cistern, built to find out whether that one verb is fun,
 how one room hands him on to the next, and whether a room can bring a new contraption without
 a new control. The user's verdict on the Larder alone: "This is good."; on the first two
 rooms: "These are playing well."
@@ -87,8 +87,26 @@ them in passing; they are kept as they were on purpose.
   that lets the egg out in different places depending on some action the user takes". A
   drum, open at the top, with shutters right, bottom and left (`SHUTTER`). It turns at
   `DOOR_TURN` once he is in it; a bale on the brake's pan stops it at the next quarter and
-  opens that quarter's shutter. So when the bale lands is where he comes out, and the three
-  ways out have three prices. What building it taught:
+  opens that quarter's shutter. So when the bale lands is where he comes out. The first
+  version let him out on the left for one well-timed bale, and the user said: "room four is
+  too easy. We need the spinning wheel to be more puzzling." Now the left-hand shutter, the
+  way to the roost, is barred (`DoorDef.bar`), and the bar is roped to a red board outside
+  the right-hand shutter that only his own weight works. So he goes out on the right, into
+  the seat of a see-saw in the corner, is thrown back up through a one-way flap (`FlapDef`)
+  on to a shelf that runs down into the top of the door, goes round again, and is let out
+  on the left. Three bales (brake, see-saw, brake) and one loop; nothing shorter gets him
+  home, and `npm test` holds that. What building it taught:
+  - Where the door stops is counted from where the leaves stood when he came in
+    (`gate.wound`), not from where they began: the second time round they have already
+    been a quarter.
+  - Coming back in at the top starts it again: the shutter comes down, the brake comes
+    off, and the bale that was on its pan is thrown away (`release`).
+  - A see-saw with `throw` set always throws alike, from the middle of its seat, and its
+    lip is taken out of his way while it does: coming round behind him it batted him off
+    line every time. Switch a collider on a moving body off with its collision groups;
+    `setEnabled(false)` left its contacts in place for a step.
+  - The plank's weight (a ball on the pivot that touches nothing) still answered shape
+    queries, so `free` called every seat beside a pivot taken. They are skipped now.
   - The door is moved, not pushed: a kinematic body turned a set angle each step, stopped
     exactly on a quarter. A free one never stopped where it was meant to.
   - Its leaves are quilted (soft). He drops into it hard enough to crack otherwise.
@@ -96,6 +114,16 @@ them in passing; they are kept as they were on purpose.
   - With no brake he would ride for ever, so the clockwork runs down after `DOOR_LAPS` with
     him at the top, which is shut below him, and the hook has him.
   - No bale may be thrown into the drum (`free` refuses it).
+- The Cistern's contraption is water (`TankDef`). The sluice lets it in and it rises at
+  `RISE` to the lowest way out: a spout low in one wall, which runs to a pan, or, with a
+  bale stood on end in the spout, the top of the other wall, which is the way to the nest.
+  A bale in it floats, by rule: it is held in the middle, carried up with the water, and
+  at a way out it leans so that he rolls off. An egg does not float. So: a bale in the dry
+  cistern before he drops in (cushion, then raft), a bale in the spout (stopper), and a
+  bale on the sluice pan (weight). The catch is the order: a raft with nobody on it does
+  not wait at a way out, the water takes it (`WASH`), so the water has to be kept back
+  until he is aboard. That stops all three being thrown at once. Three shelves bring him
+  to it, which is the time there is to set up. Bales in a cistern do not burst.
 - A bale that bursts under him goes on breaking his fall for `STRAW_GRACE`: without that, he
   dropped through the place where it had been and cracked on the floor he had just been
   saved from.
@@ -125,12 +153,16 @@ them in passing; they are kept as they were on purpose.
   this of the last game, and it still holds).
 - Portrait and one thumb come first. The whole room should fit on a phone without scrolling
   where it can; a taller machine scrolls with him.
-- Nothing the player needs is to be under the bar at the top. The user: "The controls at the
-  top really obscure what's happening there", and of the Mill, "the placement of the bail to
-  release the water is barely visible because of the controls". The page tells the view how
-  much of the screen the bar covers (`stage.cover`), and the room is fitted into what is
-  left: its ceiling starts just under the bar, and on a short screen the view goes down the
-  room with him from there.
+- Nothing is drawn over the top of the room. The user, three times: "The controls at the
+  top really obscure what's happening there"; of the Mill, "the placement of the bail to
+  release the water is barely visible because of the controls"; and after the bar had been
+  made smaller, "The top is still obscured. I wonder if we can hide the progress bar, the
+  replay button and the sound button while the game is happening or transitioning." So
+  there is no bar. While he is on his way down the shell and the bales left are a small
+  pill at the bottom left (`#tally`); the sound button is on the cards and the bar he is
+  let go from; starting again is on the result card (and the R key). The room's number and
+  its bales are on the bar he is let go from. When a card is up the view is held so that
+  he and the hatch below are both seen above it (`stage.hold`).
 - The look is the toy theatre: chunky shapes, warm light, a medieval kitchen, the Egg King with
   his crown and sash, the Queen's cooks and her hook, the Empress Hen.
 - Everything soft looks like the bales: gold, strapped, with stalks sticking out of it (the
@@ -158,7 +190,7 @@ them in passing; they are kept as they were on purpose.
 
 - Development: `npm run dev` (port 5180); `?auto` lets the scripted player play
 - Tests: `npm test`; full acceptance: `npm run check`
-- Trace a run event by event: `npx tsx scripts/kitchen.ts [room=scullery|mill|buttery] [time:x,y ...]`
+- Trace a run event by event: `npx tsx scripts/kitchen.ts [room=scullery|mill|buttery|cistern] [time:x,y ...]`
   (heights as if the room stood where the Larder does)
 - In a browser console, `__egg.step(seconds, { x, y })` drives the game where frames do not
   tick (a hidden tab); set `__egg.stage.app.timeScale = 0` first, `__egg.restart()` to begin,

@@ -84,10 +84,17 @@ const WHEEL_DENSITY = 0.48;
  * rate (radians a second) from the moment he is in it until its brake is put on, and then it
  * runs on to the next quarter and stops there.
  */
+/** A cistern fills this fast once its water is in, and a bale afloat rides this deep in it. */
+export const RISE = 0.8;
+const FLOAT_DEEP = 0.2;
+/** A raft that has come up to a way out leans this far towards it. */
+const RAFT_LEAN = 0.22;
+/** One with nobody on it bobs there this long, and then the water takes it out. */
+export const WASH = 0.4;
 export const DOOR_TURN = Math.PI / 3;
 const QUARTER = Math.PI / 2;
 /** How many times round it will carry him before the clockwork has run down. */
-export const DOOR_LAPS = 3;
+export const DOOR_LAPS = 2;
 /** The ways out of the drum, by how many quarters it has turned: none at the top, then right, bottom, left. */
 export const PORTS = ["top", "right", "bottom", "left"] as const;
 export type Port = (typeof PORTS)[number];
@@ -194,6 +201,23 @@ export interface DoorDef {
   r: number;
   /** The pan on the brake lever: the middle of its top face, and how wide it is. */
   pan: { x: number; y: number; w: number };
+  /**
+   * A shutter with a bar across it, and the treadle the bar is roped to: the bar comes off when
+   * he puts his weight on the treadle, and not before. Stopped against a barred shutter, the
+   * door has nowhere to let him out.
+   */
+  bar?: { port: Exclude<Port, "top">; tread: { x0: number; x1: number; y0: number; y1: number } };
+}
+
+/**
+ * A flap in a floor, hinged to open upwards only: thrown up from under it he goes through,
+ * and it has shut again before he comes down. Its top face runs from one point to another.
+ */
+export interface FlapDef {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
 }
 
 /**
@@ -206,6 +230,24 @@ export interface SocketDef {
   y1: number;
   reach: number;
   seat?: { y: number; turn: number };
+}
+
+/**
+ * A cistern. The sluice lets water in and it rises to the lowest way out: a spout in one wall,
+ * or, if that is stopped with a bale, the top of the other wall. A bale in it floats.
+ */
+export interface TankDef {
+  /** Inside: between its walls, and its floor. */
+  x0: number;
+  x1: number;
+  floor: number;
+  /** The spout: which wall it is in, its lip, and the top of its mouth. */
+  spout: { side: 1 | -1; lip: number; top: number };
+  /** The top of the other wall. */
+  weir: number;
+  /** The pan on the sluice lever, and the tap the water comes out of. */
+  pan: { x: number; y: number; w: number };
+  tap: { x: number; y: number };
 }
 
 export interface LevelDef {
@@ -231,6 +273,8 @@ export interface LevelDef {
   seesaws: SeesawDef[];
   wheels: WheelDef[];
   doors: DoorDef[];
+  flaps: FlapDef[];
+  tanks: TankDef[];
   pits: PitDef[];
   /** Places there is no way out of: the hook has him out of one in `CAGE` seconds. */
   cages: Array<{ x0: number; x1: number; y0: number; y1: number }>;
@@ -325,6 +369,8 @@ export const LARDER: LevelDef = {
   seesaws: [{ x: 0.7, y: 21.55, seat: 1.25, load: 1.3, side: 1, tip: 0.31, cast: 0.7 }],
   wheels: [],
   doors: [],
+  flaps: [],
+  tanks: [],
   cages: [],
   pits: [{ x: PIT.x, y: lowAt(PIT.x) - WELL_DEEP, w: PIT.w, pan: FLOOR + 0.7, hung: false }],
   sockets: [
@@ -352,7 +398,21 @@ function lowered(level: LevelDef, by: number): LevelDef {
       tank: { ...wheel.tank, y0: wheel.tank.y0 - by, y1: wheel.tank.y1 - by },
       spout: { x: wheel.spout.x, y: wheel.spout.y - by },
     })),
-    doors: level.doors.map((door) => ({ ...door, y: door.y - by, pan: { ...door.pan, y: door.pan.y - by } })),
+    doors: level.doors.map((door) => ({
+      ...door,
+      y: door.y - by,
+      pan: { ...door.pan, y: door.pan.y - by },
+      ...(door.bar ? { bar: { port: door.bar.port, tread: { ...door.bar.tread, y0: door.bar.tread.y0 - by, y1: door.bar.tread.y1 - by } } } : {}),
+    })),
+    flaps: level.flaps.map((flap) => ({ ...flap, y0: flap.y0 - by, y1: flap.y1 - by })),
+    tanks: level.tanks.map((tank) => ({
+      ...tank,
+      floor: tank.floor - by,
+      spout: { side: tank.spout.side, lip: tank.spout.lip - by, top: tank.spout.top - by },
+      weir: tank.weir - by,
+      pan: { ...tank.pan, y: tank.pan.y - by },
+      tap: { x: tank.tap.x, y: tank.tap.y - by },
+    })),
     pits: level.pits.map((pit) => ({ ...pit, y: pit.y - by, pan: pit.pan - by })),
     cages: level.cages.map((cage) => ({ ...cage, y0: cage.y0 - by, y1: cage.y1 - by })),
     sockets: level.sockets.map((socket) => ({
@@ -485,6 +545,8 @@ const SCULLERY_HERE: LevelDef = {
   seesaws: [{ x: TIP.x, y: TIP.y, seat: TIP.seat, load: TIP.load, side: 1, tip: TIP.tip, cast: -0.5, pass: true, throw: 7 }],
   wheels: [],
   doors: [],
+  flaps: [],
+  tanks: [],
   pits: [
     { x: GAP.x, y: rackAt(GAP.x) - GAP_DEEP, w: GAP.w, pan: rackAt(GAP.x) - GAP_DEEP - GAP.hang, hung: true },
     { x: DRAIN.x, y: DRAIN_Y - BALE_H, w: DRAIN.w, pan: FLOOR + 0.7, hung: false },
@@ -493,7 +555,7 @@ const SCULLERY_HERE: LevelDef = {
   sockets: [
     { x: GAP.x, y0: rackAt(GAP.x) - 1.2, y1: rackAt(GAP.x) + 1.4, reach: 1, seat: { y: rackAt(GAP.x) - GAP_DEEP / 2 + 0.08, turn: RACK_TURN } },
     // Over the gold end, a bale is always let go from the same height: here it is when, not how hard.
-    { x: TIP.x - 0.82, y0: TIP.y - 0.3, y1: TIP.y + 3.1, reach: 0.9, seat: { y: TIP.y + 0.8, turn: -TIP.tip } },
+    { x: TIP.x - 0.82, y0: TIP.y - 0.3, y1: TIP.y + 3.1, reach: 0.9, seat: { y: TIP.y + 1.2, turn: 0 } },
     { x: CATCH, y0: landAt(CATCH) - 0.3, y1: landAt(CATCH) + 2.8, reach: 0.95 },
     { x: DRAIN.x, y0: DRAIN_Y - 1.4, y1: DRAIN_Y + 1.4, reach: 1, seat: { y: DRAIN_Y - BALE_H / 2 + 0.03, turn: 0 } },
   ],
@@ -580,6 +642,8 @@ const MILL_HERE: LevelDef = {
   ],
   seesaws: [],
   doors: [],
+  flaps: [],
+  tanks: [],
   cages: [],
   wheels: [
     {
@@ -610,30 +674,132 @@ const MILL_HERE: LevelDef = {
 export const MILLROOM: LevelDef = lowered(MILL_HERE, STOREY * 2);
 
 /** The buttery's revolving door, and how far out its drum comes. */
-const TURN = { x: 0, y: 26.3, r: 1.5 };
+const TURN = { x: -1, y: 26, r: 1.5 };
 const DRUM = TURN.r + 0.06 + DOOR_WALL;
-/** The shelf he comes in on, which falls to the right and stops at the slot in the top of the drum. */
-const LEAD = { x: -DRUM * Math.sin((DOOR_SLOT * Math.PI) / 180) - 0.02, y: TURN.y + DRUM + 0.2 };
-const leadAt = (x: number): number => LEAD.y + 0.36 * (LEAD.x - x);
+/** Half the width of the slot in the top of the drum. */
+const SLOT = DRUM * Math.sin((DOOR_SLOT * Math.PI) / 180);
+/** The shelf he comes in on, which falls to the right and stops at the slot. */
+const LEAD = { x: TURN.x - SLOT - 0.02, y: TURN.y + DRUM + 0.2, fall: 0.6 };
+const leadAt = (x: number): number => LEAD.y + LEAD.fall * (LEAD.x - x);
+/**
+ * The shelf he comes back on, from the right wall down to the other side of the slot. Its lip
+ * stands a little proud of the first shelf's, so that coming in fast he does not run on up it.
+ */
+const BACKWAY = { x: TURN.x + SLOT + 0.02, y: LEAD.y + 0.12, fall: 0.3 };
+const backAt = (x: number): number => BACKWAY.y + BACKWAY.fall * (x - BACKWAY.x);
+/** The part of it over the see-saw is a flap, hinged to let him up through it. */
+const FLAP = { x0: 2.45, x1: 4 };
 /** The shelves under the two side doors: each begins at the lip of its shutter and falls away from the drum. */
-const SILL = { x: 1.1, y: TURN.y - 1.32, end: 2.7 };
-const sillAt = (x: number): number => SILL.y - 0.36 * (Math.abs(x) - SILL.x);
-/** The pan on the brake lever, up to the right of the drum. */
-const BRAKE = { x: 2.75, y: 28.3, w: 1.5 };
-const SPOUT = { x: 0.4, w: 1.1 };
-const SPOUT_WELL = { x0: SPOUT.x - PLUG.well / 2, x1: SPOUT.x + PLUG.well / 2 };
+const SILL = { out: 1.1, y: TURN.y - 1.32, left: 1.85, right: 3.3 };
+const sillAt = (out: number): number => SILL.y - 0.36 * (out - SILL.out);
+/** The pan on the brake lever, up over the drum. */
+const BRAKE = { x: TURN.x + 0.3, y: 30.15, w: 1.5 };
+/** The see-saw in the corner under the right-hand shelf: its seat is against the wall. */
+const TOSS = { x: 2.6, y: 22, seat: 1.25, load: 1.75, tip: 0.31 };
 
 /**
  * The fourth screen, written as if it stood where the first does. He comes in through the hatch
  * at the top left and drops into a revolving door, which begins to turn and carries him round
- * past three shutters. A bale on the brake stops it at the next quarter, and he comes out of
- * whichever he is against: the right, early, on to a shelf with a long drop and a hole after it;
- * the bottom, into a pan; or the left, late, with nothing between him and the nest but air.
- * So it is one bale for whoever can wait, and three for whoever cannot. Four bales.
+ * past three shutters: right, bottom, left. A bale on the brake stops it at the next quarter,
+ * and the shutter he is against opens. The left one is the way to the roost, and it is barred.
+ * The bar is roped to the board outside the right-hand shutter: his weight on that takes it
+ * off. So he has to go out on the right first, into the seat of a see-saw in the corner, be
+ * thrown back up through a flap on to the shelf that runs down into the top of the door, go
+ * round again, and be let out on the left. The bottom is a pan. Three bales, and four to do
+ * it with.
  */
 const BUTTERY_HERE: LevelDef = {
   key: "buttery",
   name: "The Buttery",
+  ends: "roost",
+  hatch: true,
+  left: -4,
+  right: 4,
+  top: 31,
+  bottom: 13,
+  start: { x: -3.5, y: 30.2 },
+  shove: 3,
+  bales: 4,
+  spare: 1,
+  blocks: [
+    box(-4.8, 12.6, -4, 31.4, "wall"),
+    box(4, 12.6, 4.8, 31.4, "wall"),
+    box(-4, 13.4, 4, FLOOR, "stone"),
+
+    // The shelf under the hatch, and the one he comes back on, as far as its flap.
+    slab(-4, leadAt(-4), LEAD.x, LEAD.y, 0.3, "wood"),
+    // Its lip is padded: coming in off the first shelf he runs into it.
+    slab(BACKWAY.x, BACKWAY.y, BACKWAY.x + 0.7, backAt(BACKWAY.x + 0.7), 0.3, "bed", true),
+    slab(BACKWAY.x + 0.7, backAt(BACKWAY.x + 0.7), FLAP.x0, backAt(FLAP.x0), 0.3, "wood"),
+    // The shelves under the side doors. The one on the left is short: beyond it there is nothing.
+    slab(TURN.x + SILL.out, sillAt(SILL.out), TURN.x + SILL.right, sillAt(SILL.right), 0.3, "wood"),
+    slab(TURN.x - SILL.left, sillAt(SILL.left), TURN.x - SILL.out, sillAt(SILL.out), 0.3, "wood"),
+    // The tray under the bottom door.
+    box(TURN.x - 1.05, TURN.y - DRUM - 1.05, TURN.x + 1.05, TURN.y - DRUM - 0.85, "iron"),
+
+    // The corner the right-hand shelf drops him into: straw up the wall, and a ledge for the see-saw to stand on.
+    box(3.93, TOSS.y + 1.7, 4, TOSS.y + 3.4, "nest", true),
+    box(0.45, TOSS.y - 1.2, 4, TOSS.y - 0.75, "stone"),
+    box(0.45, TOSS.y - 0.75, 0.7, TOSS.y + 0.75, "stone"),
+
+    // The roost, bottom left, with straw banked high up the wall behind it.
+    box(-4, FLOOR, -1.5, FLOOR + 0.5, "nest", true),
+    box(-1.5, FLOOR, -1.2, FLOOR + 1, "nest", true),
+    box(-4, FLOOR, -3.7, FLOOR + 3.8, "nest", true),
+  ],
+  seesaws: [{ x: TOSS.x, y: TOSS.y, seat: TOSS.seat, load: TOSS.load, side: 1, tip: TOSS.tip, cast: 0.012, throw: 12.2 }],
+  wheels: [],
+  doors: [
+    {
+      x: TURN.x,
+      y: TURN.y,
+      r: TURN.r,
+      pan: BRAKE,
+      bar: { port: "left", tread: { x0: TURN.x + SILL.out + 0.5, x1: TURN.x + SILL.right, y0: sillAt(SILL.right), y1: sillAt(SILL.out) + 1.3 } },
+    },
+  ],
+  flaps: [{ x0: FLAP.x0, y0: backAt(FLAP.x0), x1: FLAP.x1, y1: backAt(FLAP.x1) }],
+  tanks: [],
+  pits: [{ x: TURN.x, y: TURN.y - DRUM + 0.05, w: 2.1, pan: TURN.y - DRUM - 0.8, hung: true }],
+  cages: [],
+  sockets: [
+    { x: BRAKE.x, y0: BRAKE.y - 0.7, y1: 31, reach: 1.25, seat: { y: BRAKE.y + BALE_H / 2 + 0.02, turn: 0 } },
+    // The gold end of the see-saw, under the shelf.
+    { x: TOSS.x - 0.9, y0: TOSS.y - 0.5, y1: TOSS.y + 1.8, reach: 1, seat: { y: TOSS.y + 0.9 * Math.sin(TOSS.tip) + 0.48, turn: -TOSS.tip } },
+  ],
+  nest: { x0: -3.7, x1: -1.5, y0: FLOOR + 0.4, y1: FLOOR + 1.9 },
+};
+
+export const BUTTERY: LevelDef = lowered(BUTTERY_HERE, STOREY * 3);
+
+/** The house, from the top down. Each room is a game of its own; the roost between two is a waypoint. */
+/** The fifth room's shelves: three of them, there and back and there again. */
+const RUN = { a: 29.6, b: 26.2, c: 22.8, fall: 0.36 };
+const runA = (x: number): number => RUN.a - RUN.fall * (x + 4);
+const runB = (x: number): number => RUN.b - RUN.fall * (4 - x);
+const runC = (x: number): number => RUN.c - RUN.fall * (x + 4);
+
+/** The cistern: its spout is low in the left wall, with a mouth a bale stood on end just fills. */
+const VAT = { x0: -0.3, x1: 1.5, wall: 0.3, floor: 17.9, lip: 18.7, mouth: 1.7, weir: 19.6 };
+const VAT_TOP = runC(VAT.x0 - VAT.wall) - 0.08;
+/** The padded board hung over the right wall: he comes off the last shelf at a run, and it stops him. */
+const BAFFLE = { y0: VAT.weir + 1.45, y1: VAT.weir + 3.6 };
+const SPIGOT = { x: -1.5, y: 26.7, w: 1.3 };
+const GUTTER = { flat: 0.45, x: -2.3, drop: 0.5 };
+
+/**
+ * The fifth screen, written as if it stood where the first does. He comes in through the hatch
+ * at the top left and has three shelves to roll down, there and back and there again, and the
+ * last of them tips him into a cistern with nothing in it. A bale in the bottom of it breaks
+ * his fall, and when the water is let in the bale is a raft: it brings him up to the spout in
+ * the left wall, and out of that into a pan, unless a bale is stood in the spout; then it
+ * brings him up to the top of the right wall, and he rolls off it and drops into the nest.
+ * But a raft with nobody on it does not wait: let the water in before he is aboard and it is
+ * over the wall and gone. Three bales, and four to do it with.
+ */
+const CISTERN_HERE: LevelDef = {
+  key: "cistern",
+  name: "The Cistern",
   ends: "nest",
   hatch: true,
   left: -4,
@@ -643,54 +809,70 @@ const BUTTERY_HERE: LevelDef = {
   start: { x: -3.5, y: 30.2 },
   shove: 3,
   bales: 4,
-  spare: 2,
+  spare: 1,
   blocks: [
     box(-4.8, 12.6, -4, 31.4, "wall"),
     box(4, 12.6, 4.8, 31.4, "wall"),
     box(-4, 13.4, 4, FLOOR, "stone"),
 
-    // The shelf under the hatch, and the board across the slot that brings him down into it.
-    slab(-4, leadAt(-4), LEAD.x, LEAD.y, 0.3, "wood"),
-    box(0.6, TURN.y + DRUM - 0.1, 0.75, TURN.y + DRUM + 1.5, "board"),
-    // The shelves under the side doors. The one on the left is short: beyond it there is nothing.
-    slab(SILL.x, sillAt(SILL.x), SILL.end, sillAt(SILL.end), 0.3, "wood"),
-    slab(-SILL.end, sillAt(SILL.end), -SILL.x, sillAt(SILL.x), 0.3, "wood"),
-    // The tray under the bottom door.
-    box(-1.05, TURN.y - DRUM - 1.05, 1.05, TURN.y - DRUM - 0.85, "iron"),
+    // Three shelves, with a bed where he comes down on to the second and the third.
+    slab(-4, runA(-4), 2.6, runA(2.6), 0.3, "wood"),
+    slab(-2.6, runB(-2.6), 2.4, runB(2.4), 0.3, "wood"),
+    slab(2.4, runB(2.4), 4, runB(4), 0.3, "bed", true),
+    box(3.9, runB(4), 4, runA(2.6) + 0.8, "nest", true),
+    slab(-4, runC(-4), -2.6, runC(-2.6), 0.3, "bed", true),
+    slab(-2.6, runC(-2.6), VAT.x0 - VAT.wall, runC(VAT.x0 - VAT.wall), 0.3, "wood"),
+    box(-4, runC(-4), -3.9, runB(-2.6) + 0.8, "nest", true),
 
-    // The bottom floor with the hole in it, and the flue to the pan.
-    slab(SPOUT_WELL.x1, baseAt(SPOUT_WELL.x1), 4, baseAt(4), 0.5, "stone"),
-    slab(SPOUT_WELL.x0 - 0.12, baseAt(SPOUT_WELL.x0 - 0.12) - PLUG_DEEP, SPOUT.x - SPOUT.w / 2, baseAt(SPOUT.x - SPOUT.w / 2) - PLUG_DEEP, 0.4, "stone"),
-    slab(SPOUT.x + SPOUT.w / 2, baseAt(SPOUT.x + SPOUT.w / 2) - PLUG_DEEP, SPOUT_WELL.x1 + 0.12, baseAt(SPOUT_WELL.x1 + 0.12) - PLUG_DEEP, 0.4, "stone"),
-    slab(-1.9, baseAt(-1.9), SPOUT_WELL.x0 - 0.04, baseAt(SPOUT_WELL.x0 - 0.04), 0.5, "stone"),
-    box(SPOUT.x - SPOUT.w / 2 - 0.25, FLOOR + 1.9, SPOUT.x - SPOUT.w / 2, baseAt(SPOUT.x) - PLUG_DEEP - 0.7, "iron"),
-    box(SPOUT.x + SPOUT.w / 2, FLOOR + 1.9, SPOUT.x + SPOUT.w / 2 + 0.25, baseAt(SPOUT.x) - PLUG_DEEP - 0.5, "iron"),
+    // The cistern, on its pier: the left wall with the spout in it, and the right, which is lower.
+    box(VAT.x0 - VAT.wall, VAT.floor - 0.4, VAT.x1 + VAT.wall, VAT.floor, "stone"),
+    box(VAT.x0 - VAT.wall, VAT.floor, VAT.x0, VAT.lip, "stone"),
+    box(VAT.x0 - VAT.wall, VAT.lip + VAT.mouth, VAT.x0, VAT_TOP, "stone"),
+    box(VAT.x1, VAT.floor, VAT.x1 + VAT.wall, VAT.weir, "stone"),
+    box(VAT.x1, BAFFLE.y0, VAT.x1 + VAT.wall, BAFFLE.y1, "nest", true),
+    box(0.1, FLOOR, 1.1, VAT.floor - 0.4, "stone"),
 
-    // The Empress Hen's nest, bottom left, with straw banked high up the wall behind it.
-    box(-4, FLOOR, -1.5, FLOOR + 0.5, "nest", true),
-    box(-1.5, FLOOR, -1.2, FLOOR + 1, "nest", true),
-    box(-4, FLOOR, -3.7, FLOOR + 3.8, "nest", true),
+    // Out of the spout: a gutter down to the pan on the left.
+    box(VAT.x0 - VAT.wall - GUTTER.flat, VAT.lip - 0.3, VAT.x0 - VAT.wall, VAT.lip, "stone"),
+    slab(GUTTER.x, VAT.lip - GUTTER.drop, VAT.x0 - VAT.wall - GUTTER.flat, VAT.lip, 0.3, "stone"),
+    box(-4, 16.6, -2.1, 16.8, "iron"),
+
+    // Over the right wall: a short board, and then nothing till the nest.
+    slab(VAT.x1 + VAT.wall, VAT.weir, 2.6, VAT.weir - 0.3, 0.3, "wood"),
+    box(1.9, FLOOR, 4, FLOOR + 0.5, "nest", true),
+    box(1.6, FLOOR, 1.9, FLOOR + 1, "nest", true),
+    box(3.9, FLOOR, 4, FLOOR + 6.4, "nest", true),
   ],
   seesaws: [],
   wheels: [],
-  doors: [{ x: TURN.x, y: TURN.y, r: TURN.r, pan: BRAKE }],
-  pits: [
-    { x: TURN.x, y: TURN.y - DRUM + 0.05, w: 2.1, pan: TURN.y - DRUM - 0.8, hung: true },
-    { x: SPOUT.x, y: baseAt(SPOUT.x) - PLUG_DEEP, w: SPOUT.w, pan: FLOOR + 0.7, hung: false },
+  doors: [],
+  flaps: [],
+  tanks: [
+    {
+      x0: VAT.x0,
+      x1: VAT.x1,
+      floor: VAT.floor,
+      spout: { side: -1, lip: VAT.lip, top: VAT.lip + VAT.mouth },
+      weir: VAT.weir,
+      pan: SPIGOT,
+      tap: { x: 0.95, y: 23.1 },
+    },
   ],
+  pits: [{ x: -3.1, y: VAT.lip - GUTTER.drop, w: 1.8, pan: 16.85, hung: true }],
   cages: [],
   sockets: [
-    { x: BRAKE.x, y0: BRAKE.y - 0.7, y1: 31, reach: 1.25, seat: { y: BRAKE.y + BALE_H / 2 + 0.02, turn: 0 } },
-    { x: MILL_CATCH, y0: baseAt(MILL_CATCH) - 0.4, y1: baseAt(MILL_CATCH) + 2.8, reach: 0.95 },
-    { x: SPOUT.x, y0: baseAt(SPOUT.x) - 1.2, y1: baseAt(SPOUT.x) + 1.4, reach: 1, seat: { y: baseAt(SPOUT.x) - PLUG_DEEP / 2 + 0.08, turn: SINK_TURN } },
+    { x: SPIGOT.x, y0: SPIGOT.y - 0.65, y1: SPIGOT.y + 1.6, reach: 1.3, seat: { y: SPIGOT.y + BALE_H / 2 + 0.02, turn: 0 } },
+    // In the cistern a bale goes in the middle, whatever is in there already.
+    { x: (VAT.x0 + VAT.x1) / 2, y0: VAT.floor - 0.2, y1: VAT_TOP, reach: (VAT.x1 - VAT.x0) / 2 },
+    // And in the mouth of the spout it stands on end.
+    { x: VAT.x0 - 0.3, y0: VAT.lip - 0.5, y1: VAT.lip + VAT.mouth + 0.3, reach: 0.9, seat: { y: VAT.lip + BALE_W / 2 + 0.03, turn: Math.PI / 2 } },
   ],
-  nest: { x0: -3.7, x1: -1.5, y0: FLOOR + 0.4, y1: FLOOR + 1.9 },
+  nest: { x0: 1.9, x1: 3.9, y0: FLOOR + 0.4, y1: FLOOR + 1.9 },
 };
 
-export const BUTTERY: LevelDef = lowered(BUTTERY_HERE, STOREY * 3);
+export const CISTERN: LevelDef = lowered(CISTERN_HERE, STOREY * 4);
 
-/** The house, from the top down. Each room is a game of its own; the roost between two is a waypoint. */
-export const LEVELS: LevelDef[] = [LARDER, SCULLERY, MILLROOM, BUTTERY];
+export const LEVELS: LevelDef[] = [LARDER, SCULLERY, MILLROOM, BUTTERY, CISTERN];
 
 export type Phase = "ready" | "run" | "home" | "fried" | "broken" | "caught";
 
@@ -709,7 +891,13 @@ export type GameEvent =
   | { type: "water"; x: number; y: number }
   | { type: "turning"; x: number; y: number }
   | { type: "brake"; x: number; y: number }
-  | { type: "port"; port: Port; x: number; y: number }
+  | { type: "port"; port: Port; shut: boolean; x: number; y: number }
+  | { type: "unbar"; x: number; y: number }
+  | { type: "release"; id: number; x: number; y: number }
+  | { type: "plug"; id: number; x: number; y: number }
+  | { type: "spill"; over: "spout" | "weir"; x: number; y: number }
+  | { type: "wash"; id: number; over: "spout" | "weir"; x: number; y: number }
+  | { type: "splash"; x: number; y: number }
   | { type: "caged"; x: number; y: number }
   | { type: "warn" }
   | { type: "caught" }
@@ -734,6 +922,9 @@ interface Bale {
   /** How fast it was falling before this step, and whether it has come down on a see-saw yet. */
   fall: number;
   spent: boolean;
+  /** In a cistern, where there is nowhere for it to burst to; and washed out of one. */
+  tank: boolean;
+  washed: boolean;
 }
 
 interface Incoming {
@@ -786,7 +977,7 @@ export class Game {
   private readonly eggCollider: RAPIER.Collider;
   private readonly soft = new Set<number>();
   /** `hit` is the speed of the hardest bale to come down on it since it last threw. */
-  private readonly planks: Array<{ body: RAPIER.RigidBody; def: SeesawDef; hit: number; up: boolean; spin: number }> = [];
+  private readonly planks: Array<{ body: RAPIER.RigidBody; def: SeesawDef; hit: number; up: boolean; spin: number; lip: RAPIER.Collider | null; threw: number }> = [];
   /** `openAt` is when a bale came down on its sluice pan (before that, -1); `wet` once the water has reached it. */
   private readonly mills: Array<{ body: RAPIER.RigidBody; def: WheelDef; pan: RAPIER.Collider; wood: RAPIER.Collider[]; openAt: number; wet: boolean }> = [];
   /** The revolving doors: how far each has turned, and where it is to stop. */
@@ -797,12 +988,38 @@ export class Game {
     shutters: Record<Exclude<Port, "top">, RAPIER.Collider[]>;
     state: "still" | "turning" | "stopped";
     turned: number;
+    /** How far it had turned when it was last set going: the clockwork runs down from there. */
+    wound: number;
     target: number;
     braked: boolean;
+    /** The shutter that is up; where it has stopped, up or not; and whether he has been out of it since. */
     open: Port | null;
+    at: Port | null;
+    out: boolean;
+    barred: boolean;
+  }> = [];
+  private readonly valves: Array<{ def: FlapDef; collider: RAPIER.Collider; open: boolean }> = [];
+  private readonly cisterns: Array<{
+    def: TankDef;
+    pan: RAPIER.Collider;
+    openAt: number;
+    wet: boolean;
+    level: number;
+    rising: boolean;
+    plug: Bale | null;
+    over: "spout" | "weir" | null;
+    /** How long the raft has stood at a way out with nobody on it; and one the water is taking. */
+    bob: number;
+    wash: { bale: Bale; until: number; way: number } | null;
+    under: boolean;
+    aboard: boolean;
+    /** He has ridden it to a way out: it has done its work, and stays where it is. */
+    rode: boolean;
   }> = [];
   /** The padded seats: he sinks into one and stays put. And the cushions he only wallows across. */
   private readonly seats = new Set<number>();
+  /** The balls that stand in for the weight of a plank or a wheel: they touch nothing, and are in nothing's way. */
+  private readonly weights = new Set<number>();
   private readonly cushions = new Set<number>();
   private inSeat = false;
   /** Seconds he has been in a cage. */
@@ -853,7 +1070,7 @@ export class Game {
           .setCcdEnabled(true),
       );
       // All its weight is a ball on the pivot that touches nothing, so it turns about the pivot.
-      this.world.createCollider(RAPIER.ColliderDesc.ball(PLANK_BALL).setDensity(PLANK_DENSITY).setCollisionGroups(0), body);
+      this.weights.add(this.world.createCollider(RAPIER.ColliderDesc.ball(PLANK_BALL).setDensity(PLANK_DENSITY).setCollisionGroups(0), body).handle);
       // The bale arm is bare board; the seat arm is padded, flush with it, so nothing stands
       // between him and the low end of the seat; and a lip keeps him on it.
       this.world.createCollider(
@@ -873,11 +1090,12 @@ export class Game {
         body,
       );
       this.soft.add(pad.handle);
+      let lip: RAPIER.Collider | null = null;
       if (def.pass) {
         // Nothing to keep him on it: he goes off the low end unless he is thrown first.
         this.cushions.add(pad.handle);
       } else {
-        const lip = this.world.createCollider(
+        lip = this.world.createCollider(
           RAPIER.ColliderDesc.cuboid(0.06, 0.2, 0.9)
             .setTranslation(def.side * (def.seat - 0.06), 0.3, 0)
             .setDensity(0)
@@ -889,7 +1107,7 @@ export class Game {
         this.seats.add(pad.handle);
       }
       body.addTorque({ x: 0, y: 0, z: -def.side * (def.pass ? PASS_BIAS : PLANK_BIAS) }, true);
-      this.planks.push({ body, def, hit: 0, up: false, spin: 0 });
+      this.planks.push({ body, def, hit: 0, up: false, spin: 0, lip, threw: -1 });
     }
 
     for (const def of level.wheels) {
@@ -903,7 +1121,7 @@ export class Game {
           .setCcdEnabled(true)
           .setAngularDamping(WHEEL_DRAG),
       );
-      this.world.createCollider(RAPIER.ColliderDesc.ball(WHEEL_BALL).setDensity(WHEEL_DENSITY).setCollisionGroups(0), body);
+      this.weights.add(this.world.createCollider(RAPIER.ColliderDesc.ball(WHEEL_BALL).setDensity(WHEEL_DENSITY).setCollisionGroups(0), body).handle);
       const wood = [this.world.createCollider(RAPIER.ColliderDesc.ball(def.drum).setDensity(0).setFriction(0.6).setRestitution(0), body)];
       // One paddle stands straight up to begin with, so he cannot roll over the top of a dry wheel.
       const inner = def.drum * 0.6;
@@ -929,6 +1147,14 @@ export class Game {
         ground,
       );
       this.mills.push({ body, def, pan, wood, openAt: -1, wet: false });
+    }
+
+    for (const def of level.tanks) {
+      const pan = this.world.createCollider(
+        RAPIER.ColliderDesc.cuboid(def.pan.w / 2, 0.05, 0.6).setTranslation(def.pan.x, def.pan.y - 0.05, 0).setFriction(1).setRestitution(0),
+        ground,
+      );
+      this.cisterns.push({ def, pan, openAt: -1, wet: false, level: def.floor, rising: false, plug: null, over: null, bob: 0, wash: null, under: false, aboard: false, rode: false });
     }
 
     for (const def of level.doors) {
@@ -965,6 +1191,8 @@ export class Game {
             .setRestitution(0),
           ground,
         );
+        // The lips of the slot are padded: he comes in off the shelf at a run, and meets one of them.
+        if (Math.abs(mid - 90) < DOOR_SLOT + 13) this.soft.add(stave.handle);
         for (const port of ["right", "bottom", "left"] as const) {
           if (mid > SHUTTER[port][0] && mid < SHUTTER[port][1]) shutters[port].push(stave);
         }
@@ -973,7 +1201,16 @@ export class Game {
         RAPIER.ColliderDesc.cuboid(def.pan.w / 2, 0.05, 0.6).setTranslation(def.pan.x, def.pan.y - 0.05, 0).setFriction(1).setRestitution(0),
         ground,
       );
-      this.gates.push({ body, def, pan, shutters, state: "still", turned: 0, target: -1, braked: false, open: null });
+      this.gates.push({ body, def, pan, shutters, state: "still", turned: 0, wound: 0, target: -1, braked: false, open: null, at: null, out: false, barred: Boolean(def.bar) });
+    }
+
+    for (const def of level.flaps) {
+      const board = slab(def.x0, def.y0, def.x1, def.y1, 0.16, "wood");
+      const collider = this.world.createCollider(
+        RAPIER.ColliderDesc.cuboid(board.w / 2, board.h / 2, 1).setTranslation(board.x, board.y, 0).setRotation(quat(board.turn)).setFriction(0.8).setRestitution(0),
+        ground,
+      );
+      this.valves.push({ def, collider, open: false });
     }
 
     this.eggBody = this.world.createRigidBody(
@@ -1039,7 +1276,7 @@ export class Game {
   }
 
   /** `turn` is how far the leaves have gone round; `open` the shutter that has been let up, once it has stopped. */
-  get doors(): Array<Pose & { def: DoorDef; turning: boolean; braked: boolean; open: Port | null; stopped: boolean }> {
+  get doors(): Array<Pose & { def: DoorDef; turning: boolean; braked: boolean; open: Port | null; stopped: boolean; barred: boolean }> {
     return this.gates.map((gate) => ({
       x: gate.def.x,
       y: gate.def.y,
@@ -1049,7 +1286,26 @@ export class Game {
       braked: gate.braked,
       open: gate.open,
       stopped: gate.state === "stopped",
+      barred: gate.barred,
     }));
+  }
+
+  /** The flaps, and whether each is standing open to let him up through it. */
+  /** `level` is the top of the water; `over` the way it is running out, once it has got that high. */
+  get tanks(): Array<{ def: TankDef; open: boolean; flow: number; wet: boolean; level: number; plugged: boolean; over: "spout" | "weir" | null }> {
+    return this.cisterns.map((tank) => ({
+      def: tank.def,
+      open: tank.openAt >= 0,
+      flow: tank.openAt < 0 ? 0 : Math.min(1, (this.time - tank.openAt) / RACE),
+      wet: tank.wet,
+      level: tank.level,
+      plugged: tank.plug !== null,
+      over: tank.over,
+    }));
+  }
+
+  get flaps(): Array<{ def: FlapDef; open: boolean }> {
+    return this.valves.map((valve) => ({ def: valve.def, open: valve.open }));
   }
 
   /** He is in a cage. */
@@ -1100,7 +1356,7 @@ export class Game {
       if (Math.hypot(x - gate.def.x, y - gate.def.y) < gate.def.r + DOOR_WALL + 0.3) return false;
     }
     const shape = new RAPIER.Cuboid(BALE_W / 2 - 0.03, BALE_H / 2 - 0.03, 0.5);
-    return this.world.intersectionWithShape({ x, y, z: 0 }, quat(turn), shape) === null;
+    return this.world.intersectionWithShape({ x, y, z: 0 }, quat(turn), shape, undefined, undefined, undefined, undefined, (collider) => !this.weights.has(collider.handle)) === null;
   }
 
   private lifted(x: number, y: number): number {
@@ -1136,6 +1392,8 @@ export class Game {
     for (const bale of this.live) bale.fall = Math.max(0, -bale.body.linvel().y);
     this.drive();
     this.revolve();
+    this.swing();
+    this.flood();
     this.world.step();
     this.time += STEP;
     this.weigh();
@@ -1165,7 +1423,7 @@ export class Game {
       body,
     );
     this.soft.add(collider.handle);
-    this.live.push({ id: bale.id, body, collider, fall: 0, spent: false });
+    this.live.push({ id: bale.id, body, collider, fall: 0, spent: false, tank: false, washed: false });
     this.events.push({ type: "bale", id: bale.id, x: bale.x, y });
   }
 
@@ -1185,7 +1443,12 @@ export class Game {
         bale.spent = true;
         plank.hit = Math.max(plank.hit, bale.fall, 0.01);
         // A see-saw that is to be timed goes over at once, wherever on it he is sitting.
-        if (plank.def.pass) plank.body.setAngvel({ x: 0, y: 0, z: plank.def.side * SNAP }, true);
+        // So does one that always throws alike: a bale set down gently would only lean on it.
+        if (plank.def.pass || plank.def.throw !== undefined) {
+          plank.body.setAngvel({ x: 0, y: 0, z: plank.def.side * SNAP }, true);
+          // And its lip folds down out of his way, or coming round behind him it would bat him off line.
+          plank.threw = this.time;
+        }
       }
     }
   }
@@ -1234,10 +1497,16 @@ export class Game {
       if (gate.braked && gate.turned >= gate.target - 1e-9) {
         gate.turned = gate.target;
         gate.state = "stopped";
-        const port = PORTS[Math.round(gate.target / QUARTER) % 4]!;
-        gate.open = port;
-        if (port !== "top") for (const stave of gate.shutters[port]) stave.setEnabled(false);
-        this.events.push({ type: "port", port, x: gate.def.x, y: gate.def.y });
+        gate.out = false;
+        // Counted from where the leaves stood when he came in: the second time round that is not where they began.
+        const port = PORTS[Math.round((gate.target - gate.wound) / QUARTER) % 4]!;
+        gate.at = port;
+        const shut = port === "top" || (gate.barred && gate.def.bar?.port === port);
+        if (port !== "top" && !shut) {
+          gate.open = port;
+          for (const stave of gate.shutters[port]) stave.setEnabled(false);
+        }
+        this.events.push({ type: "port", port, shut, x: gate.def.x, y: gate.def.y });
       }
       gate.body.setNextKinematicRotation(quat(-gate.turned));
     }
@@ -1258,19 +1527,197 @@ export class Game {
         if (on) {
           // Put on before he is in it, the brake stops it at the first quarter.
           gate.braked = true;
-          gate.target = Math.max(QUARTER, Math.ceil((gate.turned + 0.03) / QUARTER) * QUARTER);
+          gate.target = Math.max(gate.wound + QUARTER, Math.ceil((gate.turned + 0.03) / QUARTER) * QUARTER);
           this.events.push({ type: "brake", x: gate.def.pan.x, y: gate.def.pan.y });
         }
       }
       // Left to itself the clockwork runs down, and it runs down with him at the top.
-      if (!gate.braked && gate.turned >= DOOR_LAPS * 4 * QUARTER - 0.03) {
+      if (!gate.braked && gate.turned >= gate.wound + DOOR_LAPS * 4 * QUARTER - 0.03) {
         gate.braked = true;
-        gate.target = DOOR_LAPS * 4 * QUARTER;
+        gate.target = gate.wound + DOOR_LAPS * 4 * QUARTER;
       }
-      if (gate.state === "still" && this.phase === "run" && Math.hypot(p.x - gate.def.x, p.y - gate.def.y) < 0.95) {
+      const far = Math.hypot(p.x - gate.def.x, p.y - gate.def.y);
+      if (gate.state === "still" && this.phase === "run" && far < 0.95) {
         gate.state = "turning";
         this.events.push({ type: "turning", x: gate.def.x, y: gate.def.y });
       }
+      // His weight on the treadle pulls the bar off its shutter; and if the door is standing
+      // against that shutter, up it goes.
+      const bar = gate.def.bar;
+      if (gate.barred && bar && this.phase === "run" && p.x > bar.tread.x0 && p.x < bar.tread.x1 && p.y > bar.tread.y0 && p.y < bar.tread.y1) {
+        gate.barred = false;
+        this.events.push({ type: "unbar", x: (bar.tread.x0 + bar.tread.x1) / 2, y: bar.tread.y0 });
+        if (gate.state === "stopped" && gate.at === bar.port) {
+          gate.open = bar.port;
+          for (const stave of gate.shutters[bar.port]) stave.setEnabled(false);
+          this.events.push({ type: "port", port: bar.port, shut: false, x: gate.def.x, y: gate.def.y });
+        }
+      }
+      // Out of the door and back in at the top: it is the same door, and it starts again. The
+      // shutter comes down, the brake comes off, and what was on its pan goes with it.
+      if (gate.state !== "stopped" || this.phase !== "run") continue;
+      if (far > gate.def.r + DOOR_WALL + 0.5) gate.out = true;
+      if (!gate.out || far >= 0.95) continue;
+      if (gate.open && gate.open !== "top") for (const stave of gate.shutters[gate.open]) stave.setEnabled(true);
+      gate.open = null;
+      gate.at = null;
+      gate.out = false;
+      gate.braked = false;
+      gate.target = -1;
+      gate.wound = gate.turned;
+      gate.state = "turning";
+      for (const bale of [...this.live]) {
+        let on = false;
+        this.world.contactPair(gate.pan, bale.collider, (manifold) => {
+          if (manifold.numContacts() > 0) on = true;
+        });
+        if (!on) continue;
+        const at = bale.body.translation();
+        this.events.push({ type: "release", id: bale.id, x: at.x, y: at.y });
+        this.scrap(bale);
+      }
+      this.events.push({ type: "turning", x: gate.def.x, y: gate.def.y });
+    }
+  }
+
+  /** A bale that is no more: burst, or thrown off a brake. */
+  private scrap(bale: Bale): void {
+    this.soft.delete(bale.collider.handle);
+    this.world.removeRigidBody(bale.body);
+    this.live.splice(this.live.indexOf(bale), 1);
+  }
+
+  /**
+   * A flap lets him up and not down. It stands open while he is under it and on his way up,
+   * and it is shut again as soon as he is clear above it.
+   */
+  /**
+   * A cistern. The sluice lets the water in; it rises to the lowest way out and runs out there.
+   * A bale in it floats, and he can ride one up: at the way out it leans and he rolls off. One
+   * with nobody on it does not wait for him: the water takes it out.
+   */
+  private flood(): void {
+    const p = this.eggBody.translation();
+    for (const tank of this.cisterns) {
+      const def = tank.def;
+      if (tank.openAt < 0) {
+        let on = false;
+        this.world.contactPairsWith(tank.pan, (other) => {
+          if (!this.live.some((bale) => bale.collider.handle === other.handle)) return;
+          this.world.contactPair(tank.pan, other, (manifold) => {
+            if (manifold.numContacts() > 0) on = true;
+          });
+        });
+        if (on) {
+          tank.openAt = this.time;
+          this.events.push({ type: "sluice", x: def.pan.x, y: def.pan.y });
+        }
+      }
+      if (tank.openAt >= 0 && !tank.wet && this.time >= tank.openAt + RACE) {
+        tank.wet = true;
+        this.events.push({ type: "water", x: def.tap.x, y: def.tap.y });
+      }
+
+      // A bale stood in the mouth of the spout stops it, and stays where it is put.
+      const side = def.spout.side;
+      const face = side > 0 ? def.x1 : def.x0;
+      if (tank.plug && !this.live.includes(tank.plug)) tank.plug = null;
+      if (!tank.plug) {
+        for (const bale of this.live) {
+          if (bale.washed) continue;
+          const at = bale.body.translation();
+          const v = bale.body.linvel();
+          const out = (at.x - face) * side;
+          if (out < 0.05 || out > 0.75 || at.y < def.spout.lip || at.y > def.spout.top || Math.hypot(v.x, v.y) > 0.6) continue;
+          tank.plug = bale;
+          bale.body.setBodyType(RAPIER.RigidBodyType.Fixed, true);
+          this.events.push({ type: "plug", id: bale.id, x: at.x, y: at.y });
+          break;
+        }
+      }
+
+      // The water comes up to the lowest way out, and no further.
+      const out: "spout" | "weir" = tank.plug ? "weir" : "spout";
+      const cap = (tank.plug ? def.weir : def.spout.lip) + 0.12;
+      const before = tank.level;
+      if (tank.wet) tank.level = tank.level < cap ? Math.min(cap, tank.level + RISE * STEP) : Math.max(cap, tank.level - RISE * 2 * STEP);
+      tank.rising = tank.level !== before;
+      const full = tank.wet && tank.level === cap;
+      if (full && tank.over !== out) {
+        tank.over = out;
+        this.events.push({ type: "spill", over: out, x: out === "weir" ? (side > 0 ? def.x0 : def.x1) : face, y: cap });
+      }
+      if (!full) tank.over = null;
+
+      // What is afloat: the top one rides at the top of the water, any others under it.
+      const inside = this.live.filter((bale) => {
+        if (bale.washed || bale === tank.plug) return false;
+        const at = bale.body.translation();
+        return at.x > def.x0 && at.x < def.x1 && at.y > def.floor && at.y < Math.max(def.weir, tank.level) + BALE_H;
+      });
+      for (const bale of inside) bale.tank = true;
+      const afloat = inside.filter((bale) => bale.body.translation().y < tank.level + 0.35).sort((a, b) => b.body.translation().y - a.body.translation().y);
+      const raft = afloat[0];
+      const middle = (def.x0 + def.x1) / 2;
+      const top = raft ? raft.body.translation().y + BALE_H / 2 : def.floor;
+      tank.aboard = raft !== undefined && p.x > def.x0 - 0.2 && p.x < def.x1 + 0.2 && p.y > top - 0.2 && p.y < top + 1.5;
+      // Towards the way out is down: he rolls off it and out.
+      const way = out === "spout" ? side : -side;
+      const lean = full && tank.aboard ? -way * RAFT_LEAN : 0;
+      afloat.forEach((bale, under) => {
+        const at = bale.body.translation();
+        const want = tank.level - FLOAT_DEEP - under * (BALE_H + 0.02);
+        if (want < def.floor + BALE_H / 2 + under * (BALE_H + 0.02)) return;
+        const turn = turnOf(bale.body.rotation());
+        const lay = under === 0 ? lean : 0;
+        bale.body.setLinvel({ x: (middle - at.x) * 6, y: Math.max(-3, Math.min(1.6, (want - at.y) * 10)), z: 0 }, true);
+        bale.body.setRotation(quat(turn + Math.max(-1.2 * STEP, Math.min(1.2 * STEP, lay - turn))), true);
+        bale.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      });
+
+      // Nobody on it, and the water running out past it: after a moment it goes too.
+      if (tank.wash) {
+        const going = tank.wash;
+        if (this.time >= going.until || !this.live.includes(going.bale)) tank.wash = null;
+        else going.bale.body.setLinvel({ x: going.way * 2.6, y: this.time < going.until - 0.75 ? 2.2 : 0, z: 0 }, true);
+      }
+      if (full && tank.aboard) tank.rode = true;
+      tank.bob = full && raft && !tank.aboard && !tank.wash && !tank.rode ? tank.bob + STEP : 0;
+      if (raft && tank.bob >= WASH) {
+        const at = raft.body.translation();
+        raft.washed = true;
+        raft.tank = false;
+        tank.wash = { bale: raft, until: this.time + 1, way };
+        tank.bob = 0;
+        this.events.push({ type: "wash", id: raft.id, over: out, x: at.x, y: at.y });
+      }
+
+      // Water is soft, and an egg does not float: he goes down in it slowly.
+      const wading = tank.wet && tank.level > def.floor + 0.15 && p.x > def.x0 && p.x < def.x1 && p.y - 0.45 < tank.level && p.y > def.floor;
+      if (wading) this.softUntil = Math.max(this.softUntil, this.time + 0.2);
+      const under = wading && p.y < tank.level - 0.05;
+      if (under) {
+        const v = this.eggBody.linvel();
+        this.eggBody.setLinvel({ x: v.x * 0.9, y: Math.max(v.y, -1.5), z: 0 }, true);
+        if (!tank.under) this.events.push({ type: "splash", x: p.x, y: tank.level });
+      }
+      tank.under = under;
+    }
+  }
+
+  private swing(): void {
+    const p = this.eggBody.translation();
+    const v = this.eggBody.linvel();
+    for (const valve of this.valves) {
+      const { x0, y0, x1, y1 } = valve.def;
+      const within = p.x > Math.min(x0, x1) - 0.3 && p.x < Math.max(x0, x1) + 0.3;
+      const top = y0 + ((y1 - y0) * (p.x - x0)) / (x1 - x0);
+      if (!valve.open) {
+        if (within && p.y < top - 0.25 && p.y > top - 2.5 && v.y > 2) valve.open = true;
+      } else if (!within || p.y > top + 0.66 || (p.y < top - 0.25 && v.y <= 0)) {
+        valve.open = false;
+      }
+      valve.collider.setEnabled(!valve.open);
     }
   }
 
@@ -1291,8 +1738,15 @@ export class Game {
         plank.up = true;
         const coming = Math.max(spin * plank.def.side, plank.spin);
         if (this.phase === "run") this.fling(plank.def, plank.hit > 0 ? (plank.def.throw ?? plank.hit * FLING_GAIN) : coming);
+        if (plank.hit > 0 && plank.def.throw !== undefined && plank.lip) {
+          // One with a seat that always throws alike stops dead when it has thrown.
+          plank.body.setRotation(quat(plank.def.side * tip), true);
+          plank.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+        }
         plank.hit = 0;
       }
+      // (Its groups, not setEnabled: a collider switched off on a moving body keeps its contacts.)
+      plank.lip?.setCollisionGroups(this.time > plank.threw + 0.7 ? 0xffffffff : 0);
       plank.spin = spin * plank.def.side;
     }
   }
@@ -1308,10 +1762,18 @@ export class Game {
     const above = -dx * Math.sin(turn) + dy * Math.cos(turn);
     // Off the end of a cushion with no lip he is already on his way down: the plank comes up past him.
     if (along < 0.1 || along > def.seat + 0.5 || above < 0 || above > 1.6) return;
-    const speed = Math.min(FLING_TOP, power);
+    // One that always throws alike may throw harder than a falling bale ever could.
+    const speed = def.throw ?? Math.min(FLING_TOP, power);
     this.eggBody.setLinvel({ x: -def.side * Math.sin(def.cast) * speed, y: Math.cos(def.cast) * speed, z: 0 }, true);
     this.eggBody.setAngvel({ x: 0, y: 0, z: def.side * Math.min(6, speed * 0.6) }, true);
     this.eggBody.setLinearDamping(0);
+    // One that always throws alike throws from the middle of its seat, wherever in it he had got to.
+    if (def.throw !== undefined && !def.pass) {
+      this.eggBody.setTranslation({ x: def.x + def.side * (def.seat - 0.5) * Math.cos(def.tip), y: p.y, z: 0 }, true);
+    }
+    // He is going somewhere now: the hook that was coming for him has to start again.
+    this.idle = 0;
+    this.warned = false;
     this.flungAt = this.time;
     this.softUntil = this.time + SOFT_GRACE * 2;
     this.events.push({ type: "fling", speed });
@@ -1380,12 +1842,10 @@ export class Game {
 
     if (this.time <= this.softUntil) {
       this.events.push({ type: "soft", jolt, x: p.x, y: p.y });
-      for (const bale of jolt >= BURST ? touch.bales : []) {
+      for (const bale of jolt >= BURST ? touch.bales.filter((each) => !each.tank) : []) {
         const at = bale.body.translation();
         this.events.push({ type: "burst", id: bale.id, x: at.x, y: at.y });
-        this.soft.delete(bale.collider.handle);
-        this.world.removeRigidBody(bale.body);
-        this.live.splice(this.live.indexOf(bale), 1);
+        this.scrap(bale);
         this.burst += 1;
         this.strawUntil = this.time + STRAW_GRACE;
       }
@@ -1455,7 +1915,9 @@ export class Game {
 
     // Standing still, or rocking on the spot: either way he is getting nowhere. A door that is
     // carrying him round is taking him somewhere, however little he moves in it.
-    const carried = this.gates.some((gate) => gate.state === "turning" && Math.hypot(p.x - gate.def.x, p.y - gate.def.y) < gate.def.r);
+    const carried =
+      this.gates.some((gate) => gate.state === "turning" && Math.hypot(p.x - gate.def.x, p.y - gate.def.y) < gate.def.r) ||
+      this.cisterns.some((tank) => tank.aboard && tank.rising);
     const still = !carried && Math.hypot(p.x - this.anchor.x, p.y - this.anchor.y) < STILL;
     if (!still) this.anchor = { x: p.x, y: p.y };
     this.idle = still ? this.idle + STEP : 0;

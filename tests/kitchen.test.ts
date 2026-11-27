@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { before, test } from "node:test";
-import { BUTTERY, CAGE, DOOR_LAPS, DOOR_TURN, Game, IDLE, LARDER, LEVELS, MILLROOM, RACE, SCULLERY, SEAT_IDLE, STEP, STOREY, WHEEL_TURN, loadPhysics, type GameEvent, type Input, type LevelDef } from "../src/sim/kitchen";
-import { GOOD_DROP, PLANS, butteryPlan, larderPlan, millPlan, pilot, sculleryPlan } from "../src/sim/pilot";
+import { BUTTERY, CAGE, CISTERN, DOOR_LAPS, DOOR_TURN, Game, IDLE, LARDER, LEVELS, MILLROOM, RACE, RISE, SCULLERY, SEAT_IDLE, STEP, STOREY, WHEEL_TURN, loadPhysics, type GameEvent, type Input, type LevelDef } from "../src/sim/kitchen";
+import { GOOD_DROP, PLANS, butteryPlan, cisternPlan, larderPlan, millPlan, pilot, sculleryPlan } from "../src/sim/pilot";
 
 before(async () => {
   await loadPhysics();
@@ -154,7 +154,7 @@ test("every room's plan gets him through it whole, with three stars", () => {
     const { game } = run(pilot(PLANS[level.key]!()), 40, level);
     assert.equal(game.phase, "home", level.name);
     assert.equal(game.stars, 3, level.name);
-    assert.ok(game.time < 16, `${level.name} took ${game.time.toFixed(1)}s`);
+    assert.ok(game.time < 22, `${level.name} took ${game.time.toFixed(1)}s`);
   }
 });
 
@@ -310,47 +310,73 @@ test("mill: the same taps give the same run, to the last bit", () => {
 // ------------------------------------------------------------------ the buttery
 
 const buttery = (hands: (game: Game) => Input, limit = 40) => run(hands, limit, BUTTERY);
-const port = (events: GameEvent[]): string => {
-  const event = events.find((item) => item.type === "port");
-  return event && event.type === "port" ? event.port : "none";
-};
+/** Where the door stopped, each time it stopped. */
+const ports = (events: GameEvent[]): string[] => events.flatMap((event) => (event.type === "port" ? [event.port] : []));
 
-test("buttery: one bale, for whoever can wait: out on the left, and nothing between him and the nest", () => {
+test("buttery: three bales, and one to spare: out on the right, thrown back up, round again and out on the left", () => {
   const { game, events } = buttery(pilot(butteryPlan()));
-  assert.equal(port(events), "left");
-  assert.equal(game.phase, "home");
-  assert.equal(game.cracks, 0);
-  assert.equal(game.balesLeft, BUTTERY.bales - 1);
-  assert.equal(game.stars, 3);
-});
-
-test("buttery: three bales, for whoever cannot: out on the right, the long drop and the hole", () => {
-  const { game, events } = buttery(pilot(butteryPlan({ brake: "right" })));
-  assert.equal(port(events), "right");
+  assert.deepEqual(ports(events), ["right", "left"]);
+  assert.equal(count(events, "unbar"), 1);
+  assert.equal(count(events, "fling"), 1);
+  assert.equal(count(events, "release"), 1);
   assert.equal(game.phase, "home");
   assert.equal(game.cracks, 0);
   assert.equal(game.balesLeft, BUTTERY.bales - 3);
-  assert.equal(game.stars, 2);
+  assert.equal(game.stars, 3);
 });
 
-test("buttery: out on the right with nothing under the drop he is cracked, and with the hole open he is fried", () => {
-  const bare = buttery(pilot(butteryPlan({ brake: "right", cushion: false }))).game;
-  assert.equal(bare.phase, "home");
-  assert.equal(bare.cracks, 1);
-  assert.equal(buttery(pilot(butteryPlan({ brake: "right", stopHole: false }))).game.phase, "fried");
+test("buttery: the left-hand shutter is barred: stopped there the first time round, it stays shut and the hook has him", () => {
+  // The bale takes its moment to arrive: thrown as he passes the bottom, it stops the door at the left.
+  const { game, events } = buttery(pilot([{ when: (now) => -(now.doors[0]?.turn ?? 0) / (Math.PI / 2) >= 2.1, x: -0.7, y: 30.5 - STOREY * 3 }]));
+  const stop = events.find((event) => event.type === "port");
+  assert.ok(stop && stop.type === "port" && stop.port === "left" && stop.shut);
+  assert.equal(count(events, "unbar"), 0);
+  assert.equal(game.phase, "caught");
 });
 
-test("buttery: where the door stops is where the brake found it: right, bottom, left, top, and round again", () => {
-  const want = ["right", "bottom", "left", "top", "right"];
-  const ends = ["home", "fried", "home", "caught", "home"];
-  want.forEach((name, index) => {
-    for (const part of [0.1, 0.45, 0.8]) {
-      // The bale takes its moment to arrive, so it is thrown most of a quarter ahead.
-      const { game, events } = buttery(pilot(butteryPlan({ brake: Math.max(0.01, index + part - 0.45) })));
-      assert.equal(port(events), name, `thrown ${(index + part - 0.45).toFixed(2)} quarters round`);
-      assert.equal(game.phase, ends[index], `out at the ${name}`);
-    }
-  });
+test("buttery: stopped at the bottom, he is in the pan", () => {
+  const { game, events } = buttery(pilot([{ when: (now) => -(now.doors[0]?.turn ?? 0) / (Math.PI / 2) >= 1.1, x: -0.7, y: 30.5 - STOREY * 3 }]));
+  assert.deepEqual(ports(events), ["bottom"]);
+  assert.equal(game.phase, "fried");
+});
+
+test("buttery: his weight on the board takes the bar off, but nothing else does", () => {
+  const out = buttery(pilot(butteryPlan({ toss: false, second: false })));
+  assert.equal(count(out.events, "unbar"), 1);
+  assert.equal(out.game.phase, "caught", "sat in the see-saw with nothing done, the hook comes for him");
+  // A bale thrown on to the board is not him.
+  const tread = BUTTERY.doors[0]!.bar!.tread;
+  const baled = buttery(pilot([{ when: (now) => now.time > 0.2, x: (tread.x0 + tread.x1) / 2, y: tread.y0 + 0.6 }]), 8);
+  assert.equal(count(baled.events, "unbar"), 0);
+});
+
+test("buttery: the see-saw in the corner always throws alike, and there is a long time to throw the bale in", () => {
+  let clean = 0;
+  for (let at = 5; at <= 11.5; at += 0.5) {
+    const { game, events } = buttery(pilot(butteryPlan({ toss: at })));
+    if (game.phase === "home" && game.cracks === 0) clean += 1;
+    assert.equal(count(events, "release"), 1, `thrown at ${at}s he should be back in the door`);
+  }
+  assert.equal(clean, 14);
+  // Thrown before he is in the seat, it has gone over without him.
+  assert.notEqual(buttery(pilot(butteryPlan({ toss: 2.5 }))).game.phase, "home");
+});
+
+test("buttery: the second time round there is a quarter of a turn in which to brake, and outside it he is not home", () => {
+  for (const part of [2.05, 2.3, 2.55]) {
+    const { game, events } = buttery(pilot(butteryPlan({ second: part })));
+    assert.deepEqual(ports(events), ["right", "left"], `thrown ${part} quarters round`);
+    assert.equal(game.phase, "home");
+  }
+  const soon = buttery(pilot(butteryPlan({ second: 0.2 })));
+  assert.deepEqual(ports(soon.events), ["right", "right"]);
+  assert.equal(soon.game.phase, "caught", "out on the right again, and the see-saw has thrown already");
+  const pan = buttery(pilot(butteryPlan({ second: 1.2 })));
+  assert.deepEqual(ports(pan.events), ["right", "bottom"]);
+  assert.equal(pan.game.phase, "fried");
+  const never = buttery(pilot(butteryPlan({ second: false })));
+  assert.deepEqual(ports(never.events), ["right", "top"]);
+  assert.equal(never.game.phase, "caught");
 });
 
 test("buttery: the door turns a quarter in a second and a half, and not until he is in it", () => {
@@ -362,25 +388,14 @@ test("buttery: the door turns a quarter in a second and a half, and not until he
     for (const event of game.drain()) if (event.type === "turning") began = game.time;
     if (began < 0) assert.equal(game.doors[0]!.turn, 0);
   }
-  assert.ok(began > 2 && began < 3.5, `it began at ${began.toFixed(2)}s`);
+  assert.ok(began > 1.5 && began < 3.5, `it began at ${began.toFixed(2)}s`);
   assert.ok(Math.abs(-game.doors[0]!.turn - DOOR_TURN * (game.time - began)) < 0.05);
   assert.ok(Math.abs(Math.PI / 2 / DOOR_TURN - 1.5) < 1e-9);
 });
 
-test("buttery: a brake put on before he is in it stops the door at the first quarter", () => {
-  const game = new Game(BUTTERY);
-  game.start();
-  const events: GameEvent[] = [];
-  while (!game.over && game.time < 12) {
-    game.step(game.time < STEP ? { bale: { x: 2.75, y: 28.6 - STOREY * 3 } } : {});
-    events.push(...game.drain());
-  }
-  assert.equal(port(events), "right");
-});
-
 test("buttery: left to itself the clockwork runs down with him at the top, and the hook has him", () => {
   const { game, events } = buttery(() => ({}));
-  assert.equal(port(events), "top");
+  assert.deepEqual(ports(events), ["top"]);
   assert.equal(game.phase, "caught");
   assert.ok(game.time > DOOR_LAPS * 6 && game.time < DOOR_LAPS * 6 + 8, `it took ${game.time.toFixed(1)}s`);
   assert.equal(game.cracks, 0, "the ride does not hurt him");
@@ -398,6 +413,87 @@ test("buttery: nothing can be thrown into the drum of the door", () => {
 test("buttery: the same taps give the same run, to the last bit", () => {
   const a = buttery(pilot(butteryPlan())).game;
   const b = buttery(pilot(butteryPlan())).game;
+  assert.equal(a.time, b.time);
+  assert.deepEqual(a.egg, b.egg);
+});
+
+// ------------------------------------------------------------------ the cistern
+
+const cistern = (hands: (game: Game) => Input, limit = 40) => run(hands, limit, CISTERN);
+
+test("cistern: a raft, a stopper and then the water: three bales, and one to spare", () => {
+  const { game, events } = cistern(pilot(cisternPlan()));
+  assert.equal(game.phase, "home");
+  assert.equal(game.cracks, 0);
+  assert.equal(game.balesLeft, CISTERN.bales - 3);
+  assert.equal(game.stars, 3);
+  assert.equal(count(events, "plug"), 1);
+  assert.equal(count(events, "wash"), 0);
+  const spills = events.filter((event) => event.type === "spill");
+  assert.ok(spills.length === 1 && spills[0]!.type === "spill" && spills[0]!.over === "weir");
+});
+
+test("cistern: left alone he comes down in it dry, and the hook has him", () => {
+  const { game } = cistern(() => ({}));
+  assert.notEqual(game.phase, "home");
+  assert.ok(game.cracks > 0);
+});
+
+test("cistern: with the spout left open he goes out of it with the water, into the pan", () => {
+  const { game, events } = cistern(pilot(cisternPlan({ plug: false })));
+  assert.equal(game.phase, "fried");
+  assert.ok(events.some((event) => event.type === "spill" && event.over === "spout"));
+});
+
+test("cistern: with no bale under him he goes down in the water, and the hook has him", () => {
+  const { game, events } = cistern(pilot(cisternPlan({ raft: false, sluice: 7.5 })));
+  assert.equal(count(events, "splash"), 1);
+  assert.equal(game.cracks, 0, "water is soft");
+  assert.equal(game.phase, "caught");
+});
+
+test("cistern: with no water he sits on his bale until the hook comes", () => {
+  const { game } = cistern(pilot(cisternPlan({ sluice: false })));
+  assert.equal(game.cracks, 0, "the bale broke his fall, and was not burst by it");
+  assert.equal(game.bales.length, 2);
+  assert.equal(game.phase, "caught");
+});
+
+test("cistern: let in before he is aboard, the water takes the raft away without him", () => {
+  for (const at of [0.2, 1.5, 3, 4]) {
+    const { game, events } = cistern(pilot(cisternPlan({ raft: 0.1, plug: 0.15, sluice: at })));
+    assert.equal(count(events, "wash"), 1, `let in at ${at}s`);
+    assert.equal(game.phase, "caught");
+  }
+});
+
+test("cistern: there are a good six seconds in which to let the water in", () => {
+  for (let at = 5.5; at <= 11.5; at += 0.5) {
+    const { game } = cistern(pilot(cisternPlan({ sluice: at })));
+    assert.equal(game.phase, "home", `let in at ${at}s`);
+    assert.equal(game.cracks, 0);
+  }
+});
+
+test("cistern: the water comes up at its own rate, to the lowest way out and no further", () => {
+  const game = new Game(CISTERN);
+  const tank = CISTERN.tanks[0]!;
+  game.start();
+  let wet = -1;
+  while (game.time < 8) {
+    game.step(game.time < STEP ? { bale: { x: tank.pan.x, y: tank.pan.y + 0.5 } } : {});
+    for (const event of game.drain()) if (event.type === "water") wet = game.time;
+    if (wet < 0) assert.equal(game.tanks[0]!.level, tank.floor);
+  }
+  assert.ok(wet > RACE && wet < RACE + 1, `the water came at ${wet.toFixed(2)}s`);
+  assert.ok(Math.abs(game.tanks[0]!.level - tank.spout.lip) < 0.2, "with the spout open it stops at the spout");
+  assert.equal(game.tanks[0]!.over, "spout");
+  assert.ok(Math.abs((tank.spout.lip - tank.floor) / RISE - 1) < 0.5, "and takes about a second to get there");
+});
+
+test("cistern: the same taps give the same run, to the last bit", () => {
+  const a = cistern(pilot(cisternPlan())).game;
+  const b = cistern(pilot(cisternPlan())).game;
   assert.equal(a.time, b.time);
   assert.deepEqual(a.egg, b.egg);
 });

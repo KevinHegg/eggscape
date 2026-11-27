@@ -1,5 +1,5 @@
 import * as pc from "playcanvas";
-import { BALE_H, BALE_W, DOOR_SLOT, DOOR_WALL, EGG, PORTS, SHUTTER, eggOutline, type Block, type DoorDef, type Game, type GameEvent, type LevelDef, type Port, type WheelDef } from "../sim/kitchen";
+import { BALE_H, BALE_W, DOOR_SLOT, DOOR_WALL, EGG, PORTS, SHUTTER, eggOutline, type Block, type DoorDef, type Game, type GameEvent, type LevelDef, type Port, type TankDef, type WheelDef } from "../sim/kitchen";
 
 /**
  * The kitchen as it is seen: a doll's house with its front off. Everything in the simulation
@@ -18,6 +18,9 @@ const SHOW_W = 9.3;
 const SHOW_H = 19.5;
 const FOV = 24;
 const RAD = 180 / Math.PI;
+/** The brake's shoe and rod stand this far back; and every shelf in the house falls this much in one across. */
+const SHOE_Z = -0.62;
+const SHELF_FALL = 0.36;
 
 /** An illuminated manuscript's paint box: vellum, lapis, vermilion, verdigris and gold leaf. */
 const INK = {
@@ -92,11 +95,24 @@ export class Stage {
   private arrival: { from: { x: number; y: number; turn: number }; t: number; gone: boolean } | null = null;
   /** Where the camera has been told to look while a card is up, and a request to work that out. */
   private held: number | null = null;
-  private holdAsk: { lowest: number; cover: number } | null = null;
+  private holdAsk: { lowest: number; cover: number; highest: number | null } | null = null;
   /** The water wheels of the room being played, and how far open each sluice is drawn. */
   private mills: Array<{ def: WheelDef; wheel: pc.Entity; lever: pc.Entity; gate: pc.Entity; gateY: number; stream: pc.Entity; reach: number; fall: pc.Entity; k: number; drip: number }> = [];
   /** The revolving doors of the room being played: the leaves, and each shutter with how far open it is drawn. */
-  private turns: Array<{ def: DoorDef; rotor: pc.Entity; lever: pc.Entity; shoe: pc.Entity; k: number; shutters: Record<Side, { root: pc.Entity; staves: pc.Entity[]; k: number; lit: boolean }> }> = [];
+  private turns: Array<{
+    def: DoorDef;
+    rotor: pc.Entity;
+    lever: pc.Entity;
+    shoe: pc.Entity;
+    k: number;
+    shutters: Record<Side, { root: pc.Entity; staves: pc.Entity[]; k: number; lit: boolean }>;
+    /** The bar across the shutter that is barred, where it hangs, and how far off it has dropped. */
+    bar: { root: pc.Entity; x: number; y: number; turn: number; k: number } | null;
+  }> = [];
+  /** The flaps in the shelves of the room being played, and how far up each is drawn. */
+  private valves: Array<{ root: pc.Entity; tilt: number; k: number }> = [];
+  /** The cisterns of the room being played: the water in each, and where it comes in and goes out. */
+  private vats: Array<{ def: TankDef; lever: pc.Entity; water: pc.Entity; stream: pc.Entity; spout: pc.Entity; weir: pc.Entity; k: number; drip: number }> = [];
   private flames: pc.Entity[] = [];
   private fried: pc.Entity | null = null;
   private mess: pc.Entity | null = null;
@@ -218,6 +234,7 @@ export class Stage {
       vellum: this.paint("vellum", INK.vellum),
       ember: this.paint("ember", new pc.Color(0.7, 0.2, 0.08), { glow: 0.7 }),
       water: this.paint("water", INK.water, { gloss: 0.9, glow: 0.45, opacity: 0.88 }),
+      pool: this.paint("pool", INK.water, { gloss: 0.9, glow: 0.12, opacity: 0.36 }),
       spray: this.paint("spray", new pc.Color(0.8, 0.9, 1), { glow: 0.5 }),
     };
   }
@@ -362,6 +379,8 @@ export class Stage {
     this.hatchOpen = false;
     this.arrival = arrive ? { from: arrive, t: 0, gone: false } : null;
     this.mills = [];
+    this.valves = [];
+    this.vats = [];
     this.holdAsk = null;
     if (!arrive) {
       this.snap = true;
@@ -375,6 +394,8 @@ export class Stage {
       this.buildSeesaws(level, here);
       this.buildWheels(level, here);
       this.buildDoors(level, here);
+      this.buildFlaps(level, here);
+      this.buildTanks(level, here);
       this.buildCages(level);
       this.buildPans(level);
       this.buildNest(level, here);
@@ -414,7 +435,7 @@ export class Stage {
     const larder = level.key === "larder";
     const flip = larder ? 1 : -1;
     const railY = level.top - 1.1;
-    const rail = level.wheels.length === 0 && level.doors.length === 0;
+    const rail = level.wheels.length === 0 && level.doors.length === 0 && level.tanks.length === 0;
     if (rail) this.shape("box", this.scene, [midX + flip * 1.6, railY, BACK + 0.12], [3.4, 0.08, 0.08], m.iron, [0, 0, 0], true);
     for (let index = 0; rail && index < 5; index += 1) {
       const x = midX + flip * (0.2 + index * 0.7);
@@ -639,7 +660,9 @@ export class Stage {
           const stave = this.shape("box", shutters[side].root, [Math.cos(turn) * ring, Math.sin(turn) * ring, 0], [DOOR_WALL * 0.7, long, 1.3], m.iron, [0, 0, mid]);
           shutters[side].staves.push(stave);
         } else {
-          this.shape("box", this.scene, [def.x + Math.cos(turn) * ring, def.y + Math.sin(turn) * ring, 0], [DOOR_WALL, long, 1.5], Math.round(mid / 6) % 2 ? m.oak : m.oakDark, [0, 0, mid], true);
+          // The staves either side of the slot are padded, and look it.
+          const padded = Math.abs(mid - 90) < DOOR_SLOT + 13;
+          this.shape("box", this.scene, [def.x + Math.cos(turn) * ring, def.y + Math.sin(turn) * ring, 0], [DOOR_WALL + (padded ? 0.06 : 0), long, 1.5], padded ? m.vermilion : Math.round(mid / 6) % 2 ? m.oak : m.oakDark, [0, 0, mid], true);
         }
       }
       // The lips of the slot in the top, in iron, so that it reads as the way in.
@@ -669,10 +692,104 @@ export class Stage {
       this.shape("box", lever, [(reach - 0.6) / 2, -0.07, 0.56], [reach + 0.6, 0.09, 0.1], m.oakDark);
       this.shape("box", lever, [def.pan.x - pivot.x, -0.03, 0], [def.pan.w, 0.07, 1.15], m.gold);
       for (const side of [-1, 1]) this.shape("box", lever, [def.pan.x - pivot.x + (side * def.pan.w) / 2, 0.02, 0], [0.06, 0.16, 1.15], m.gold);
-      const shoe = this.shape("box", this.scene, [def.x + ring * 0.62, def.y + ring * 0.86, 0.56], [0.5, 0.2, 0.3], m.iron, [0, 0, -36]);
-      this.shape("box", this.scene, [(pivot.x - 0.6 + def.x + ring * 0.62) / 2, (pivot.y + def.y + ring * 0.86 + 0.2) / 2, 0.56], [0.05, Math.abs(pivot.y - def.y - ring * 0.86) + 0.3, 0.05], m.iron, [0, 0, 24], true);
+      // The shoe and its rod are at the back, out of the way of the slot he comes in by.
+      const shoe = this.shape("box", this.scene, [def.x + ring * 0.62, def.y + ring * 0.86, SHOE_Z], [0.5, 0.2, 0.3], m.iron, [0, 0, -36]);
+      const end = { x: pivot.x - 0.56, y: pivot.y - 0.02 };
+      const foot = { x: def.x + ring * 0.62, y: def.y + ring * 0.86 + 0.2 };
+      this.shape("box", this.scene, [(end.x + foot.x) / 2, (end.y + foot.y) / 2, SHOE_Z], [0.05, Math.hypot(foot.x - end.x, foot.y - end.y), 0.05], m.iron, [0, 0, Math.atan2(end.x - foot.x, foot.y - end.y) * RAD], true);
+      this.shape("box", this.scene, [end.x, end.y, (0.56 + SHOE_Z) / 2], [0.06, 0.06, 0.56 - SHOE_Z], m.iron, [0, 0, 0], true);
 
-      if (here) this.turns.push({ def, rotor, lever, shoe, k: 0, shutters });
+      let bar: { root: pc.Entity; x: number; y: number; turn: number; k: number } | null = null;
+      if (def.bar) {
+        // The bar across the shutter that will not open, and the board outside the other one
+        // that takes it off: both red, and a rope from one to the other round under the drum.
+        const mid = (SHUTTER[def.bar.port][0] + SHUTTER[def.bar.port][1]) / 2;
+        const turn = (mid * Math.PI) / 180;
+        const out = ring + 0.17;
+        const at = { x: def.x + Math.cos(turn) * out, y: def.y + Math.sin(turn) * out };
+        const root = this.group("bar", this.scene, [at.x, at.y, 0.6], [0, 0, mid]);
+        this.shape("box", root, [0, 0, 0], [0.16, 1.75, 0.5], m.vermilion);
+        this.shape("box", root, [0.06, 0, 0.2], [0.14, 0.36, 0.2], m.iron);
+        for (const along of [-0.8, 0.8]) this.shape("box", root, [-0.04, along, 0], [0.2, 0.12, 0.56], m.iron);
+        const tread = def.bar.tread;
+        const rise = (tread.x1 - tread.x0) * SHELF_FALL;
+        this.shape("box", this.scene, [(tread.x0 + tread.x1) / 2, tread.y0 + rise / 2 + 0.03, 0], [Math.hypot(tread.x1 - tread.x0, rise), 0.07, 1.3], m.vermilion, [0, 0, -Math.atan(SHELF_FALL) * RAD], true);
+        const z = BACK + 0.2;
+        const low = def.y - ring - 0.5;
+        const from = { x: tread.x0 + 0.15, y: tread.y0 + rise - 0.2 };
+        this.shape("box", this.scene, [from.x, (from.y + low) / 2, z], [0.06, from.y - low, 0.06], m.canvas, [0, 0, 0], true);
+        this.shape("box", this.scene, [(from.x + at.x) / 2, low, z], [Math.abs(from.x - at.x), 0.06, 0.06], m.canvas, [0, 0, 0], true);
+        this.shape("box", this.scene, [at.x, (at.y + low) / 2, z], [0.06, Math.abs(at.y - low), 0.06], m.canvas, [0, 0, 0], true);
+        for (const x of [from.x, at.x]) this.shape("cylinder", this.scene, [x, low, z], [0.26, 0.1, 0.26], m.iron, [90, 0, 0], true);
+        bar = { root, x: at.x, y: at.y, turn: mid, k: 0 };
+      }
+
+      if (here) this.turns.push({ def, rotor, lever, shoe, k: 0, shutters, bar });
+    }
+  }
+
+  /** A flap in a shelf: a board hinged at its high end, that lifts to let him up through it and drops shut under him. */
+  private buildFlaps(level: LevelDef, here: boolean): void {
+    const m = this.m;
+    for (const def of level.flaps) {
+      const length = Math.hypot(def.x1 - def.x0, def.y1 - def.y0);
+      const tilt = Math.atan2(def.y1 - def.y0, def.x1 - def.x0) * RAD;
+      const root = this.group("flap", this.scene, [def.x1, def.y1, 0], [0, 0, tilt]);
+      this.shape("box", root, [-length / 2, -0.11, 0], [length, 0.16, 1.5], m.oak);
+      this.shape("box", root, [-length + 0.08, -0.11, 0], [0.16, 0.2, 1.54], m.gold);
+      for (const z of [-0.5, 0.5]) this.shape("box", root, [-0.16, -0.01, z], [0.4, 0.06, 0.18], m.iron);
+      if (here) this.valves.push({ root, tilt, k: 0 });
+    }
+  }
+
+  /** A cistern: the water in it, the tap over it, the sluice lever with its pan, and what runs out. */
+  private buildTanks(level: LevelDef, here: boolean): void {
+    const m = this.m;
+    for (const def of level.tanks) {
+      const side = def.spout.side;
+      const face = side > 0 ? def.x1 : def.x0;
+      const far = side > 0 ? def.x0 : def.x1;
+      const wide = def.x1 - def.x0;
+      const middle = (def.x0 + def.x1) / 2;
+      // Iron bands across the back of it, so that it reads as one vessel.
+      for (const y of [def.floor + 0.5, def.weir - 0.3]) this.shape("box", this.scene, [middle, y, BACK + 0.14], [wide + 0.9, 0.12, 0.08], m.iron, [0, 0, 0], true);
+      const water = this.shape("box", this.scene, [middle, def.floor, 0], [wide, 0.01, 1.5], m.pool);
+      water.enabled = false;
+
+      // The pipe: along the back wall from the sluice, down, and out over the cistern.
+      const z = BACK + 0.26;
+      const head = def.pan.y - 0.45;
+      const pivot = { x: def.pan.x + def.pan.w / 2 + 0.35, y: def.pan.y - 0.02 };
+      this.shape("box", this.scene, [(pivot.x + def.tap.x) / 2, head, z], [Math.abs(def.tap.x - pivot.x) + 0.22, 0.22, 0.22], m.verdigris, [0, 0, 0], true);
+      this.shape("box", this.scene, [def.tap.x, (head + def.tap.y) / 2, z], [0.22, head - def.tap.y + 0.22, 0.22], m.verdigris, [0, 0, 0], true);
+      this.shape("box", this.scene, [def.tap.x, def.tap.y, z / 2], [0.22, 0.22, Math.abs(z)], m.verdigris, [0, 0, 0], true);
+      this.shape("cylinder", this.scene, [def.tap.x, def.tap.y - 0.16, 0], [0.34, 0.2, 0.34], m.verdigris, [0, 0, 0], true);
+      for (const y of [head - 0.6, def.tap.y + 0.5]) this.shape("box", this.scene, [def.tap.x, y, z], [0.3, 0.08, 0.3], m.iron, [0, 0, 0], true);
+      const stream = this.shape("box", this.scene, [def.tap.x, def.tap.y, 0], [0.26, 0.01, 0.4], m.water);
+      stream.enabled = false;
+
+      // The sluice lever: a beam on a post, the gold pan on its long end and the valve on its short one.
+      this.shape("box", this.scene, [pivot.x, pivot.y - 0.3, 0.52], [0.1, 0.7, 0.1], m.iron, [0, 0, 0], true);
+      this.shape("box", this.scene, [pivot.x, head, (0.52 + z) / 2], [0.1, 0.1, 0.52 - z], m.iron, [0, 0, 0], true);
+      const lever = this.group("lever", this.scene, [pivot.x, pivot.y, 0], [0, 0, -7]);
+      const long = pivot.x - (def.pan.x - def.pan.w / 2);
+      this.shape("box", lever, [(0.36 - long) / 2, -0.07, 0.52], [long + 0.36, 0.09, 0.1], m.oakDark);
+      this.shape("box", lever, [def.pan.x - pivot.x, -0.03, 0], [def.pan.w, 0.07, 1.15], m.gold);
+      for (const edge of [-1, 1]) this.shape("box", lever, [def.pan.x - pivot.x + (edge * def.pan.w) / 2, 0.02, 0], [0.06, 0.16, 1.15], m.gold);
+
+      // What runs out: through the spout, or over the top of the far wall.
+      const spout = this.shape("box", this.scene, [face + side * 0.55, def.spout.lip + 0.06, 0], [1.1, 0.12, 1], m.water);
+      const weir = this.shape("box", this.scene, [far - side * 0.4, def.weir + 0.06, 0], [0.9, 0.12, 1], m.water);
+      spout.enabled = false;
+      weir.enabled = false;
+      // The iron lips of the spout's mouth, so that it reads as a way out.
+      for (const y of [def.spout.lip, def.spout.top]) this.shape("box", this.scene, [face + side * 0.15, y, 0], [0.4, 0.08, 1.56], m.iron, [0, 0, 0], true);
+
+      // The padded board over the far wall hangs on two rods.
+      const board = level.blocks.find((block) => block.soft && block.y - block.h / 2 > def.weir && Math.abs(block.x - far) < 0.4);
+      if (board) for (const depth of [-0.5, 0.5]) this.shape("box", this.scene, [board.x, board.y + board.h / 2 + 0.9, depth], [0.06, 1.8, 0.06], m.iron, [0, 0, 0], true);
+
+      if (here) this.vats.push({ def, lever, water, stream, spout, weir, k: 0, drip: 0 });
     }
   }
 
@@ -850,8 +967,8 @@ export class Stage {
    * While a card covers the bottom `cover` pixels of the screen, look low enough that `lowest`
    * (a height in the house) is seen above it. `null` lets the camera go back to him.
    */
-  hold(lowest: number | null, cover = 0): void {
-    this.holdAsk = lowest === null ? null : { lowest, cover };
+  hold(lowest: number | null, cover = 0, highest: number | null = null): void {
+    this.holdAsk = lowest === null ? null : { lowest, cover, highest };
     if (lowest === null) this.held = null;
   }
 
@@ -1065,7 +1182,14 @@ export class Stage {
       door.k += ((state.braked ? 1 : 0) - door.k) * Math.min(1, dt * 10);
       door.lever.setLocalEulerAngles(0, 0, 7 * (1 - door.k));
       const ring = door.def.r + 0.06 + DOOR_WALL / 2;
-      door.shoe.setLocalPosition(door.def.x + ring * (0.62 - 0.05 * door.k), door.def.y + ring * (0.86 - 0.07 * door.k) + 0.17, 0.56);
+      door.shoe.setLocalPosition(door.def.x + ring * (0.62 - 0.05 * door.k), door.def.y + ring * (0.86 - 0.07 * door.k) + 0.17, SHOE_Z);
+      if (door.bar) {
+        // Off its hooks it swings down and hangs by one end.
+        const bar = door.bar;
+        bar.k += ((state.barred ? 0 : 1) - bar.k) * Math.min(1, dt * 7);
+        bar.root.setLocalPosition(bar.x - 0.25 * bar.k, bar.y - 1.1 * bar.k, 0.6);
+        bar.root.setLocalEulerAngles(0, 0, bar.turn + 62 * bar.k);
+      }
       // The shutter the door is going to stop against is lit as soon as the brake is on.
       const quarter = Math.max(1, Math.ceil((-state.turn + 0.03) / (Math.PI / 2)));
       const next = state.braked && !state.stopped ? PORTS[quarter % 4] : state.stopped ? state.open : null;
@@ -1080,6 +1204,45 @@ export class Stage {
         shutter.root.setLocalPosition(door.def.x, door.def.y, -1.25 * shutter.k);
         shutter.root.setLocalScale(1, 1, 1 - 0.85 * shutter.k);
       }
+    });
+
+    game.flaps.forEach((state, index) => {
+      const valve = this.valves[index];
+      if (!valve) return;
+      valve.k += ((state.open ? 1 : 0) - valve.k) * Math.min(1, dt * 16);
+      valve.root.setLocalEulerAngles(0, 0, valve.tilt - 70 * valve.k);
+    });
+    game.tanks.forEach((state, index) => {
+      const vat = this.vats[index];
+      if (!vat) return;
+      const def = vat.def;
+      const middle = (def.x0 + def.x1) / 2;
+      vat.k += ((state.open ? 1 : 0) - vat.k) * Math.min(1, dt * 10);
+      vat.lever.setLocalEulerAngles(0, 0, -7 * (1 - vat.k));
+      const deep = state.level - def.floor + (state.wet ? Math.sin(this.clock * 5) * 0.015 : 0);
+      vat.water.enabled = deep > 0.03;
+      if (deep > 0.03) {
+        vat.water.setLocalScale(def.x1 - def.x0, deep, 1.5);
+        vat.water.setLocalPosition(middle, def.floor + deep / 2, 0);
+      }
+      vat.stream.enabled = state.wet;
+      const side = def.spout.side;
+      if (state.wet) {
+        const fall = Math.max(0.05, def.tap.y - 0.25 - state.level);
+        vat.stream.setLocalScale(0.26 + Math.sin(this.clock * 23) * 0.05, fall, 0.4);
+        vat.stream.setLocalPosition(def.tap.x, state.level + fall / 2, 0);
+        vat.drip -= dt;
+        if (vat.drip <= 0) {
+          vat.drip = 0.08;
+          const n = Math.floor(this.clock * 13);
+          this.puff([def.tap.x + ((n % 3) - 1) * 0.12, state.level + 0.05, ((n % 5) - 2) * 0.15], this.m.spray, 0.13 + (n % 3) * 0.03, 0.4, [((n % 5) - 2) * 0.5, 1.2 + (n % 3) * 0.5, 0]);
+          // And where it is running out, it runs out in a spray.
+          if (state.over === "spout") this.puff([(side > 0 ? def.x1 : def.x0) + side * (0.9 + (n % 3) * 0.3), def.spout.lip + 0.1, ((n % 5) - 2) * 0.2], this.m.spray, 0.16, 0.7, [side * (1.6 + (n % 3) * 0.4), 0.4, 0]);
+          if (state.over === "weir") this.puff([(side > 0 ? def.x0 : def.x1) - side * (0.6 + (n % 3) * 0.3), def.weir + 0.1, ((n % 5) - 2) * 0.2], this.m.spray, 0.16, 0.7, [-side * (1.6 + (n % 3) * 0.4), 0.4, 0]);
+        }
+      }
+      vat.spout.enabled = state.over === "spout";
+      vat.weir.enabled = state.over === "weir";
     });
 
     // The hook is let down in front of the house as his time runs out, and goes back up if he gets away.
@@ -1124,8 +1287,12 @@ export class Stage {
     const beside = game.egg.y - seen / 2 + hidden + 0.4 * (seen - hidden);
     let want = lowest >= highest ? (lowest + highest) / 2 : Math.min(highest, Math.max(lowest, beside));
     if (this.holdAsk) {
+      // What is left of the screen above the card has to show `lowest` at its foot and, if it
+      // can as well, `highest` at its head: where the two will not both fit, the head wins.
       const covered = (this.holdAsk.cover / Math.max(1, this.canvas.clientHeight)) * seen;
-      this.held = Math.min(want, this.holdAsk.lowest - covered + seen / 2);
+      const low = this.holdAsk.lowest - covered + seen / 2;
+      const high = this.holdAsk.highest === null ? low : this.holdAsk.highest - seen / 2;
+      this.held = Math.min(want, high > low ? high : (low + Math.max(high, low - 1.2)) / 2);
       this.holdAsk = null;
     }
     if (this.held !== null) want = this.held;
@@ -1213,7 +1380,10 @@ export class Stage {
         break;
       case "soft":
         // Into water with a splash, into straw with a cloud of it.
-        if (game.wheels.some((wheel) => wheel.wet && Math.hypot(event.x - wheel.x, event.y - wheel.y) < wheel.def.r + 0.7)) {
+        if (
+          game.wheels.some((wheel) => wheel.wet && Math.hypot(event.x - wheel.x, event.y - wheel.y) < wheel.def.r + 0.7) ||
+          game.tanks.some((tank) => tank.wet && event.x > tank.def.x0 && event.x < tank.def.x1 && event.y - 0.6 < tank.level && event.y > tank.def.floor)
+        ) {
           this.burst(event.x, event.y - 0.2, m.spray, 10, 0.24, 3.4);
         } else {
           this.burst(event.x, event.y - 0.4, m.hay, 8, 0.26, 2.4);
@@ -1246,6 +1416,32 @@ export class Stage {
       }
       case "caged":
         this.burst(event.x, event.y - 0.3, m.hay, 6, 0.2, 1.6);
+        break;
+      case "unbar": {
+        const bar = this.turns[0]?.bar;
+        if (bar) this.burst(bar.x, bar.y, m.dust, 10, 0.26, 2.6);
+        this.burst(event.x, event.y, m.dust, 5, 0.2, 1.4);
+        this.shake = Math.max(this.shake, 0.3);
+        break;
+      }
+      case "release":
+        this.burst(event.x, event.y, m.hay, 10, 0.3, 3);
+        this.burst(event.x, event.y, m.hayDark, 6, 0.22, 2);
+        break;
+      case "plug":
+        this.burst(event.x, event.y, m.hayDark, 6, 0.22, 1.8);
+        this.shake = Math.max(this.shake, 0.12);
+        break;
+      case "spill":
+        this.burst(event.x, event.y, m.spray, 12, 0.26, 3);
+        break;
+      case "wash":
+        this.burst(event.x, event.y, m.spray, 14, 0.3, 3.6);
+        this.shake = Math.max(this.shake, 0.2);
+        break;
+      case "splash":
+        this.burst(event.x, event.y, m.spray, 18, 0.3, 4.4);
+        this.shake = Math.max(this.shake, 0.2);
         break;
       case "knock":
         this.burst(event.x, event.y, m.dust, 7, 0.34, 2.4);
