@@ -72,9 +72,16 @@ export class Stage {
   private planks: pc.Entity[] = [];
   private ghost: pc.Entity | null = null;
   private sockets: Array<{ entity: pc.Entity; x: number; y: number }> = [];
-  private hen: { root: pc.Entity; head: pc.Entity; wings: pc.Entity[] } | null = null;
-  private chicks: pc.Entity[] = [];
-  private cook: { root: pc.Entity; arms: pc.Entity[] } | null = null;
+  /** Every hen in the house; `here` is the one this room ends at. */
+  private hens: Array<{ head: pc.Entity; wings: pc.Entity[]; here: boolean }> = [];
+  private chicks: Array<{ entity: pc.Entity; base: number; here: boolean }> = [];
+  private cooks: Array<{ root: pc.Entity; arms: pc.Entity[] }> = [];
+  /** The trapdoor he comes in by, and how far open it is (0 shut, 1 open). */
+  private flaps: Array<{ entity: pc.Entity; side: number }> = [];
+  private hatch = 0;
+  private hatchOpen = false;
+  /** He is on his way down from the roost above: where from, and for how long. */
+  private arrival: { from: { x: number; y: number; turn: number }; t: number } | null = null;
   private flames: pc.Entity[] = [];
   private fried: pc.Entity | null = null;
   private mess: pc.Entity | null = null;
@@ -163,6 +170,7 @@ export class Stage {
     return {
       plaster: this.paint("plaster", INK.plaster),
       plasterWarm: this.paint("plaster-warm", INK.plasterWarm),
+      russet: this.paint("russet", new pc.Color(0.62, 0.36, 0.2), { gloss: 0.2 }),
       oak: this.paint("oak", INK.oak),
       oakDark: this.paint("oak-dark", INK.oakDark),
       iron: this.paint("iron", INK.iron, { gloss: 0.5 }),
@@ -298,7 +306,11 @@ export class Stage {
 
   // ---------------------------------------------------------------- the kitchen
 
-  load(game: Game): void {
+  /**
+   * Build the whole house, with `game`'s room as the one being played. With `arrive`, he is
+   * shown dropping in from there, and the camera travels down to the room instead of cutting.
+   */
+  load(game: Game, house: LevelDef[] = [game.level], arrive: { x: number; y: number; turn: number } | null = null): void {
     this.scene.destroy();
     this.scene = new pc.Entity("scene");
     this.app.root.addChild(this.scene);
@@ -309,7 +321,10 @@ export class Stage {
     this.sockets = [];
     this.cracks = [];
     this.arms = [];
+    this.hens = [];
     this.chicks = [];
+    this.cooks = [];
+    this.flaps = [];
     this.flames = [];
     this.puffs = [];
     this.pool = [];
@@ -318,14 +333,22 @@ export class Stage {
     this.catcher = null;
     this.ending = null;
     this.shake = 0;
-    this.snap = true;
+    this.hatch = 0;
+    this.hatchOpen = false;
+    this.arrival = arrive ? { from: arrive, t: 0 } : null;
+    if (!arrive) this.snap = true;
 
-    this.buildRoom(game.level);
-    for (const block of game.level.blocks) this.buildBlock(block);
-    this.buildSeesaws(game);
-    this.buildPans(game.level);
-    this.buildNest(game.level);
+    for (const level of house.includes(game.level) ? house : [game.level]) {
+      const here = level === game.level;
+      this.buildRoom(level);
+      for (const block of level.blocks) this.buildBlock(block);
+      this.buildSeesaws(level, here);
+      this.buildPans(level);
+      this.buildNest(level, here);
+      if (level.hatch) this.buildHatch(level, here);
+    }
     this.buildKing();
+    if (arrive) this.burst(arrive.x, arrive.y - 0.3, this.m.hay, 10, 0.4, 3);
 
     const m = this.m;
     this.ghost = this.baleShape(this.scene, m.ghost);
@@ -353,20 +376,34 @@ export class Stage {
     this.shape("box", this.scene, [midX, level.bottom + 2.6, BACK + 0.02], [wide, 3, 0.04], m.plasterWarm, [0, 0, 0], true);
     this.shape("box", this.scene, [midX, level.top + 0.2, 0], [wide + 1.6, 0.5, DEPTH + 0.6], m.oakDark, [0, 0, 0], true);
 
-    // A rail of copper pans along the top, and a window the daylight does not come from.
+    // A rail of copper pans along the top, and a window the daylight does not come from. The
+    // scullery is dressed the other way round, to keep them clear of what happens in it.
+    const larder = level.key === "larder";
+    const flip = larder ? 1 : -1;
     const railY = level.top - 1.1;
-    this.shape("box", this.scene, [midX + 1.6, railY, BACK + 0.12], [3.4, 0.08, 0.08], m.iron, [0, 0, 0], true);
+    this.shape("box", this.scene, [midX + flip * 1.6, railY, BACK + 0.12], [3.4, 0.08, 0.08], m.iron, [0, 0, 0], true);
     for (let index = 0; index < 5; index += 1) {
-      const x = midX + 0.2 + index * 0.7;
+      const x = midX + flip * (0.2 + index * 0.7);
       const size = 0.5 - (index % 3) * 0.08;
       this.shape("cylinder", this.scene, [x, railY - 0.2 - size / 2, BACK + 0.16], [size, 0.07, size], m.copper, [90, 0, 0], true);
       this.shape("box", this.scene, [x, railY - 0.1, BACK + 0.16], [0.05, 0.22, 0.05], m.iron, [0, 0, 0], true);
     }
-    const window = this.group("window", this.scene, [level.left + 1.5, level.top - 6.6, BACK + 0.04]);
+    const window = this.group("window", this.scene, [midX - flip * (wide / 2 - 1.5), level.top - 6.6, BACK + 0.04]);
     this.shape("box", window, [0, 0, 0], [1.5, 2, 0.08], m.oakDark, [0, 0, 0], true);
     this.shape("box", window, [0, 0, 0.03], [1.26, 1.76, 0.06], m.lapis, [0, 0, 0], true);
     this.shape("box", window, [0, 0, 0.06], [0.08, 1.76, 0.05], m.oakDark, [0, 0, 0], true);
     this.shape("box", window, [0, 0, 0.06], [1.26, 0.08, 0.05], m.oakDark, [0, 0, 0], true);
+    if (!larder) {
+      // A plate rack on the back wall, where there is room for one.
+      const rack = this.group("rack", this.scene, [level.left + 1.7, level.bottom + 6.9, BACK + 0.2]);
+      this.shape("box", rack, [0, 0, 0], [2.4, 0.1, 0.4], m.oakDark, [0, 0, 0], true);
+      for (let index = 0; index < 3; index += 1) {
+        const x = -0.78 + index * 0.78;
+        this.shape("cylinder", rack, [x, 0.4, 0.05], [0.68, 0.05, 0.68], m.canvas, [78, 0, 0], true);
+        this.shape("cylinder", rack, [x, 0.4, 0.09], [0.4, 0.05, 0.4], index % 2 ? m.verdigris : m.lapis, [78, 0, 0], true);
+      }
+      return;
+    }
     // Jars along the back of the larder shelf, strings of onions under it.
     for (let index = 0; index < 4; index += 1) {
       const x = level.left + 0.6 + index * 0.55;
@@ -420,32 +457,42 @@ export class Stage {
     }
   }
 
-  private buildSeesaws(game: Game): void {
+  private buildSeesaws(level: LevelDef, here: boolean): void {
     const m = this.m;
-    for (const saw of game.seesaws) {
-      const def = saw.def;
+    for (const def of level.seesaws) {
       // The trestle stands still; the plank, its cushion and its lip turn.
       for (const z of [-0.7, 0.7]) {
         this.shape("box", this.scene, [def.x - 0.16, def.y - 0.26, z], [0.12, 0.6, 0.12], m.oakDark, [0, 0, -22], true);
         this.shape("box", this.scene, [def.x + 0.16, def.y - 0.26, z], [0.12, 0.6, 0.12], m.oakDark, [0, 0, 22], true);
       }
       this.shape("cylinder", this.scene, [def.x, def.y - 0.02, 0], [0.16, 1.7, 0.16], m.iron, [90, 0, 0], true);
-      const plank = this.group("plank", this.scene, [def.x, def.y, 0]);
+      const plank = this.group("plank", this.scene, [def.x, def.y, 0], [0, 0, -def.side * def.tip * RAD]);
       const whole = def.seat + def.load;
       const mid = (def.side * (def.seat - def.load)) / 2;
       this.shape("box", plank, [mid, 0, 0], [whole, 0.12, 1.5], m.oak);
-      this.shape("box", plank, [def.side * (def.seat / 2 + 0.05), 0.12, 0], [def.seat - 0.1, 0.12, 1.3], m.vermilion);
-      this.shape("box", plank, [def.side * (def.seat / 2 + 0.05), 0.19, 0], [def.seat - 0.3, 0.03, 1.1], m.gold);
+      // The cushion lies on the seat arm; he sinks a little way into it.
+      this.shape("box", plank, [(def.side * def.seat) / 2, 0.07, 0], [def.seat - 0.04, 0.06, 1.3], m.vermilion);
+      this.shape("box", plank, [(def.side * def.seat) / 2, 0.1, 0], [def.seat - 0.3, 0.02, 1.1], m.gold);
       this.shape("box", plank, [def.side * (def.seat - 0.06), 0.3, 0], [0.12, 0.4, 1.3], m.vermilion);
       // The end that wants a bale: painted so it reads as a target.
       this.shape("box", plank, [-def.side * (def.load - 0.55), 0.065, 0], [0.9, 0.02, 1.2], m.gold);
-      this.planks.push(plank);
+      if (here) this.planks.push(plank);
     }
   }
 
   private buildPans(level: LevelDef): void {
     const m = this.m;
     for (const pit of level.pits) {
+      if (pit.hung) {
+        // A pan in an iron box hung under the hole, with its own little fire beneath.
+        this.pan(this.scene, [pit.x, pit.pan - 0.05, 0.1], 1.1);
+        for (const side of [-1, 1]) this.shape("box", this.scene, [pit.x + side * 0.6, pit.pan - 0.2, BACK + 0.55], [0.1, 0.1, 1.2], m.iron, [0, 0, 0], true);
+        for (let index = 0; index < 3; index += 1) {
+          const flame = this.shape("cone", this.scene, [pit.x - 0.3 + index * 0.3, pit.pan - 0.2, 0.82], [0.2, 0.34, 0.1], m.fire);
+          this.flames.push(flame);
+        }
+        continue;
+      }
       const base = level.bottom + 1.2;
       this.shape("box", this.scene, [pit.x, (base + pit.pan) / 2 - 0.1, 0], [2, pit.pan - base - 0.2, 1.7], m.stoneDark, [0, 0, 0], true);
       this.shape("box", this.scene, [pit.x, base + 0.24, 0.86], [1, 0.34, 0.06], m.ink, [0, 0, 0], true);
@@ -465,41 +512,64 @@ export class Stage {
       const spoon = this.group("spoon", cook.arms[1]!, [0, 0.42, 0]);
       this.shape("box", spoon, [0, 0.2, 0], [0.04, 0.5, 0.04], m.oak);
       this.shape("sphere", spoon, [0, 0.46, 0], [0.14, 0.18, 0.08], m.oak);
-      this.cook = cook;
+      this.cooks.push(cook);
     }
   }
 
-  private buildNest(level: LevelDef): void {
+  /** The trapdoor in the ceiling that he comes in by: two flaps on iron hangers. */
+  private buildHatch(level: LevelDef, here: boolean): void {
+    const m = this.m;
+    const { x, y } = level.start;
+    const sill = y - EGG.blunt - 0.06;
+    const hang = level.top + 0.2 - sill;
+    for (const side of [-1, 1]) {
+      for (const z of [-0.6, 0.6]) this.shape("box", this.scene, [x + side * 0.64, sill + hang / 2, z], [0.07, hang, 0.07], m.iron, [0, 0, 0], true);
+      this.shape("box", this.scene, [x + side * 0.64, sill - 0.02, 0], [0.09, 0.09, 1.3], m.iron, [0, 0, 0], true);
+      const flap = this.group("flap", this.scene, [x + side * 0.6, sill, 0]);
+      this.shape("box", flap, [-side * 0.29, -0.04, 0], [0.58, 0.08, 1.2], m.oak);
+      this.shape("box", flap, [-side * 0.29, -0.09, 0], [0.5, 0.04, 0.2], m.iron);
+      if (here) this.flaps.push({ entity: flap, side });
+    }
+  }
+
+  /** The hen at the bottom of a room: a brown one keeping a roost, or the Empress herself with her brood. */
+  private buildNest(level: LevelDef, here: boolean): void {
     const m = this.m;
     const nest = level.nest;
-    const x = (nest.x0 + nest.x1) / 2 + 0.2;
+    const empress = level.ends === "nest";
+    const feather = empress ? m.hen : m.russet;
+    const x = (nest.x0 + nest.x1) / 2 + (empress ? (nest.x0 < 0 ? -0.2 : 0.2) : 0.2);
     const hen = this.group("hen", this.scene, [x, nest.y0 - 0.1, BACK + 0.55]);
-    hen.setLocalScale(0.36, 0.36, 0.3);
-    this.shape("sphere", hen, [0, 2.3, 0], [6, 4.8, 6.4], m.hen);
-    this.shape("sphere", hen, [0, 3.2, -2.9], [2.2, 2.6, 2.8], m.hen, [-30, 0, 0]);
+    const size = empress ? 0.36 : 0.25;
+    hen.setLocalScale(size, size, size * 0.84);
+    this.shape("sphere", hen, [0, 2.3, 0], [6, 4.8, 6.4], feather);
+    this.shape("sphere", hen, [0, 3.2, -2.9], [2.2, 2.6, 2.8], feather, [-30, 0, 0]);
     const head = this.group("head", hen, [0, 5.3, 1.9]);
-    this.shape("sphere", head, [0, 0, 0], [2.2, 2.3, 2.2], m.hen);
+    this.shape("sphere", head, [0, 0, 0], [2.2, 2.3, 2.2], feather);
     this.shape("cone", head, [0, -0.1, 1.25], [0.7, 0.9, 0.7], m.gold, [90, 0, 0]);
     this.shape("sphere", head, [0, -0.75, 0.95], [0.4, 0.7, 0.36], m.vermilion);
     for (const side of [-1, 1]) this.shape("sphere", head, [side * 0.62, 0.3, 0.86], [0.26, 0.3, 0.2], m.ink);
     for (const [offset, tall] of [[-0.35, 0.6], [0.15, 0.8], [0.6, 0.55]] as const) this.shape("sphere", head, [0, 1.2, offset - 0.1], [0.34, tall, 0.5], m.vermilion);
-    this.shape("cylinder", head, [0, 1.25, 0.45], [1.1, 0.22, 1.1], m.gold);
-    for (let spike = 0; spike < 5; spike += 1) {
-      const turn = (spike / 5) * Math.PI * 2;
-      this.shape("cone", head, [Math.cos(turn) * 0.46, 1.52, 0.45 + Math.sin(turn) * 0.46], [0.2, 0.42, 0.2], m.gold);
+    if (empress) {
+      this.shape("cylinder", head, [0, 1.25, 0.45], [1.1, 0.22, 1.1], m.gold);
+      for (let spike = 0; spike < 5; spike += 1) {
+        const turn = (spike / 5) * Math.PI * 2;
+        this.shape("cone", head, [Math.cos(turn) * 0.46, 1.52, 0.45 + Math.sin(turn) * 0.46], [0.2, 0.42, 0.2], m.gold);
+      }
     }
     const wings = [-1, 1].map((side) => {
       const wing = this.group("wing", hen, [side * 2.8, 2.6, 0.2]);
-      this.shape("sphere", wing, [side * 0.5, -0.2, 0], [1.6, 3, 4.2], m.hen, [0, 0, side * -12]);
+      this.shape("sphere", wing, [side * 0.5, -0.2, 0], [1.6, 3, 4.2], feather, [0, 0, side * -12]);
       return wing;
     });
-    this.hen = { root: hen, head, wings };
+    this.hens.push({ head, wings, here });
+    if (!empress) return;
     for (let index = 0; index < 3; index += 1) {
       const chick = this.group("chick", this.scene, [nest.x0 + 0.3 + index * 0.75, nest.y0 + 0.2, 0.8 - (index % 2) * 0.2]);
       this.shape("sphere", chick, [0, 0, 0], [0.3, 0.28, 0.3], m.yolk);
       this.shape("sphere", chick, [0, 0.2, 0.06], [0.2, 0.2, 0.2], m.yolk);
       this.shape("cone", chick, [0, 0.19, 0.18], [0.07, 0.1, 0.07], m.vermilion, [90, 0, 0]);
-      this.chicks.push(chick);
+      this.chicks.push({ entity: chick, base: nest.y0 + 0.2, here });
     }
   }
 
@@ -581,7 +651,16 @@ export class Stage {
           king.enabled = false;
           this.fry(end.to);
         }
+      } else if (this.arrival && game.phase === "ready") {
+        // Down through the straw of the roost above and on to the hatch.
+        const from = this.arrival.from;
+        this.arrival.t += dt;
+        const k = Math.min(1, this.arrival.t / 0.7);
+        king.setLocalPosition(from.x + (egg.x - from.x) * k, from.y + (egg.y - from.y) * k * k, 0);
+        king.setLocalEulerAngles(0, 0, (from.turn + (egg.turn - from.turn) * k) * RAD);
+        if (k >= 1) this.arrival = null;
       } else {
+        this.arrival = null;
         king.setLocalPosition(egg.x, egg.y, 0);
         king.setLocalEulerAngles(0, 0, egg.turn * RAD);
       }
@@ -642,22 +721,25 @@ export class Stage {
       const lick = 0.3 + Math.abs(Math.sin(this.clock * 9 + index * 2)) * 0.2;
       flame.setLocalScale(0.2, lick, 0.1);
     });
-    if (this.cook) {
+    for (const cook of this.cooks) {
       const stir = Math.sin(this.clock * 3);
-      this.cook.arms[1]!.setLocalEulerAngles(0, 0, -120 + stir * 16);
-      this.cook.arms[0]!.setLocalEulerAngles(0, 0, 150);
+      cook.arms[1]!.setLocalEulerAngles(0, 0, -120 + stir * 16);
+      cook.arms[0]!.setLocalEulerAngles(0, 0, 150);
     }
-    if (this.hen) {
-      const home = game.phase === "home";
+    for (const hen of this.hens) {
+      const home = hen.here && game.phase === "home";
       const beat = Math.sin(this.clock * (home ? 12 : 1.6));
-      this.hen.head.setLocalEulerAngles(home ? 16 + beat * 8 : beat * 8, beat * 10, 0);
-      this.hen.wings.forEach((wing, index) => wing.setLocalEulerAngles(0, 0, (index === 0 ? 1 : -1) * (home ? 30 + beat * 30 : 0)));
-      this.chicks.forEach((chick, index) => {
-        const p = chick.getLocalPosition();
-        const hop = home ? Math.abs(Math.sin(this.clock * 9 + index)) * 0.4 : Math.max(0, Math.sin(this.clock * 2 + index * 2)) * 0.06;
-        chick.setLocalPosition(p.x, (this.level?.nest.y0 ?? 0) + 0.2 + hop, p.z);
-      });
+      hen.head.setLocalEulerAngles(home ? 16 + beat * 8 : beat * 8, beat * 10, 0);
+      hen.wings.forEach((wing, index) => wing.setLocalEulerAngles(0, 0, (index === 0 ? 1 : -1) * (home ? 30 + beat * 30 : 0)));
     }
+    this.chicks.forEach((chick, index) => {
+      const p = chick.entity.getLocalPosition();
+      const home = chick.here && game.phase === "home";
+      const hop = home ? Math.abs(Math.sin(this.clock * 9 + index)) * 0.4 : Math.max(0, Math.sin(this.clock * 2 + index * 2)) * 0.06;
+      chick.entity.setLocalPosition(p.x, chick.base + hop, p.z);
+    });
+    this.hatch += ((this.hatchOpen ? 1 : 0) - this.hatch) * Math.min(1, dt * 12);
+    for (const flap of this.flaps) flap.entity.setLocalEulerAngles(0, 0, flap.side * 82 * this.hatch);
     if (this.catcher) {
       const k = Math.min(1, (this.ending?.t ?? 1) + dt * 3);
       if (this.ending) this.ending.t = k;
@@ -752,6 +834,9 @@ export class Stage {
     const m = this.m;
     const egg = game.egg;
     switch (event.type) {
+      case "start":
+        this.hatchOpen = true;
+        break;
       case "bale":
         this.burst(event.x, event.y, m.hayDark, 4, 0.22, 1.4);
         break;

@@ -22,16 +22,23 @@
           <button type="button" id="redo" title="Start again" aria-label="Start again">↻</button>
           <button type="button" id="sound" title="Sound" aria-label="Sound">♪</button>
         </header>
+        <p id="room"></p>
         <div id="toast" aria-live="polite"></div>
+        <div id="ready" hidden>
+          <p><b id="ready-name"></b> Look it over, then</p>
+          <button type="button" class="primary" id="let-go">Let him go</button>
+        </div>
       </div>
 
       <section id="title" class="card">
-        <p class="eyebrow">A new try &middot; one room of the kitchen</p>
+        <p class="eyebrow">A new try &middot; two rooms of the kitchen</p>
         <h1>The Great Eggscape</h1>
         <p class="story">The Queen wants an omelette. The Egg King wants his mother.</p>
         <p class="story small">He falls through her kitchen by himself. All you can do is throw straw: <b>tap, and a bale lands there a moment later.</b> Straw is soft. Nothing else in a kitchen is.</p>
-        <p class="goals"><b>★</b> Get him to the nest <b>★</b> Not a crack on him <b>★</b> Two bales to spare</p>
+        <p class="story small">A hen keeps a roost at the bottom of each room. Once he is on it he is safe, and a fall further down only sends him back that far.</p>
+        <p class="goals"><b>★</b> Get him through <b>★</b> Not a crack on him <b>★</b> Straw to spare</p>
         <button type="button" class="primary" id="go">Let him go</button>
+        <button type="button" class="second" id="resume" hidden></button>
         <p class="older">Earlier games: <a href="streets/">the six streets</a> &middot; <a href="gauntlet/">the gauntlet</a></p>
       </section>
 
@@ -42,6 +49,7 @@
         <p class="story" id="result-line"></p>
         <ul id="result-stats"></ul>
         <button type="button" class="primary" id="again">Go again</button>
+        <button type="button" class="second" id="other" hidden></button>
       </section>
     </main>
     <script type="module" src="/src/main.ts"></script>

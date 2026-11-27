@@ -1,23 +1,28 @@
 import "./style.css";
 import { Sound } from "./audio";
 import { Stage } from "./render/stage";
-import { Game, IDLE, LARDER, STEP, loadPhysics, type GameEvent, type Input } from "./sim/kitchen";
-import { larderPlan, pilot } from "./sim/pilot";
+import { Game, IDLE, LEVELS, STEP, loadPhysics, type GameEvent, type Input } from "./sim/kitchen";
+import { PLANS, pilot, seated } from "./sim/pilot";
 
-const STORAGE_KEY = "eggscape:kitchen:v1";
+const STORAGE_KEY = "eggscape:kitchen:v2";
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
 
 interface Saved {
-  best: number;
+  /** The best stars for each room, by its key. */
+  stars: Record<string, number>;
+  /** The lowest roost he has been got to: the room that can be started from. */
+  reached: number;
   muted: boolean;
 }
 
 function load(): Saved {
   try {
     const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}") as Partial<Saved>;
-    return { best: Number(raw.best) || 0, muted: Boolean(raw.muted) };
+    const stars: Record<string, number> = {};
+    for (const level of LEVELS) stars[level.key] = Math.min(3, Math.max(0, Number(raw.stars?.[level.key]) || 0));
+    return { stars, reached: Math.min(LEVELS.length - 1, Math.max(0, Number(raw.reached) || 0)), muted: Boolean(raw.muted) };
   } catch {
-    return { best: 0, muted: false };
+    return { stars: {}, reached: 0, muted: false };
   }
 }
 
@@ -36,6 +41,10 @@ const sound = new Sound();
 sound.muted = saved.muted;
 
 let game: Game | null = null;
+/** Which room of the house is being played, from the top. */
+let room = 0;
+/** The stars won in each room on this way down. */
+const won: number[] = [];
 let driver: ((game: Game) => Input) | null = null;
 let accumulator = 0;
 /** The bale the player has asked for, waiting for the next step. */
@@ -51,11 +60,21 @@ let runs = 0;
 const told = new Map<string, number>();
 let flung = false;
 let lastKnock = 0;
+/** The pan he went into hangs under a gap, not the one on the stove. */
+let friedHung = false;
 
 function show(id: "title" | "result" | "run"): void {
   $("title").hidden = id !== "title";
   $("result").hidden = id !== "result";
   $("hud").hidden = id === "title";
+  drawReady();
+}
+
+/** The bar that waits for him to be let go: there whenever he is sitting ready and nothing else is up. */
+function drawReady(): void {
+  const waiting = Boolean(game) && game!.phase === "ready" && $("title").hidden && $("result").hidden && !driver;
+  $("ready").hidden = !waiting;
+  if (game) $("ready-name").textContent = game.level.name;
 }
 
 function toast(text: string, kind: "" | "hint" | "bad" = ""): void {
@@ -87,23 +106,28 @@ function drawHud(current: Game): void {
   shell.classList.toggle("cracked", current.cracks === 1);
   shell.classList.toggle("cracked-2", current.cracks >= 2);
   $("shell-word").textContent = current.phase === "broken" ? "Broken" : current.cracks === 0 ? "Whole" : current.cracks === 1 ? "Cracked" : "One more";
+  $("room").textContent = `${current.level.name} · room ${room + 1} of ${LEVELS.length}`;
 }
 
 function drawSound(): void {
   $("sound").classList.toggle("off", sound.muted);
 }
 
-function fresh(): void {
+/** Set a room up with him sitting ready in it. With `arrive`, he is seen coming down into it from there. */
+function fresh(index = room, arrive: { x: number; y: number; turn: number } | null = null): void {
+  room = Math.min(LEVELS.length - 1, Math.max(0, index));
+  const level = LEVELS[room]!;
   game?.dispose();
-  game = new Game(LARDER);
-  driver = auto ? pilot(larderPlan()) : null;
-  stage.load(game);
+  game = new Game(level);
+  driver = auto ? pilot(PLANS[level.key]?.() ?? []) : null;
+  stage.load(game, LEVELS, arrive);
   stage.aim(null);
   pending = null;
   aiming = false;
   resultAt = -1;
   resultShown = false;
   flung = false;
+  friedHung = false;
   accumulator = 0;
   $("toast").replaceChildren();
   drawHud(game);
@@ -112,13 +136,32 @@ function fresh(): void {
 function begin(): void {
   if (!game || game.phase !== "ready") return;
   runs += 1;
-  show("run");
   game.start();
-  hint("catch", "Tap where he will come down. A bale takes a moment to get there");
+  show("run");
+  if (game.level.key === "larder") hint("catch", "Tap where he will come down. A bale takes a moment to get there");
+  else hint("bridge", "Quick: a bale in that gap, or he is in the pan under it");
 }
 
+/** The same room again, at once: from the shelf, or from the roost above it. */
 function restart(): void {
-  fresh();
+  fresh(room);
+  begin();
+}
+
+/** Off the roost and down into the next room, where he sits on the hatch until he is let go. */
+function descend(): void {
+  if (!game || game.phase !== "home" || room >= LEVELS.length - 1) return;
+  const egg = game.egg;
+  fresh(room + 1, { x: egg.x, y: egg.y, turn: egg.turn });
+  show("run");
+  sound.toss();
+  if (auto) begin();
+}
+
+/** The whole house again, from the larder shelf. */
+function fromTop(): void {
+  won.length = 0;
+  fresh(0);
   begin();
 }
 
@@ -139,7 +182,7 @@ function narrate(event: GameEvent, current: Game): void {
       break;
     case "burst":
       sound.straw();
-      toast("Caught!");
+      toast("Saved!");
       break;
     case "soft":
       sound.bump(event.jolt);
@@ -158,9 +201,7 @@ function narrate(event: GameEvent, current: Game): void {
     case "fling":
       flung = true;
       sound.seesaw();
-      if (current.level.sockets.some((socket) => socket.seat && !current.bales.some((bale) => Math.hypot(bale.x - socket.x, bale.y - socket.seat!.y) < 0.5))) {
-        hint("hole", "Now stop that hole, before he rolls into it");
-      }
+      if (holeOpen(current)) hint("hole", "Now stop that hole, before he rolls into it");
       break;
     case "warn":
       toast("A cook is coming!", "bad");
@@ -170,6 +211,7 @@ function narrate(event: GameEvent, current: Game): void {
       sound.splat();
       break;
     case "fried":
+      friedHung = current.level.pits.some((pit) => pit.hung && Math.abs(pit.x - event.x) < 0.1 && Math.abs(pit.pan - event.y) < 0.1);
       sound.fry();
       break;
     case "caught":
@@ -184,13 +226,11 @@ function narrate(event: GameEvent, current: Game): void {
   }
 }
 
-/** Whether he is sitting in a see-saw's seat. */
-function seated(current: Game): boolean {
-  const egg = current.egg;
-  return current.seesaws.some(({ def }) => {
-    const along = (egg.x - def.x) * def.side;
-    return along > 0 && along < def.seat + 0.4 && Math.abs(egg.y - def.y) < 1;
-  });
+/** Whether the hole in the bottom floor, the one over the stove, still has no bale in it. */
+function holeOpen(current: Game): boolean {
+  return current.level.pits.some(
+    (pit) => !pit.hung && !current.bales.some((bale) => Math.abs(bale.x - pit.x) < 0.5 && Math.abs(bale.y - pit.y) < 0.9),
+  );
 }
 
 function coach(current: Game): void {
@@ -198,18 +238,33 @@ function coach(current: Game): void {
   if (!flung && current.idle > 0.5 && seated(current)) {
     hint("seesaw", "Drop a bale on the gold end of the plank. The higher it falls from, the harder he is thrown");
   }
+  // In the scullery, once he is over the gap, the long drop at the far wall is next.
+  const egg = current.egg;
+  if (current.level.key === "scullery" && egg.x < 0.3 && egg.x > -1.6 && egg.y > current.level.top - 4.5) {
+    hint("drop", "A long drop at the wall. Get a bale under it");
+  }
 }
 
 function verdict(current: Game): { eyebrow: string; title: string; line: string } {
+  const last = room === LEVELS.length - 1;
+  const spare = current.level.spare;
   switch (current.phase) {
     case "home":
+      if (!last) {
+        const below = LEVELS[room + 1]!.name.replace(/^The /, "the ");
+        if (current.stars === 3) return { eyebrow: "Safe on the roost", title: current.level.name, line: `Whole, and with straw to spare. The hen will keep him: whatever happens in ${below}, he starts again from here.` };
+        if (current.cracks > 0) return { eyebrow: "Safe on the roost", title: current.level.name, line: `Cracked, but the hen will sit on him until he is mended. Whatever happens in ${below}, he starts again from here.` };
+        return { eyebrow: "Safe on the roost", title: current.level.name, line: `Whole, though it took most of the straw. Whatever happens in ${below}, he starts again from here.` };
+      }
       if (current.stars === 3) return { eyebrow: "Home", title: "Not a mark on him", line: "Into the nest, whole, and with straw to spare. The Empress Hen has counted him twice." };
       if (current.cracks > 0) return { eyebrow: "Home", title: "Home, and cracked", line: flung && lastKnock > 0 ? "He met something harder than straw on the way. A gentler throw, or a bale where he hit." : "He is home, with a crack to show his mother." };
-      return { eyebrow: "Home", title: "Home", line: "Whole, but it took most of the straw in the kitchen. Three bales will do it." };
+      return { eyebrow: "Home", title: "Home", line: `Whole, but it took all the straw in the room. Keep ${spare === 1 ? "one bale" : `${spare} bales`} back for the third star.` };
     case "broken":
       return { eyebrow: "A great fall", title: "Humpty Dumpty", line: overAt < 4 ? "A long drop, and nothing under him. Tap the floor where he will come down, and do it early: the bale takes a moment." : "That was harder than a shell can take. Straw and sacks are soft; wood, stone and iron are not." };
     case "fried":
-      return { eyebrow: "The Queen's breakfast", title: "Sunny side up", line: "Down the hole and into her pan. A bale dropped in the hole stops it: tap it before he gets there." };
+      return friedHung
+        ? { eyebrow: "The Queen's breakfast", title: "Sunny side up", line: "Through the gap and into the pan hung under it. Bridge the gap with a bale, and do it as soon as he is let go." }
+        : { eyebrow: "The Queen's breakfast", title: "Sunny side up", line: "Down the hole and into her pan. A bale dropped in the hole stops it: tap it before he gets there." };
     case "caught":
       return seated(current)
         ? { eyebrow: "Too slow", title: "Caught", line: flung ? "The plank tipped, but not hard enough to throw him. Let the bale fall from higher." : "He sat in the see-saw until a cook found him. Drop a bale on the gold end of the plank." }
@@ -221,6 +276,8 @@ function verdict(current: Game): { eyebrow: string; title: string; line: string 
 
 function showResult(current: Game): void {
   resultShown = true;
+  const last = room === LEVELS.length - 1;
+  const home = current.phase === "home";
   const { eyebrow, title, line } = verdict(current);
   $("result-eyebrow").textContent = eyebrow;
   $("result-title").textContent = title;
@@ -233,11 +290,21 @@ function showResult(current: Game): void {
       return star;
     }),
   );
-  $("result-stars").hidden = current.phase !== "home";
+  $("result-stars").hidden = !home;
+  if (home) {
+    won[room] = stars;
+    saved.stars[current.level.key] = Math.max(saved.stars[current.level.key] ?? 0, stars);
+    if (!last) saved.reached = Math.max(saved.reached, room + 1);
+    save();
+  }
   const stats: Array<[string, string]> = [
     ["Bales thrown", `${current.level.bales - current.balesLeft} of ${current.level.bales}`],
     ["Time", `${overAt.toFixed(1)} s`],
   ];
+  if (home && last) {
+    const total = LEVELS.reduce((sum, level, index) => sum + (won[index] ?? saved.stars[level.key] ?? 0), 0);
+    stats.push(["The whole house", `★ ${total} of ${LEVELS.length * 3}`]);
+  }
   $("result-stats").replaceChildren(
     ...stats.map(([label, value]) => {
       const item = document.createElement("li");
@@ -249,9 +316,25 @@ function showResult(current: Game): void {
       return item;
     }),
   );
-  if (stars > saved.best) {
-    saved.best = stars;
-    save();
+  // What the two buttons do depends on where he is: on a roost, home, or in pieces.
+  const again = $("again");
+  const other = $("other");
+  if (home && !last) {
+    again.textContent = "Down he goes";
+    again.dataset.does = "descend";
+    other.textContent = `${current.level.name} again`;
+    other.dataset.does = "restart";
+    other.hidden = false;
+  } else if (home) {
+    again.textContent = "From the top";
+    again.dataset.does = "top";
+    other.textContent = `${current.level.name} again`;
+    other.dataset.does = "restart";
+    other.hidden = false;
+  } else {
+    again.textContent = room > 0 ? "Again, from the roost" : "Go again";
+    again.dataset.does = "restart";
+    other.hidden = true;
   }
   show("result");
 }
@@ -282,6 +365,11 @@ function point(event: PointerEvent): void {
 
 host.addEventListener("pointerdown", (event) => {
   sound.unlock();
+  // Sitting ready, a tap anywhere in the kitchen lets him go.
+  if (game && game.phase === "ready" && !$("ready").hidden) {
+    begin();
+    return;
+  }
   if (!game || game.phase !== "run" || driver) return;
   aiming = true;
   host.setPointerCapture(event.pointerId);
@@ -313,14 +401,30 @@ function toggleSound(): void {
   drawSound();
 }
 
+function act(does: string | undefined): void {
+  sound.unlock();
+  if (does === "descend") descend();
+  else if (does === "top") fromTop();
+  else restart();
+}
+
 $("go").addEventListener("click", () => {
+  sound.unlock();
+  won.length = 0;
+  if (room !== 0) fresh(0);
+  begin();
+});
+$("resume").addEventListener("click", () => {
+  sound.unlock();
+  fresh(saved.reached);
+  show("run");
+});
+$("let-go").addEventListener("click", () => {
   sound.unlock();
   begin();
 });
-$("again").addEventListener("click", () => {
-  sound.unlock();
-  restart();
-});
+$("again").addEventListener("click", () => act($("again").dataset.does));
+$("other").addEventListener("click", () => act($("other").dataset.does));
 $("redo").addEventListener("click", () => {
   sound.unlock();
   restart();
@@ -346,12 +450,21 @@ stage.app.on("update", (dt: number) => {
   coach(current);
   drawHud(current);
   stage.sync(current, dt);
-  if (current.over && !resultShown && resultAt >= 0 && current.time >= resultAt) showResult(current);
+  if (current.over && !resultShown && resultAt >= 0 && current.time >= resultAt) {
+    showResult(current);
+    // The scripted player does not stop to read: off the roost and on down.
+    if (auto && current.phase === "home" && room < LEVELS.length - 1) descend();
+  }
 });
 
 await loadPhysics();
-fresh();
+fresh(0);
 drawSound();
+if (saved.reached > 0) {
+  const resume = $("resume");
+  resume.textContent = `From the roost above ${LEVELS[saved.reached]!.name.replace(/^The /, "the ")}`;
+  resume.hidden = false;
+}
 show("title");
 if (auto) begin();
 
@@ -360,14 +473,22 @@ if (auto) begin();
   get game() {
     return game;
   },
+  get room() {
+    return room;
+  },
   stage,
   IDLE,
   begin,
   restart,
+  descend,
+  enter(index: number) {
+    fresh(index);
+    show("run");
+  },
   step(seconds: number, bale?: { x: number; y: number }) {
     if (!game) return null;
     if (bale) pending = bale;
-    advance(game, Math.round(seconds / STEP));
+    if (game.phase !== "ready") advance(game, Math.round(seconds / STEP));
     coach(game);
     drawHud(game);
     stage.sync(game, seconds);

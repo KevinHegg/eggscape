@@ -386,3 +386,78 @@ button {
 .older a {
   color: var(--ink);
 }
+
+/* Which room of the house this is, under the top bar. */
+#room {
+  position: absolute;
+  top: calc(54px + var(--safe-top));
+  left: 0;
+  right: 0;
+  margin: 0;
+  text-align: center;
+  font: 600 13px var(--ui);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--vellum);
+  text-shadow: 0 1px 0 var(--ink), 0 0 6px rgb(29 21 18 / 0.7);
+}
+
+/* He is sitting ready: the room's name, and the button that lets him go. */
+#ready {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: calc(14px + var(--safe-bottom));
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 8px 8px 14px;
+  border: 3px solid var(--ink);
+  border-radius: 10px;
+  background: var(--vellum);
+  box-shadow: 0 4px 0 var(--ink);
+  pointer-events: auto;
+}
+
+#ready p {
+  flex: 1;
+  margin: 0;
+  font: 600 15px var(--ui);
+  line-height: 1.2;
+}
+
+#ready p b {
+  display: block;
+  font: 700 22px var(--display);
+}
+
+#ready button {
+  min-height: 48px;
+  padding: 6px 16px;
+  border: 3px solid var(--ink);
+  border-radius: 8px;
+  background: var(--vermilion);
+  color: #fff6e6;
+  font: 700 19px var(--ui);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  box-shadow: 0 3px 0 var(--ink);
+  white-space: nowrap;
+}
+
+.card > button.second {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 10px;
+  font-size: 17px;
+  box-shadow: 0 3px 0 var(--ink);
+}
+
+@media (min-width: 760px) and (orientation: landscape) {
+  #ready {
+    left: 50%;
+    right: auto;
+    width: 420px;
+    transform: translateX(-50%);
+  }
+}

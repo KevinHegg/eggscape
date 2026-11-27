@@ -1,4 +1,4 @@
-import type { Game, Input } from "./kitchen";
+import { STOREY, type Game, type Input } from "./kitchen";
 
 /** What a player does on a screen, as a list of things to wait for and where to put the bale. */
 export interface Move {
@@ -6,6 +6,16 @@ export interface Move {
   x: number;
   y: number;
 }
+
+/** Whether he has come to rest in a see-saw's seat. */
+export function seated(game: Game): boolean {
+  const egg = game.egg;
+  return game.seesaws.some(({ def }) => {
+    const along = (egg.x - def.x) * def.side;
+    return along > 0 && along < def.seat + 0.4 && Math.abs(egg.y - def.y) < 1;
+  });
+}
+const settled = (game: Game): boolean => game.idle > 0.6 && seated(game);
 
 /** How high over the see-saw a bale should be let go to throw him clean on to the flour sacks. */
 export const GOOD_DROP = 24.2;
@@ -15,13 +25,36 @@ export const GOOD_DROP = 24.2;
  * and one dropped on the see-saw once he is sitting in it.
  */
 export function larderPlan(drop = GOOD_DROP, stopHole = true): Move[] {
-  const seated = (game: Game): boolean => game.idle > 0.6 && game.egg.x > 0.7 && game.egg.x < 2.2 && game.egg.y < 22.4;
   return [
     { when: (game) => game.time > 1.2, x: 2.9, y: 22.8 },
     ...(stopHole ? [{ when: (game: Game) => game.time > 2, x: -1.1, y: 18.9 }] : []),
-    { when: seated, x: 0, y: drop },
+    { when: settled, x: 0, y: drop },
   ];
 }
+
+/** Heights in the scullery's plan are written as if it stood where the larder does: it hangs a storey down. */
+export const GOOD_TOSS = 24.9;
+
+/**
+ * The second screen played properly: bridge the gap over the pan at once, a bale under the
+ * long drop, one in the hole, and one dropped on the see-saw once he is sitting in it.
+ */
+export function sculleryPlan(drop = GOOD_TOSS, options: { bridge?: number | false; cushion?: boolean; stopHole?: boolean } = {}): Move[] {
+  const { bridge = 0.3, cushion = true, stopHole = true } = options;
+  const at = (when: Move["when"], x: number, y: number): Move => ({ when, x, y: y - STOREY });
+  return [
+    ...(bridge === false ? [] : [at((game) => game.time > bridge, 1.3, 28.5)]),
+    ...(cushion ? [at((game) => game.time > 2.7, -3.05, 24)] : []),
+    ...(stopHole ? [at((game) => game.time > 4.6, 1.1, 18.9)] : []),
+    at(settled, -0.3, drop),
+  ];
+}
+
+/** Each room played properly, by its key. */
+export const PLANS: Record<string, () => Move[]> = {
+  larder: () => larderPlan(),
+  scullery: () => sculleryPlan(),
+};
 
 /** A driver for tests and `?auto`: makes each move, in order, as soon as its moment comes. */
 export function pilot(plan: Move[]): (game: Game) => Input {

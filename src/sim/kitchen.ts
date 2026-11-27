@@ -100,6 +100,8 @@ export interface PitDef {
   y: number;
   w: number;
   pan: number;
+  /** The pan hangs on a bracket just under the hole, not on a stove on the floor. */
+  hung: boolean;
 }
 
 /**
@@ -115,7 +117,16 @@ export interface SocketDef {
 }
 
 export interface LevelDef {
+  /** A short name for code and saved games, and the name the player sees. */
+  key: string;
   name: string;
+  /**
+   * What the nest at the bottom is: a roost, where a hen keeps him safe and the next room down
+   * begins; or the Empress Hen's own nest, which is home.
+   */
+  ends: "roost" | "nest";
+  /** He comes in through a trapdoor in the ceiling, from the roost above. */
+  hatch: boolean;
   /** Inside walls. */
   left: number;
   right: number;
@@ -128,9 +139,11 @@ export interface LevelDef {
   seesaws: SeesawDef[];
   pits: PitDef[];
   sockets: SocketDef[];
-  /** The Empress Hen's nest: once he is inside this box he is home. */
+  /** The nest at the bottom: once he is inside this box he has done the room. */
   nest: { x0: number; x1: number; y0: number; y1: number };
   bales: number;
+  /** How many of them must be left over for the third star. */
+  spare: number;
 }
 
 /** A slab whose top face runs from one point to another. */
@@ -171,7 +184,10 @@ const WELL = { x0: PIT.x - PIT.well / 2, x1: PIT.x + PIT.well / 2 };
  * hole to the frying pan before he rolls into it.
  */
 export const LARDER: LevelDef = {
+  key: "larder",
   name: "The Larder",
+  ends: "roost",
+  hatch: false,
   left: -4,
   right: 4,
   top: 31,
@@ -179,6 +195,7 @@ export const LARDER: LevelDef = {
   start: { x: -2.9, y: 28.9 - (1.1 * 1.5) / 4.2 + EGG.blunt + 0.06 },
   shove: -2.4,
   bales: 5,
+  spare: 2,
   blocks: [
     box(-4.8, 12.6, -4, 31.4, "wall"),
     box(4, 12.6, 4.8, 31.4, "wall"),
@@ -210,15 +227,138 @@ export const LARDER: LevelDef = {
     box(3.7, FLOOR, 4, FLOOR + 3.8, "nest", true),
   ],
   seesaws: [{ x: 0.7, y: 21.55, seat: 1.25, load: 1.3, side: 1, tip: 0.31, cast: 0.7 }],
-  pits: [{ x: PIT.x, y: lowAt(PIT.x) - WELL_DEEP, w: PIT.w, pan: FLOOR + 0.7 }],
+  pits: [{ x: PIT.x, y: lowAt(PIT.x) - WELL_DEEP, w: PIT.w, pan: FLOOR + 0.7, hung: false }],
   sockets: [
     { x: PIT.x, y0: lowAt(PIT.x) - 1.2, y1: lowAt(PIT.x) + 1.4, reach: 1, seat: { y: lowAt(PIT.x) - WELL_DEEP / 2 + 0.08, turn: LOW_TURN } },
     { x: 0.7 - 0.72, y0: 21, y1: 27.5, reach: 0.85 },
+    // Under the long drop: clear of the step into the seat, wherever on that floor the finger lands.
+    { x: 3.05, y0: 22, y1: 25, reach: 1 },
   ],
   nest: { x0: 1.5, x1: 3.7, y0: FLOOR + 0.4, y1: FLOOR + 1.9 },
 };
 
-export const LEVELS: LevelDef[] = [LARDER];
+/** The same room, further down the house. */
+function lowered(level: LevelDef, by: number): LevelDef {
+  return {
+    ...level,
+    top: level.top - by,
+    bottom: level.bottom - by,
+    start: { x: level.start.x, y: level.start.y - by },
+    blocks: level.blocks.map((block) => ({ ...block, y: block.y - by })),
+    seesaws: level.seesaws.map((saw) => ({ ...saw, y: saw.y - by })),
+    pits: level.pits.map((pit) => ({ ...pit, y: pit.y - by, pan: pit.pan - by })),
+    sockets: level.sockets.map((socket) => ({
+      x: socket.x,
+      y0: socket.y0 - by,
+      y1: socket.y1 - by,
+      reach: socket.reach,
+      ...(socket.seat ? { seat: { y: socket.seat.y - by, turn: socket.seat.turn } } : {}),
+    })),
+    nest: { x0: level.nest.x0, x1: level.nest.x1, y0: level.nest.y0 - by, y1: level.nest.y1 - by },
+  };
+}
+
+/** How tall a room is: each one hangs this far below the last. */
+export const STOREY = 18;
+
+/** The scullery's top shelf, which falls to the left, and the gap in it over the hanging pan. */
+const RACK = { y: 29.5, fall: 0.36 };
+const rackAt = (x: number): number => RACK.y - RACK.fall * (4 - x);
+const RACK_TURN = Math.atan(RACK.fall);
+const GAP = { x: 1.3, w: 1.1, well: BALE_W * Math.cos(RACK_TURN) + 0.12 };
+const GAP_DEEP = BALE_H / Math.cos(RACK_TURN);
+const GAP_WELL = { x0: GAP.x - GAP.well / 2, x1: GAP.x + GAP.well / 2 };
+/** The scullery's see-saw is the larder's, the other way round: its pivot, and the step down into its seat. */
+const TIP = { x: -1, y: 22.55, wall: -1 - 1.42 };
+/** Where the bale under the long drop goes: hard up against the wall, which is all the room there is. */
+const CATCH = -4 + BALE_W / 2 + 0.02;
+/** The short floor he comes down on, which falls to the right into that seat. */
+const landAt = (x: number): number => TIP.y + 0.48 + 0.356 * (TIP.wall - x);
+/** The bottom floor, which falls to the left, over the hole and on to the nest. */
+const SINK = { y: 19.8, fall: 0.36 };
+const sinkAt = (x: number): number => SINK.y - SINK.fall * (4 - x);
+const SINK_TURN = Math.atan(SINK.fall);
+const PLUG = { x: 1.1, w: 1.1, well: BALE_W * Math.cos(SINK_TURN) + 0.12 };
+const PLUG_DEEP = BALE_H / Math.cos(SINK_TURN);
+const PLUG_WELL = { x0: PLUG.x - PLUG.well / 2, x1: PLUG.x + PLUG.well / 2 };
+
+/**
+ * The second screen, written as if it stood where the first does and then lowered a storey.
+ * He comes in through the hatch at the top right, already rolling, and the first thing in his
+ * way is a gap over a pan: bridge it, and quickly. Then the long drop at the far wall, which
+ * wants a bale under it; the see-saw, thrown the other way; and the hole in the bottom floor.
+ * Four things to do and five bales: one to spare.
+ */
+const SCULLERY_HERE: LevelDef = {
+  key: "scullery",
+  name: "The Scullery",
+  ends: "nest",
+  hatch: true,
+  left: -4,
+  right: 4,
+  top: 31,
+  bottom: 13,
+  start: { x: 3.5, y: 30.2 },
+  // A backward spin: he dithers under the hatch for a moment before the shelf takes him.
+  shove: -3,
+  bales: 5,
+  spare: 1,
+  blocks: [
+    box(-4.8, 12.6, -4, 31.4, "wall"),
+    box(4, 12.6, 4.8, 31.4, "wall"),
+    box(-4, 13.4, 4, FLOOR, "stone"),
+
+    // The shelf under the hatch, the gap in it with a ledge each side a bale deep, and the rest of it.
+    slab(GAP_WELL.x1, rackAt(GAP_WELL.x1), 4, RACK.y, 0.4, "wood"),
+    // The far ledge and the end of the shelf beyond are padded: he comes across the gap fast.
+    slab(GAP_WELL.x0 - 0.12, rackAt(GAP_WELL.x0 - 0.12) - GAP_DEEP, GAP.x - GAP.w / 2, rackAt(GAP.x - GAP.w / 2) - GAP_DEEP, 0.4, "sack", true),
+    slab(GAP.x + GAP.w / 2, rackAt(GAP.x + GAP.w / 2) - GAP_DEEP, GAP_WELL.x1 + 0.12, rackAt(GAP_WELL.x1 + 0.12) - GAP_DEEP, 0.4, "wood"),
+    slab(GAP_WELL.x0 - 0.2, rackAt(GAP_WELL.x0 - 0.2), GAP_WELL.x0 - 0.04, rackAt(GAP_WELL.x0 - 0.04), 0.4, "sack", true),
+    slab(-2.5, rackAt(-2.5), GAP_WELL.x0 - 0.2, rackAt(GAP_WELL.x0 - 0.2), 0.4, "wood"),
+    // The sides of the pan's flue, hung under the gap.
+    box(GAP.x - GAP.w / 2 - 0.2, rackAt(GAP.x) - GAP_DEEP - 2, GAP.x - GAP.w / 2, rackAt(GAP.x) - GAP_DEEP - 0.7, "iron"),
+    box(GAP.x + GAP.w / 2, rackAt(GAP.x) - GAP_DEEP - 2, GAP.x + GAP.w / 2 + 0.2, rackAt(GAP.x) - GAP_DEEP - 0.5, "iron"),
+    box(GAP.x - GAP.w / 2 - 0.2, rackAt(GAP.x) - GAP_DEEP - 2.2, GAP.x + GAP.w / 2 + 0.2, rackAt(GAP.x) - GAP_DEEP - 2, "iron"),
+    // Straw on the wall where he comes off the end of the shelf. Under it, a long drop.
+    box(-4, 25.4, -3.8, 28.6, "nest", true),
+
+    // Where he comes down: a short floor falling to the right, into the see-saw's seat.
+    slab(-4, landAt(-4), TIP.wall, landAt(TIP.wall), 0.4, "stone"),
+    box(TIP.wall - 0.68, TIP.y - 0.75, TIP.wall, TIP.y + 0.15, "stone"),
+    box(TIP.wall, TIP.y - 0.75, TIP.x + 1.6, TIP.y - 0.45, "stone"),
+
+    // The sacks he is thrown on to, and the floor with the hole in it.
+    slab(PLUG_WELL.x1 + 0.05, sinkAt(PLUG_WELL.x1 + 0.05) + 0.4, 4, sinkAt(4) + 0.4, 0.4, "sack", true),
+    slab(PLUG_WELL.x1, sinkAt(PLUG_WELL.x1), 4, sinkAt(4), 0.5, "stone"),
+    slab(PLUG_WELL.x0 - 0.12, sinkAt(PLUG_WELL.x0 - 0.12) - PLUG_DEEP, PLUG.x - PLUG.w / 2, sinkAt(PLUG.x - PLUG.w / 2) - PLUG_DEEP, 0.4, "stone"),
+    slab(PLUG.x + PLUG.w / 2, sinkAt(PLUG.x + PLUG.w / 2) - PLUG_DEEP, PLUG_WELL.x1 + 0.12, sinkAt(PLUG_WELL.x1 + 0.12) - PLUG_DEEP, 0.4, "stone"),
+    slab(-1.9, sinkAt(-1.9), PLUG_WELL.x0 - 0.04, sinkAt(PLUG_WELL.x0 - 0.04), 0.5, "stone"),
+    box(PLUG.x - PLUG.w / 2 - 0.25, FLOOR + 1.9, PLUG.x - PLUG.w / 2, sinkAt(PLUG.x) - PLUG_DEEP - 0.7, "iron"),
+    box(PLUG.x + PLUG.w / 2, FLOOR + 1.9, PLUG.x + PLUG.w / 2 + 0.25, sinkAt(PLUG.x) - PLUG_DEEP - 0.5, "iron"),
+
+    // The Empress Hen's nest, bottom left, with straw banked up the wall behind it.
+    box(-4, FLOOR, -1.5, FLOOR + 0.5, "nest", true),
+    box(-1.5, FLOOR, -1.2, FLOOR + 1, "nest", true),
+    box(-4, FLOOR, -3.7, FLOOR + 3.8, "nest", true),
+  ],
+  seesaws: [{ x: TIP.x, y: TIP.y, seat: 1.25, load: 1.3, side: -1, tip: 0.31, cast: 0.7 }],
+  pits: [
+    { x: GAP.x, y: rackAt(GAP.x) - GAP_DEEP, w: GAP.w, pan: rackAt(GAP.x) - GAP_DEEP - 1.9, hung: true },
+    { x: PLUG.x, y: sinkAt(PLUG.x) - PLUG_DEEP, w: PLUG.w, pan: FLOOR + 0.7, hung: false },
+  ],
+  sockets: [
+    { x: GAP.x, y0: rackAt(GAP.x) - 1.2, y1: rackAt(GAP.x) + 1.4, reach: 1, seat: { y: rackAt(GAP.x) - GAP_DEEP / 2 + 0.08, turn: RACK_TURN } },
+    { x: TIP.x + 0.72, y0: TIP.y - 0.55, y1: 27, reach: 0.85 },
+    { x: CATCH, y0: TIP.y, y1: TIP.y + 3, reach: 0.95 },
+    { x: PLUG.x, y0: sinkAt(PLUG.x) - 1.2, y1: sinkAt(PLUG.x) + 1.4, reach: 1, seat: { y: sinkAt(PLUG.x) - PLUG_DEEP / 2 + 0.08, turn: SINK_TURN } },
+  ],
+  nest: { x0: -3.7, x1: -1.5, y0: FLOOR + 0.4, y1: FLOOR + 1.9 },
+};
+
+export const SCULLERY: LevelDef = lowered(SCULLERY_HERE, STOREY);
+
+/** The house, from the top down. Each room is a game of its own; the roost between two is a waypoint. */
+export const LEVELS: LevelDef[] = [LARDER, SCULLERY];
 
 export type Phase = "ready" | "run" | "home" | "fried" | "broken" | "caught";
 
@@ -357,13 +497,19 @@ export class Game {
       );
       // All its weight is a ball on the pivot that touches nothing, so it turns about the pivot.
       this.world.createCollider(RAPIER.ColliderDesc.ball(PLANK_BALL).setDensity(PLANK_DENSITY).setCollisionGroups(0), body);
-      // The plank, the padded seat on top of its seat arm, and the lip that keeps him on it.
-      const whole = def.seat + def.load;
-      const mid = (def.side * (def.seat - def.load)) / 2;
-      this.world.createCollider(RAPIER.ColliderDesc.cuboid(whole / 2, 0.06, 0.9).setTranslation(mid, 0, 0).setDensity(0).setFriction(0.9).setRestitution(0), body);
+      // The bale arm is bare board; the seat arm is padded, flush with it, so nothing stands
+      // between him and the low end of the seat; and a lip keeps him on it.
+      this.world.createCollider(
+        RAPIER.ColliderDesc.cuboid(def.load / 2, 0.06, 0.9)
+          .setTranslation((-def.side * def.load) / 2, 0, 0)
+          .setDensity(0)
+          .setFriction(0.9)
+          .setRestitution(0),
+        body,
+      );
       const pad = this.world.createCollider(
-        RAPIER.ColliderDesc.cuboid(def.seat / 2 - 0.05, 0.05, 0.9)
-          .setTranslation(def.side * (def.seat / 2 + 0.05), 0.11, 0)
+        RAPIER.ColliderDesc.cuboid(def.seat / 2, 0.06, 0.9)
+          .setTranslation((def.side * def.seat) / 2, 0, 0)
           .setDensity(0)
           .setFriction(1)
           .setRestitution(0),
@@ -657,7 +803,8 @@ export class Game {
 
     for (const pit of level.pits) {
       // Once he is down the hole he is in the pan: there is nowhere else the flue goes.
-      if (Math.abs(p.x - pit.x) < pit.w / 2 + 0.1 && p.y < pit.y - 0.35) {
+      // Under a pan that hangs in the air he is only passing by.
+      if (Math.abs(p.x - pit.x) < pit.w / 2 + 0.1 && p.y < pit.y - 0.35 && p.y > pit.pan - 0.4) {
         this.phase = "fried";
         this.events.push({ type: "fried", x: pit.x, y: pit.pan });
         return;
@@ -692,9 +839,9 @@ export class Game {
     }
   }
 
-  /** Stars: home; home without a crack; home with two bales to spare. */
+  /** Stars: there; there without a crack; there with bales to spare. */
   get stars(): number {
     if (this.phase !== "home") return 0;
-    return 1 + (this.cracks === 0 ? 1 : 0) + (this.balesLeft >= 2 ? 1 : 0);
+    return 1 + (this.cracks === 0 ? 1 : 0) + (this.balesLeft >= this.level.spare ? 1 : 0);
   }
 }

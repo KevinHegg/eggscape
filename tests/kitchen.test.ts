@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { before, test } from "node:test";
-import { Game, IDLE, LARDER, loadPhysics, type GameEvent, type Input } from "../src/sim/kitchen";
-import { GOOD_DROP, larderPlan, pilot } from "../src/sim/pilot";
+import { Game, IDLE, LARDER, LEVELS, SCULLERY, STOREY, loadPhysics, type GameEvent, type Input, type LevelDef } from "../src/sim/kitchen";
+import { GOOD_DROP, PLANS, larderPlan, pilot, sculleryPlan, seated } from "../src/sim/pilot";
 
 before(async () => {
   await loadPhysics();
 });
 
-function run(hands: (game: Game) => Input, limit = 40): { game: Game; events: GameEvent[] } {
-  const game = new Game(LARDER);
+function run(hands: (game: Game) => Input, limit = 40, level: LevelDef = LARDER): { game: Game; events: GameEvent[] } {
+  const game = new Game(level);
   const events: GameEvent[] = [];
   game.start();
   while (!game.over && game.time < limit) {
@@ -115,6 +115,113 @@ test("a tap near the hole puts the bale in it, and a second one goes on top", ()
 test("the same taps give the same run, to the last bit", () => {
   const a = run(pilot(larderPlan())).game;
   const b = run(pilot(larderPlan())).game;
+  assert.equal(a.time, b.time);
+  assert.deepEqual(a.egg, b.egg);
+});
+
+// ------------------------------------------------------------------ the house
+
+test("the rooms hang one under another, and each hatch is under the roost above", () => {
+  for (let index = 1; index < LEVELS.length; index += 1) {
+    const above = LEVELS[index - 1]!;
+    const room = LEVELS[index]!;
+    assert.equal(room.top, above.bottom);
+    assert.equal(above.ends, "roost");
+    assert.ok(room.hatch);
+    assert.ok(room.start.x > above.nest.x0 && room.start.x < above.nest.x1, "the hatch should be under the roost");
+  }
+  assert.equal(LEVELS[LEVELS.length - 1]!.ends, "nest");
+  for (const level of LEVELS) assert.ok(PLANS[level.key], `no plan for ${level.name}`);
+});
+
+test("every room's plan gets him through it whole, with three stars", () => {
+  for (const level of LEVELS) {
+    const { game } = run(pilot(PLANS[level.key]!()), 40, level);
+    assert.equal(game.phase, "home", level.name);
+    assert.equal(game.stars, 3, level.name);
+    assert.ok(game.time < 16, `${level.name} took ${game.time.toFixed(1)}s`);
+  }
+});
+
+// ------------------------------------------------------------------ the scullery
+
+const scullery = (hands: (game: Game) => Input, limit = 40) => run(hands, limit, SCULLERY);
+
+test("scullery: four bales in the right places, and one to spare", () => {
+  const { game, events } = scullery(pilot(sculleryPlan()));
+  assert.equal(game.phase, "home");
+  assert.equal(game.cracks, 0);
+  assert.equal(game.balesLeft, 1);
+  assert.equal(count(events, "fling"), 1);
+});
+
+test("scullery: left alone he is in the pan under the gap almost at once", () => {
+  const { game } = scullery(() => ({}));
+  assert.equal(game.phase, "fried");
+  assert.ok(game.time < 4);
+});
+
+test("scullery: there is a good second in which to bridge the gap, and then there is not", () => {
+  for (const at of [0.05, 0.4, 0.8, 1.2]) assert.equal(scullery(pilot(sculleryPlan(undefined, { bridge: at }))).game.stars, 3, `bridged at ${at}s`);
+  assert.equal(scullery(pilot(sculleryPlan(undefined, { bridge: 1.6 }))).game.phase, "fried");
+});
+
+test("scullery: with nothing under the long drop he gets home with a crack", () => {
+  const { game } = scullery(pilot(sculleryPlan(undefined, { cushion: false })));
+  assert.equal(game.phase, "home");
+  assert.equal(game.cracks, 1);
+  assert.equal(game.stars, 2);
+});
+
+test("scullery: with the bottom hole left open he rolls into the pan", () => {
+  assert.equal(scullery(pilot(sculleryPlan(undefined, { stopHole: false }))).game.phase, "fried");
+});
+
+test("scullery: the pan under the gap does not take him as he is thrown past underneath it", () => {
+  const { events } = scullery(pilot(sculleryPlan()));
+  assert.equal(count(events, "fried"), 0);
+});
+
+test("scullery: the see-saw has a good band, too gentle below it and the wall above", () => {
+  let clean = 0;
+  for (let drop = 24.1; drop <= 25.31; drop += 0.2) {
+    if (scullery(pilot(sculleryPlan(drop))).game.stars === 3) clean += 1;
+  }
+  assert.ok(clean >= 6, `only ${clean} of 7 heights between 24.1 and 25.3 were clean`);
+  assert.notEqual(scullery(pilot(sculleryPlan(23.5))).game.phase, "home");
+  const hard = scullery(pilot(sculleryPlan(26.2))).game;
+  assert.equal(hard.phase, "home");
+  assert.ok(hard.cracks >= 1);
+});
+
+test("scullery: whenever the first two bales are thrown, he comes to rest in the seat", () => {
+  for (const bridge of [0.1, 0.5, 0.9, 1.2]) {
+    for (const cushion of [2.4, 2.8, 3.1]) {
+      const game = new Game(SCULLERY);
+      game.start();
+      let bridged = false;
+      let cushioned = false;
+      while (!game.over && game.time < 9) {
+        let bale: { x: number; y: number } | undefined;
+        if (!bridged && game.time >= bridge) {
+          bridged = true;
+          bale = { x: 1.3, y: 28.5 - STOREY };
+        } else if (!cushioned && game.time >= cushion) {
+          cushioned = true;
+          bale = { x: -3, y: 24 - STOREY };
+        }
+        game.step(bale ? { bale } : {});
+      }
+      const saw = game.seesaws[0]!.def;
+      assert.ok(seated(game), `bridge ${bridge}, cushion ${cushion}: he is at ${game.egg.x.toFixed(2)}`);
+      assert.ok((game.egg.x - saw.x) * saw.side > 0.3, `bridge ${bridge}, cushion ${cushion}: he is on the pivot`);
+    }
+  }
+});
+
+test("scullery: the same taps give the same run, to the last bit", () => {
+  const a = scullery(pilot(sculleryPlan())).game;
+  const b = scullery(pilot(sculleryPlan())).game;
   assert.equal(a.time, b.time);
   assert.deepEqual(a.egg, b.egg);
 });
