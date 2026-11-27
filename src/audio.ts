@@ -272,6 +272,38 @@ export class Sound {
     }
   }
 
+  /** A bale arriving: a soft thump and a rustle. */
+  bale(): void {
+    this.tone("sine", 120, 60, 0.12, 0.35);
+    this.hiss("bandpass", 1800, 700, 0.18, 0.3);
+  }
+
+  /** A bale burst under him: a whump of straw. */
+  straw(): void {
+    this.tone("sine", 150, 50, 0.22, 0.5);
+    this.hiss("bandpass", 2600, 500, 0.45, 0.6);
+    this.hiss("highpass", 5000, 3000, 0.3, 0.15, 0.05);
+  }
+
+  /** A bale on its way in. */
+  toss(): void {
+    this.hiss("bandpass", 500, 1900, 0.3, 0.3);
+  }
+
+  /** The see-saw going over. */
+  seesaw(): void {
+    this.tone("triangle", 150, 520, 0.16, 0.4);
+    this.tone("square", 90, 60, 0.1, 0.25, 0.14);
+    this.hiss("bandpass", 700, 2200, 0.2, 0.35);
+  }
+
+  /** Into the pan. */
+  fry(): void {
+    this.hiss("highpass", 3800, 5200, 1.6, 0.35);
+    this.hiss("bandpass", 2400, 1800, 1.4, 0.2, 0.1);
+    for (const [note, at] of [[392, 0.5], [370, 0.72], [349, 0.94], [262, 1.16]] as const) this.tone("triangle", note, note * 0.98, 0.3, 0.3, at);
+  }
+
   /** Hens with opinions. */
   cluck(): void {
     for (const [at, pitch] of [[0, 480], [0.09, 520], [0.2, 460], [0.3, 560], [0.44, 500]] as const) this.tone("sawtooth", pitch, pitch * 0.7, 0.07, 0.16, at);

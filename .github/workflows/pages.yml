@@ -38,6 +38,15 @@ jobs:
           path: gauntlet-src
       - name: Build the first game into /gauntlet/
         run: cd gauntlet-src && npm ci && npx vite build --base=/eggscape/gauntlet/ --outDir ../dist/gauntlet --emptyOutDir
+      # The second game, six streets ridden in a cart, likewise.
+      - name: Check out the second game
+        uses: actions/checkout@v4
+        with:
+          ref: streets-v1
+          path: streets-src
+      - name: Build the second game into /streets/
+        # Its link to the first game was written for the site root; from /streets/ it is one folder up.
+        run: cd streets-src && sed -i 's#href="gauntlet/"#href="../gauntlet/"#' index.html && npm ci && npx vite build --base=/eggscape/streets/ --outDir ../dist/streets --emptyOutDir
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Upload Pages artifact
