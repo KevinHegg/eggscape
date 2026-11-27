@@ -1,5 +1,5 @@
 import * as pc from "playcanvas";
-import { BALE_H, BALE_W, EGG, eggOutline, type Block, type Game, type GameEvent, type LevelDef, type WheelDef } from "../sim/kitchen";
+import { BALE_H, BALE_W, DOOR_SLOT, DOOR_WALL, EGG, PORTS, SHUTTER, eggOutline, type Block, type DoorDef, type Game, type GameEvent, type LevelDef, type Port, type WheelDef } from "../sim/kitchen";
 
 /**
  * The kitchen as it is seen: a doll's house with its front off. Everything in the simulation
@@ -46,6 +46,10 @@ const INK = {
   water: new pc.Color(0.26, 0.52, 0.9),
 };
 
+/** The Queen's hook: how far up it waits, how far in front of the house it hangs, and how it takes him away. */
+const HOOK = { up: 13, front: 1.55, grip: 0.4, lift: 18 };
+type Side = Exclude<Port, "top">;
+
 /** The drop from a roost to the hatch below it: a wriggle, the fall, and a moment to land. */
 const ARRIVE = { wait: 0.4, fall: 0.95, land: 0.25 };
 
@@ -91,10 +95,16 @@ export class Stage {
   private holdAsk: { lowest: number; cover: number } | null = null;
   /** The water wheels of the room being played, and how far open each sluice is drawn. */
   private mills: Array<{ def: WheelDef; wheel: pc.Entity; lever: pc.Entity; gate: pc.Entity; gateY: number; stream: pc.Entity; reach: number; fall: pc.Entity; k: number; drip: number }> = [];
+  /** The revolving doors of the room being played: the leaves, and each shutter with how far open it is drawn. */
+  private turns: Array<{ def: DoorDef; rotor: pc.Entity; lever: pc.Entity; shoe: pc.Entity; k: number; shutters: Record<Side, { root: pc.Entity; staves: pc.Entity[]; k: number; lit: boolean }> }> = [];
   private flames: pc.Entity[] = [];
   private fried: pc.Entity | null = null;
   private mess: pc.Entity | null = null;
-  private catcher: pc.Entity | null = null;
+  /** The hook, its three prongs, and how far down it has been let (0 away, 1 on him). */
+  private claw: { root: pc.Entity; prongs: pc.Entity[] } | null = null;
+  private reach = 0;
+  /** Pixels at the top of the screen that the bar of the HUD covers. */
+  private coverTop = 0;
   /** How the run ended, as it is being played out on screen. */
   private ending: { kind: "fried" | "broken" | "caught" | "home"; t: number; from: { x: number; y: number; turn: number }; to: { x: number; y: number } } | null = null;
 
@@ -343,7 +353,9 @@ export class Stage {
     this.pool = [];
     this.fried = null;
     this.mess = null;
-    this.catcher = null;
+    this.claw = null;
+    this.reach = 0;
+    this.turns = [];
     this.ending = null;
     this.shake = 0;
     this.hatch = 0;
@@ -362,11 +374,14 @@ export class Stage {
       for (const block of level.blocks) this.buildBlock(block);
       this.buildSeesaws(level, here);
       this.buildWheels(level, here);
+      this.buildDoors(level, here);
+      this.buildCages(level);
       this.buildPans(level);
       this.buildNest(level, here);
       if (level.hatch) this.buildHatch(level, here);
     }
     this.buildKing();
+    this.buildClaw();
 
     const m = this.m;
     this.ghost = this.baleShape(this.scene, m.ghost);
@@ -399,7 +414,7 @@ export class Stage {
     const larder = level.key === "larder";
     const flip = larder ? 1 : -1;
     const railY = level.top - 1.1;
-    const rail = level.wheels.length === 0;
+    const rail = level.wheels.length === 0 && level.doors.length === 0;
     if (rail) this.shape("box", this.scene, [midX + flip * 1.6, railY, BACK + 0.12], [3.4, 0.08, 0.08], m.iron, [0, 0, 0], true);
     for (let index = 0; rail && index < 5; index += 1) {
       const x = midX + flip * (0.2 + index * 0.7);
@@ -519,9 +534,11 @@ export class Stage {
       // The cushion lies on the seat arm; he sinks a little way into it.
       this.shape("box", plank, [(def.side * def.seat) / 2, 0.07, 0], [def.seat - 0.04, 0.06, 1.3], m.vermilion);
       this.shape("box", plank, [(def.side * def.seat) / 2, 0.1, 0], [def.seat - 0.3, 0.02, 1.1], m.gold);
-      this.shape("box", plank, [def.side * (def.seat - 0.06), 0.3, 0], [0.12, 0.4, 1.3], m.vermilion);
+      // A lip keeps him in a seat that waits for him. One he only crosses has none.
+      if (!def.pass) this.shape("box", plank, [def.side * (def.seat - 0.06), 0.3, 0], [0.12, 0.4, 1.3], m.vermilion);
       // The end that wants a bale: painted so it reads as a target.
-      this.shape("box", plank, [-def.side * (def.load - 0.55), 0.065, 0], [0.9, 0.02, 1.2], m.gold);
+      const gold = def.pass ? def.load - 0.3 : 0.9;
+      this.shape("box", plank, [-def.side * (def.load - 0.1 - gold / 2), 0.065, 0], [gold, 0.02, 1.2], m.gold);
       if (here) this.planks.push(plank);
     }
   }
@@ -598,6 +615,103 @@ export class Stage {
 
       if (here) this.mills.push({ def, wheel, lever, gate, gateY, stream, reach: run, fall, k: 0, drip: 0 });
     }
+  }
+
+  /** A revolving door: the drum with its shutters, the quilted leaves, and the brake lever with its pan. */
+  private buildDoors(level: LevelDef, here: boolean): void {
+    const m = this.m;
+    for (const def of level.doors) {
+      const ring = def.r + 0.06 + DOOR_WALL / 2;
+      this.shape("cylinder", this.scene, [def.x, def.y, BACK + 0.3], [(ring + 0.2) * 2, 0.1, (ring + 0.2) * 2], m.oakDark, [90, 0, 0], true);
+      this.shape("cylinder", this.scene, [def.x, def.y, BACK + 0.36], [def.r * 2, 0.06, def.r * 2], m.plasterWarm, [90, 0, 0], true);
+      this.shape("cylinder", this.scene, [def.x, def.y, -0.2], [0.22, DEPTH, 0.22], m.iron, [90, 0, 0], true);
+
+      const shutters = {} as Record<Side, { root: pc.Entity; staves: pc.Entity[]; k: number; lit: boolean }>;
+      for (const side of ["right", "bottom", "left"] as const) shutters[side] = { root: this.group("shutter", this.scene, [def.x, def.y, 0]), staves: [], k: 0, lit: false };
+      const long = ring * Math.tan((3 * Math.PI) / 180) * 2 + 0.03;
+      for (let from = -184; from < 176; from += 6) {
+        const mid = from + 3;
+        if (Math.abs(mid - 90) < DOOR_SLOT) continue;
+        const turn = (mid * Math.PI) / 180;
+        const side = (["right", "bottom", "left"] as const).find((name) => mid > SHUTTER[name][0] && mid < SHUTTER[name][1]);
+        if (side) {
+          // A shutter is iron, and slides back into the wall when the door stops against it.
+          const stave = this.shape("box", shutters[side].root, [Math.cos(turn) * ring, Math.sin(turn) * ring, 0], [DOOR_WALL * 0.7, long, 1.3], m.iron, [0, 0, mid]);
+          shutters[side].staves.push(stave);
+        } else {
+          this.shape("box", this.scene, [def.x + Math.cos(turn) * ring, def.y + Math.sin(turn) * ring, 0], [DOOR_WALL, long, 1.5], Math.round(mid / 6) % 2 ? m.oak : m.oakDark, [0, 0, mid], true);
+        }
+      }
+      // The lips of the slot in the top, in iron, so that it reads as the way in.
+      for (const side of [-1, 1]) {
+        const turn = ((90 + side * DOOR_SLOT) * Math.PI) / 180;
+        this.shape("box", this.scene, [def.x + Math.cos(turn) * ring, def.y + Math.sin(turn) * ring, 0], [DOOR_WALL + 0.08, 0.12, 1.56], m.iron, [0, 0, 90 + side * DOOR_SLOT], true);
+      }
+
+      const rotor = this.group("rotor", this.scene, [def.x, def.y, 0]);
+      this.shape("cylinder", rotor, [0, 0, 0], [0.6, 1.4, 0.6], m.oakDark, [90, 0, 0]);
+      this.shape("cylinder", rotor, [0, 0, 0.72], [0.42, 0.08, 0.42], m.gold, [90, 0, 0]);
+      for (let leaf = 0; leaf < 4; leaf += 1) {
+        const blade = this.group("leaf", rotor, [0, 0, 0], [0, 0, 45 + leaf * 90]);
+        const mid = (0.2 + def.r) / 2;
+        this.shape("box", blade, [mid, 0, 0], [def.r - 0.2, 0.14, 1.36], m.vermilion);
+        this.shape("box", blade, [def.r - 0.05, 0, 0], [0.1, 0.18, 1.42], m.oakDark);
+        // Quilting: a row of gold studs along the edge that faces the audience.
+        for (let stud = 0; stud < 4; stud += 1) this.shape("sphere", blade, [0.45 + stud * 0.3, 0, 0.69], [0.09, 0.09, 0.05], m.gold);
+      }
+
+      // The brake: a beam on a post, the gold pan on its long end and an iron shoe over the drum on its short one.
+      const pivot = { x: def.pan.x - def.pan.w / 2 - 0.35, y: def.pan.y - 0.02 };
+      this.shape("box", this.scene, [pivot.x, pivot.y - 0.75, BACK + 0.5], [0.12, 1.5, 0.12], m.iron, [0, 0, 0], true);
+      this.shape("box", this.scene, [pivot.x, pivot.y - 0.1, BACK + 0.9], [0.1, 0.1, 0.9], m.iron, [0, 0, 0], true);
+      const lever = this.group("lever", this.scene, [pivot.x, pivot.y, 0], [0, 0, 7]);
+      const reach = def.pan.x + def.pan.w / 2 - pivot.x;
+      this.shape("box", lever, [(reach - 0.6) / 2, -0.07, 0.56], [reach + 0.6, 0.09, 0.1], m.oakDark);
+      this.shape("box", lever, [def.pan.x - pivot.x, -0.03, 0], [def.pan.w, 0.07, 1.15], m.gold);
+      for (const side of [-1, 1]) this.shape("box", lever, [def.pan.x - pivot.x + (side * def.pan.w) / 2, 0.02, 0], [0.06, 0.16, 1.15], m.gold);
+      const shoe = this.shape("box", this.scene, [def.x + ring * 0.62, def.y + ring * 0.86, 0.56], [0.5, 0.2, 0.3], m.iron, [0, 0, -36]);
+      this.shape("box", this.scene, [(pivot.x - 0.6 + def.x + ring * 0.62) / 2, (pivot.y + def.y + ring * 0.86 + 0.2) / 2, 0.56], [0.05, Math.abs(pivot.y - def.y - ring * 0.86) + 0.3, 0.05], m.iron, [0, 0, 24], true);
+
+      if (here) this.turns.push({ def, rotor, lever, shoe, k: 0, shutters });
+    }
+  }
+
+  /** A cage: iron bars across the front and the back of it, low enough to see him over. */
+  private buildCages(level: LevelDef): void {
+    const m = this.m;
+    for (const cage of level.cages) {
+      const tall = cage.y1 - cage.y0 + 0.75;
+      for (let x = cage.x0 + 0.12; x < cage.x1; x += 0.3) {
+        for (const z of [0.72, -0.72]) this.shape("box", this.scene, [x, cage.y0 + tall / 2, z], [0.05, tall, 0.05], m.iron, [0, 0, 0], true);
+      }
+      for (const z of [0.72, -0.72]) this.shape("box", this.scene, [(cage.x0 + cage.x1) / 2, cage.y0 + tall, z], [cage.x1 - cage.x0 + 0.1, 0.07, 0.07], m.iron, [0, 0, 0], true);
+      // Its sign: a hook, for anyone in doubt what becomes of an egg in here.
+      const sign = this.group("sign", this.scene, [cage.x1 + 0.75, cage.y0 + 0.25, BACK + 0.3]);
+      this.shape("box", sign, [0, 0, 0], [0.8, 0.8, 0.08], m.vermilion, [0, 0, 0], true);
+      this.shape("box", sign, [0, 0.12, 0.06], [0.07, 0.42, 0.04], m.vellum, [0, 0, 0], true);
+      this.shape("box", sign, [-0.1, -0.12, 0.06], [0.26, 0.07, 0.04], m.vellum, [0, 0, 0], true);
+      this.shape("box", sign, [-0.2, -0.03, 0.06], [0.07, 0.2, 0.04], m.vellum, [0, 0, 0], true);
+    }
+  }
+
+  /** The Queen's hook: a rope out of the top of the house, a wooden head, and three prongs with iron tips. */
+  private buildClaw(): void {
+    const m = this.m;
+    const root = this.group("claw", this.scene);
+    this.shape("box", root, [0, 30, 0], [0.07, 60, 0.07], m.canvas);
+    this.shape("cylinder", root, [0, 0.12, 0], [0.56, 0.3, 0.56], m.oakDark);
+    this.shape("cylinder", root, [0, 0.12, 0], [0.6, 0.1, 0.6], m.iron);
+    this.shape("sphere", root, [0, 0.36, 0], [0.24, 0.24, 0.24], m.gold);
+    const prongs = [0, 120, 240].map((around) => {
+      const mount = this.group("mount", root, [0, 0, 0], [0, around + 90, 0]);
+      const prong = this.group("prong", mount, [0.22, 0, 0]);
+      this.shape("box", prong, [0.17, -0.3, 0], [0.11, 0.78, 0.13], m.oak, [0, 0, 28]);
+      this.shape("box", prong, [0.25, -0.86, 0], [0.11, 0.62, 0.13], m.oak, [0, 0, -22]);
+      this.shape("cone", prong, [0.06, -1.16, 0], [0.16, 0.34, 0.16], m.iron, [0, 0, -112]);
+      return prong;
+    });
+    root.enabled = false;
+    this.claw = { root, prongs };
   }
 
   private buildPans(level: LevelDef): void {
@@ -741,6 +855,12 @@ export class Stage {
     if (lowest === null) this.held = null;
   }
 
+  /** How many pixels at the top of the screen the HUD's bar covers: nothing that matters is to be shown under it. */
+  cover(top: number): void {
+    if (Math.abs(top - this.coverTop) > 0.5) this.snap = this.snap || this.coverTop === 0;
+    this.coverTop = top;
+  }
+
   /** He is still on his way down from the roost above. */
   get arriving(): boolean {
     return this.arrival !== null;
@@ -788,6 +908,22 @@ export class Stage {
         if (k >= 1 && king.enabled) {
           king.enabled = false;
           this.fry(end.to);
+        }
+      } else if (this.ending && this.ending.kind === "caught") {
+        // The prongs close on him, and up he goes: out in front of the house and through the top of it.
+        const end = this.ending;
+        end.t += dt;
+        const grip = Math.min(1, end.t / HOOK.grip);
+        const lift = Math.max(0, end.t - HOOK.grip);
+        const up = 0.5 * HOOK.lift * lift * lift;
+        const swing = Math.sin(end.t * 9) * 10 * Math.min(1, lift * 2);
+        king.setLocalPosition(end.from.x, end.from.y + up, HOOK.front * grip);
+        king.setLocalEulerAngles(0, 0, end.from.turn * RAD * (1 - grip) + swing);
+        if (this.claw) {
+          this.claw.root.enabled = true;
+          this.claw.root.setLocalPosition(end.from.x, end.from.y + EGG.sharp + 0.5 + up, HOOK.front);
+          this.claw.root.setLocalEulerAngles(0, 0, swing * 0.5);
+          for (const prong of this.claw.prongs) prong.setLocalEulerAngles(0, 0, 24 - 30 * grip);
         }
       } else if (this.arrival && game.phase === "ready") {
         // A wriggle on the roost, then out past the edge of the floor and down on to the hatch,
@@ -922,10 +1058,43 @@ export class Stage {
     });
     this.hatch += ((this.hatchOpen ? 1 : 0) - this.hatch) * Math.min(1, dt * 12);
     for (const flap of this.flaps) flap.entity.setLocalEulerAngles(0, 0, flap.side * 82 * this.hatch);
-    if (this.catcher) {
-      const k = Math.min(1, (this.ending?.t ?? 1) + dt * 3);
-      if (this.ending) this.ending.t = k;
-      this.catcher.setLocalScale(1.7 * k, 1.7 * k, 1.7 * k);
+    game.doors.forEach((state, index) => {
+      const door = this.turns[index];
+      if (!door) return;
+      door.rotor.setLocalEulerAngles(0, 0, state.turn * RAD);
+      door.k += ((state.braked ? 1 : 0) - door.k) * Math.min(1, dt * 10);
+      door.lever.setLocalEulerAngles(0, 0, 7 * (1 - door.k));
+      const ring = door.def.r + 0.06 + DOOR_WALL / 2;
+      door.shoe.setLocalPosition(door.def.x + ring * (0.62 - 0.05 * door.k), door.def.y + ring * (0.86 - 0.07 * door.k) + 0.17, 0.56);
+      // The shutter the door is going to stop against is lit as soon as the brake is on.
+      const quarter = Math.max(1, Math.ceil((-state.turn + 0.03) / (Math.PI / 2)));
+      const next = state.braked && !state.stopped ? PORTS[quarter % 4] : state.stopped ? state.open : null;
+      for (const side of ["right", "bottom", "left"] as const) {
+        const shutter = door.shutters[side];
+        const lit = next === side;
+        if (lit !== shutter.lit) {
+          shutter.lit = lit;
+          for (const stave of shutter.staves) if (stave.render) stave.render.material = lit ? this.m.aim : this.m.iron;
+        }
+        shutter.k += ((state.open === side ? 1 : 0) - shutter.k) * Math.min(1, dt * 9);
+        shutter.root.setLocalPosition(door.def.x, door.def.y, -1.25 * shutter.k);
+        shutter.root.setLocalScale(1, 1, 1 - 0.85 * shutter.k);
+      }
+    });
+
+    // The hook is let down in front of the house as his time runs out, and goes back up if he gets away.
+    if (this.claw && this.ending?.kind !== "caught") {
+      const hook = game.phase === "run" ? game.hook : 0;
+      this.reach = hook > 0 ? this.reach + (Math.max(hook, 0.12) - this.reach) * Math.min(1, dt * 7) : Math.max(0, this.reach - dt * 2.5);
+      this.claw.root.enabled = this.reach > 0.005;
+      if (this.claw.root.enabled) {
+        const k = 1 - this.reach;
+        const sway = Math.sin(this.clock * 5) * 4 * k;
+        this.claw.root.setLocalPosition(egg.x + Math.sin(this.clock * 2.3) * 0.12 * k, egg.y + EGG.sharp + 0.5 + k * k * HOOK.up + k * 0.6, HOOK.front);
+        this.claw.root.setLocalEulerAngles(0, 0, sway);
+        const snap = 24 + Math.sin(this.clock * 12) * 5 * this.reach;
+        for (const prong of this.claw.prongs) prong.setLocalEulerAngles(0, 0, snap);
+      }
     }
 
     this.syncEffects(dt);
@@ -938,15 +1107,22 @@ export class Stage {
     if (!level || !component) return;
     const aspect = this.canvas.clientWidth / Math.max(1, this.canvas.clientHeight);
     const half = Math.tan((FOV / 2) * (Math.PI / 180));
-    // Far enough back for the whole width; on a wide screen, for the whole height as well.
-    const distance = Math.max(SHOW_W / 2 / (half * aspect), aspect > 0.8 ? SHOW_H / 2 / half : 0);
+    // The bar of the HUD lies over the top of the screen, and nothing that matters is shown
+    // under it. So the room is fitted into what is left: on a wide screen the camera stands
+    // far enough back for all of it; on a narrow one the room begins lowered, with its
+    // ceiling just under the bar, and is brought up the screen as he goes down it.
+    const tall = Math.max(1, this.canvas.clientHeight);
+    const under = Math.min(0.3, this.coverTop / tall);
+    const roomTop = level.top + 0.55;
+    const roomBottom = level.bottom + 0.2;
+    const distance = Math.max(SHOW_W / 2 / (half * aspect), aspect > 0.8 ? (roomTop - roomBottom) / (1 - under) / 2 / half : 0);
     const seen = 2 * distance * half;
-    const midY = (level.top + level.bottom) / 2;
-    const room = level.top - level.bottom + 1.4;
-    const slack = Math.max(0, (room - seen) / 2);
-    // On a tall screen there is room to spare: give it to the top, where the bar of the HUD is.
-    const lift = Math.max(0, Math.min(0.5, (seen - (room - 0.9)) / 2));
-    let want = Math.min(midY + slack, Math.max(midY - slack, game.egg.y - seen * 0.12)) + lift;
+    const hidden = under * seen;
+    const highest = roomTop + hidden - seen / 2;
+    const lowest = roomBottom + seen / 2;
+    // Where it does not all fit, he is kept two fifths of the way down what can be seen: there is more to see below him than above.
+    const beside = game.egg.y - seen / 2 + hidden + 0.4 * (seen - hidden);
+    let want = lowest >= highest ? (lowest + highest) / 2 : Math.min(highest, Math.max(lowest, beside));
     if (this.holdAsk) {
       const covered = (this.holdAsk.cover / Math.max(1, this.canvas.clientHeight)) * seen;
       this.held = Math.min(want, this.holdAsk.lowest - covered + seen / 2);
@@ -1051,6 +1227,26 @@ export class Stage {
       case "water":
         this.burst(event.x, event.y, m.spray, 12, 0.3, 3.2);
         break;
+      case "turning":
+        this.burst(event.x, event.y, m.dust, 6, 0.2, 1.6);
+        this.shake = Math.max(this.shake, 0.15);
+        break;
+      case "brake":
+        this.burst(event.x, event.y, m.dust, 5, 0.2, 1.4);
+        this.shake = Math.max(this.shake, 0.2);
+        break;
+      case "port": {
+        const door = this.turns[0];
+        if (door && event.port !== "top") {
+          const turn = (((SHUTTER[event.port][0] + SHUTTER[event.port][1]) / 2) * Math.PI) / 180;
+          this.burst(event.x + Math.cos(turn) * (door.def.r + 0.3), event.y + Math.sin(turn) * (door.def.r + 0.3), m.dust, 8, 0.24, 2.2);
+        }
+        this.shake = Math.max(this.shake, 0.3);
+        break;
+      }
+      case "caged":
+        this.burst(event.x, event.y - 0.3, m.hay, 6, 0.2, 1.6);
+        break;
       case "knock":
         this.burst(event.x, event.y, m.dust, 7, 0.34, 2.4);
         this.shake = Math.max(this.shake, Math.min(0.9, event.jolt / 12));
@@ -1079,15 +1275,10 @@ export class Stage {
       case "fried":
         this.ending = { kind: "fried", t: 0, from: { x: egg.x, y: egg.y, turn: egg.turn }, to: { x: event.x, y: event.y } };
         break;
-      case "caught": {
-        const catcher = this.person(this.scene, [egg.x + (egg.x > 2.4 ? -1 : 1), egg.y - EGG.blunt - 0.05, 0.5], m.plasterWarm);
-        catcher.arms[0]!.setLocalEulerAngles(0, 0, 100);
-        this.pan(catcher.arms[0]!, [0, 0.46, 0], 0.46);
-        catcher.root.setLocalScale(0.01, 0.01, 0.01);
-        this.catcher = catcher.root;
+      case "caught":
         this.ending = { kind: "caught", t: 0, from: { x: egg.x, y: egg.y, turn: egg.turn }, to: { x: egg.x, y: egg.y } };
+        this.shake = Math.max(this.shake, 0.25);
         break;
-      }
       case "home":
         for (let index = 0; index < 10; index += 1) this.puff([egg.x - 1 + (index % 5) * 0.5, egg.y + 0.4, 0.6], index % 2 ? m.gold : m.vermilion, 0.2, 1 + (index % 3) * 0.2, [((index % 5) - 2) * 0.5, 3 + (index % 3), 0.4]);
         break;

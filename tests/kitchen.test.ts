@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { before, test } from "node:test";
-import { Game, IDLE, LARDER, LEVELS, MILLROOM, RACE, SCULLERY, STEP, STOREY, WHEEL_TURN, loadPhysics, type GameEvent, type Input, type LevelDef } from "../src/sim/kitchen";
-import { GOOD_DROP, PLANS, larderPlan, millPlan, pilot, sculleryPlan, seated } from "../src/sim/pilot";
+import { BUTTERY, CAGE, DOOR_LAPS, DOOR_TURN, Game, IDLE, LARDER, LEVELS, MILLROOM, RACE, SCULLERY, SEAT_IDLE, STEP, STOREY, WHEEL_TURN, loadPhysics, type GameEvent, type Input, type LevelDef } from "../src/sim/kitchen";
+import { GOOD_DROP, PLANS, butteryPlan, larderPlan, millPlan, pilot, sculleryPlan } from "../src/sim/pilot";
 
 before(async () => {
   await loadPhysics();
@@ -43,10 +43,25 @@ test("a bale under the drop saves him and is burst doing it", () => {
   assert.equal(game.bales.length, 0);
 });
 
-test("sat in the see-saw with nothing done, a cook has him", () => {
-  const { game } = run(pilot(larderPlan().slice(0, 1)));
+test("sat in the see-saw with nothing done, the hook comes down for him, and slowly", () => {
+  const game = new Game(LARDER);
+  game.start();
+  const hands = pilot(larderPlan().slice(0, 1));
+  let last = 0;
+  let down = 0;
+  while (!game.over && game.time < 40) {
+    game.step(hands(game));
+    if (game.hook > 0 && game.phase === "run") {
+      assert.ok(game.hook >= last, "once let down, the hook does not go back up while he sits there");
+      last = game.hook;
+      down += STEP;
+    }
+  }
   assert.equal(game.phase, "caught");
-  assert.ok(game.idle >= IDLE);
+  assert.ok(game.idle >= SEAT_IDLE);
+  assert.equal(game.hook, 1);
+  assert.ok(down > 3, `the hook took ${down.toFixed(1)}s to come down`);
+  assert.ok(SEAT_IDLE > IDLE, "a seat that waits for him is where there is time to think");
 });
 
 test("with the hole left open he rolls into the pan", () => {
@@ -153,69 +168,66 @@ test("scullery: four bales in the right places, and one to spare", () => {
   assert.equal(game.cracks, 0);
   assert.equal(game.balesLeft, 1);
   assert.equal(count(events, "fling"), 1);
+  assert.equal(count(events, "caged"), 0);
 });
 
-test("scullery: left alone he is in the pan under the gap almost at once", () => {
+test("scullery: left alone he is in the pan under the gap, but not at once", () => {
   const { game } = scullery(() => ({}));
   assert.equal(game.phase, "fried");
-  assert.ok(game.time < 4);
+  assert.ok(game.time > 3 && game.time < 4.5, `he was in the pan at ${game.time.toFixed(1)}s`);
 });
 
-test("scullery: there is a good second in which to bridge the gap, and then there is not", () => {
-  for (const at of [0.05, 0.4, 0.8, 1.2]) assert.equal(scullery(pilot(sculleryPlan(undefined, { bridge: at }))).game.stars, 3, `bridged at ${at}s`);
-  assert.equal(scullery(pilot(sculleryPlan(undefined, { bridge: 1.6 }))).game.phase, "fried");
+test("scullery: there are a good two seconds in which to bridge the gap, and then there are not", () => {
+  for (const at of [0.05, 0.6, 1.2, 1.8]) assert.equal(scullery(pilot(sculleryPlan({ bridge: at }))).game.stars, 3, `bridged at ${at}s`);
+  // Too late, the bale comes down on top of him in the gap, or after him.
+  for (const at of [2.4, 2.6, 2.8]) assert.notEqual(scullery(pilot(sculleryPlan({ bridge: at }))).game.phase, "home", `bridged at ${at}s`);
 });
 
 test("scullery: with nothing under the long drop he gets home with a crack", () => {
-  const { game } = scullery(pilot(sculleryPlan(undefined, { cushion: false })));
+  const { game } = scullery(pilot(sculleryPlan({ cushion: false })));
   assert.equal(game.phase, "home");
   assert.equal(game.cracks, 1);
   assert.equal(game.stars, 2);
 });
 
 test("scullery: with the bottom hole left open he rolls into the pan", () => {
-  assert.equal(scullery(pilot(sculleryPlan(undefined, { stopHole: false }))).game.phase, "fried");
+  assert.equal(scullery(pilot(sculleryPlan({ stopHole: false }))).game.phase, "fried");
 });
 
-test("scullery: the pan under the gap does not take him as he is thrown past underneath it", () => {
+test("scullery: the pan under the gap does not take him as he goes by underneath it", () => {
   const { events } = scullery(pilot(sculleryPlan()));
   assert.equal(count(events, "fried"), 0);
 });
 
-test("scullery: the see-saw has a good band, too gentle below it and the wall above", () => {
-  let clean = 0;
-  for (let drop = 24.1; drop <= 25.31; drop += 0.2) {
-    if (scullery(pilot(sculleryPlan(drop))).game.stars === 3) clean += 1;
-  }
-  assert.ok(clean >= 6, `only ${clean} of 7 heights between 24.1 and 25.3 were clean`);
-  assert.notEqual(scullery(pilot(sculleryPlan(23.5))).game.phase, "home");
-  const hard = scullery(pilot(sculleryPlan(26.2))).game;
-  assert.equal(hard.phase, "home");
-  assert.ok(hard.cracks >= 1);
+test("scullery: the see-saw does not wait: with no bale he wallows off the cushion into the cage, and the hook has him", () => {
+  const { game, events } = scullery(pilot(sculleryPlan({ toss: false })));
+  assert.equal(game.phase, "caught");
+  assert.equal(count(events, "caged"), 1);
+  assert.equal(count(events, "fling"), 0);
+  const caged = events.findIndex((event) => event.type === "caged");
+  const caught = events.findIndex((event) => event.type === "caught");
+  assert.ok(caged >= 0 && caught > caged);
+  assert.equal(game.hook, 1);
+  assert.ok(CAGE < IDLE, "out of a cage is quicker than out of anywhere else");
 });
 
-test("scullery: whenever the first two bales are thrown, he comes to rest in the seat", () => {
-  for (const bridge of [0.1, 0.5, 0.9, 1.2]) {
-    for (const cushion of [2.4, 2.8, 3.1]) {
-      const game = new Game(SCULLERY);
-      game.start();
-      let bridged = false;
-      let cushioned = false;
-      while (!game.over && game.time < 9) {
-        let bale: { x: number; y: number } | undefined;
-        if (!bridged && game.time >= bridge) {
-          bridged = true;
-          bale = { x: 1.3, y: 28.5 - STOREY };
-        } else if (!cushioned && game.time >= cushion) {
-          cushioned = true;
-          bale = { x: -3, y: 24 - STOREY };
-        }
-        game.step(bale ? { bale } : {});
-      }
-      const saw = game.seesaws[0]!.def;
-      assert.ok(seated(game), `bridge ${bridge}, cushion ${cushion}: he is at ${game.egg.x.toFixed(2)}`);
-      assert.ok((game.egg.x - saw.x) * saw.side > 0.3, `bridge ${bridge}, cushion ${cushion}: he is on the pivot`);
-    }
+test("scullery: there are a good two seconds in which to throw the bale, and it always throws the same", () => {
+  let clean = 0;
+  const speeds = new Set<string>();
+  for (let toss = 4.35; toss < 6.31; toss += 0.1) {
+    const { game, events } = scullery(pilot(sculleryPlan({ toss })));
+    if (game.stars === 3) clean += 1;
+    const fling = events.find((event) => event.type === "fling");
+    if (fling && fling.type === "fling") speeds.add(fling.speed.toFixed(2));
+  }
+  assert.ok(clean >= 19, `only ${clean} of 20 throws between 4.35s and 6.25s were clean`);
+  assert.equal(speeds.size, 1, `the throw varied: ${[...speeds].join(", ")}`);
+});
+
+test("scullery: thrown too soon or too late, the bale does not save him", () => {
+  for (const toss of [3.5, 7, 7.6]) {
+    const { game } = scullery(pilot(sculleryPlan({ toss })));
+    assert.equal(game.phase, "caught", `thrown at ${toss}s`);
   }
 });
 
@@ -231,6 +243,7 @@ test("scullery: the same taps give the same run, to the last bit", () => {
 const mill = (hands: (game: Game) => Input, limit = 40) => run(hands, limit, MILLROOM);
 
 test("mill: three bales in the right places, and one to spare", () => {
+  assert.ok(IDLE > 2, "the hook gives him a moment");
   const { game, events } = mill(pilot(millPlan()));
   assert.equal(game.phase, "home");
   assert.equal(game.cracks, 0);
@@ -290,6 +303,101 @@ test("mill: with the hole left open he rolls into the pan", () => {
 test("mill: the same taps give the same run, to the last bit", () => {
   const a = mill(pilot(millPlan())).game;
   const b = mill(pilot(millPlan())).game;
+  assert.equal(a.time, b.time);
+  assert.deepEqual(a.egg, b.egg);
+});
+
+// ------------------------------------------------------------------ the buttery
+
+const buttery = (hands: (game: Game) => Input, limit = 40) => run(hands, limit, BUTTERY);
+const port = (events: GameEvent[]): string => {
+  const event = events.find((item) => item.type === "port");
+  return event && event.type === "port" ? event.port : "none";
+};
+
+test("buttery: one bale, for whoever can wait: out on the left, and nothing between him and the nest", () => {
+  const { game, events } = buttery(pilot(butteryPlan()));
+  assert.equal(port(events), "left");
+  assert.equal(game.phase, "home");
+  assert.equal(game.cracks, 0);
+  assert.equal(game.balesLeft, BUTTERY.bales - 1);
+  assert.equal(game.stars, 3);
+});
+
+test("buttery: three bales, for whoever cannot: out on the right, the long drop and the hole", () => {
+  const { game, events } = buttery(pilot(butteryPlan({ brake: "right" })));
+  assert.equal(port(events), "right");
+  assert.equal(game.phase, "home");
+  assert.equal(game.cracks, 0);
+  assert.equal(game.balesLeft, BUTTERY.bales - 3);
+  assert.equal(game.stars, 2);
+});
+
+test("buttery: out on the right with nothing under the drop he is cracked, and with the hole open he is fried", () => {
+  const bare = buttery(pilot(butteryPlan({ brake: "right", cushion: false }))).game;
+  assert.equal(bare.phase, "home");
+  assert.equal(bare.cracks, 1);
+  assert.equal(buttery(pilot(butteryPlan({ brake: "right", stopHole: false }))).game.phase, "fried");
+});
+
+test("buttery: where the door stops is where the brake found it: right, bottom, left, top, and round again", () => {
+  const want = ["right", "bottom", "left", "top", "right"];
+  const ends = ["home", "fried", "home", "caught", "home"];
+  want.forEach((name, index) => {
+    for (const part of [0.1, 0.45, 0.8]) {
+      // The bale takes its moment to arrive, so it is thrown most of a quarter ahead.
+      const { game, events } = buttery(pilot(butteryPlan({ brake: Math.max(0.01, index + part - 0.45) })));
+      assert.equal(port(events), name, `thrown ${(index + part - 0.45).toFixed(2)} quarters round`);
+      assert.equal(game.phase, ends[index], `out at the ${name}`);
+    }
+  });
+});
+
+test("buttery: the door turns a quarter in a second and a half, and not until he is in it", () => {
+  const game = new Game(BUTTERY);
+  game.start();
+  let began = -1;
+  while (game.time < 6) {
+    game.step();
+    for (const event of game.drain()) if (event.type === "turning") began = game.time;
+    if (began < 0) assert.equal(game.doors[0]!.turn, 0);
+  }
+  assert.ok(began > 2 && began < 3.5, `it began at ${began.toFixed(2)}s`);
+  assert.ok(Math.abs(-game.doors[0]!.turn - DOOR_TURN * (game.time - began)) < 0.05);
+  assert.ok(Math.abs(Math.PI / 2 / DOOR_TURN - 1.5) < 1e-9);
+});
+
+test("buttery: a brake put on before he is in it stops the door at the first quarter", () => {
+  const game = new Game(BUTTERY);
+  game.start();
+  const events: GameEvent[] = [];
+  while (!game.over && game.time < 12) {
+    game.step(game.time < STEP ? { bale: { x: 2.75, y: 28.6 - STOREY * 3 } } : {});
+    events.push(...game.drain());
+  }
+  assert.equal(port(events), "right");
+});
+
+test("buttery: left to itself the clockwork runs down with him at the top, and the hook has him", () => {
+  const { game, events } = buttery(() => ({}));
+  assert.equal(port(events), "top");
+  assert.equal(game.phase, "caught");
+  assert.ok(game.time > DOOR_LAPS * 6 && game.time < DOOR_LAPS * 6 + 8, `it took ${game.time.toFixed(1)}s`);
+  assert.equal(game.cracks, 0, "the ride does not hurt him");
+});
+
+test("buttery: nothing can be thrown into the drum of the door", () => {
+  const game = new Game(BUTTERY);
+  const door = BUTTERY.doors[0]!;
+  for (const [dx, dy] of [[0, 0], [0.4, 0.9], [-0.8, -0.3], [0, 1.2]] as const) {
+    const at = game.aim(door.x + dx, door.y + dy);
+    assert.ok(Math.hypot(at.x - door.x, at.y - door.y) >= door.r + 0.4, `a bale aimed ${dx}, ${dy} from the axle would land in the drum`);
+  }
+});
+
+test("buttery: the same taps give the same run, to the last bit", () => {
+  const a = buttery(pilot(butteryPlan())).game;
+  const b = buttery(pilot(butteryPlan())).game;
   assert.equal(a.time, b.time);
   assert.deepEqual(a.egg, b.egg);
 });

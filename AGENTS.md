@@ -1,8 +1,8 @@
 # The Great Eggscape: working rules
 
 A mobile-first physics game. The Egg King falls through the Queen's kitchen by himself, and the
-player's only move is to tap a place and have a straw bale thrown there. Prototype stage: three
-rooms, The Larder, The Scullery and The Mill, built to find out whether that one verb is fun,
+player's only move is to tap a place and have a straw bale thrown there. Prototype stage: four
+rooms, The Larder, The Scullery, The Mill and The Buttery, built to find out whether that one verb is fun,
 how one room hands him on to the next, and whether a room can bring a new contraption without
 a new control. The user's verdict on the Larder alone: "This is good."; on the first two
 rooms: "These are playing well."
@@ -38,7 +38,9 @@ them in passing; they are kept as they were on purpose.
   down it. The room below starts on a hatch under the roost above (`hatch`), and waits for
   the player to let him go.
 - Rooms get harder by asking for more in less time and with less to spare (`bales`, `spare`),
-  not by new controls. The Scullery's first bale has to be thrown inside about a second.
+  not by new controls. But a thing the player has to do must be seen and must be possible.
+  The user, of the Scullery's first gap: "There's very little time to plug the hole,
+  especially because you can't see what's going on." It now gives about two seconds, not one.
 - Each new room brings a new contraption that the same bale works. The user: "ultimately
   we're gonna need more than just levers that toss the egg through the air", and suggested a
   water wheel that is stuck and a bale that releases the water. The Mill is that: a bale on
@@ -57,6 +59,43 @@ them in passing; they are kept as they were on purpose.
     crack otherwise, and nobody thinks of water as a knock.
   - The time the wheel has him is time for the player to get ready for what follows. A room
     can use a contraption's own slowness that way.
+- When he is caught, it is by the Queen's hook: a wooden claw on a rope that comes down from
+  the top of the house, closes on him and hauls him out through the top. The user, of the
+  cook that used to walk on: "it takes too long for the cook to come along and the visuals
+  are not that compelling", and asked for "those metal hooks that you find at grocery stores
+  that children use to try to capture a toy". `game.hook` is how far down it is (0 to 1) and
+  the view only draws that, so the player sees it coming. It comes for him after `IDLE`
+  seconds of going nowhere (`SEAT_IDLE` in a see-saw's seat, where waiting is the game), or
+  `CAGE` seconds in a cage (`cages`), which is a place that means he has been had.
+- Timing can be the puzzle. The user: "you need to time the dropping of the bail, so if you
+  wait until the egg comes to rest, the egg will run A different direction and end up
+  trapped." The Scullery's second see-saw is that (`pass: true`): its cushion has no lip, he
+  crosses it at a fixed `CRAWL` and goes off the end into a cage, and a bale on the gold end
+  while he is on the cushion throws him clear. What building it taught:
+  - Everything about it is a rule, or the window moves about: the crawl is a set speed while
+    he is over the cushion (damping gave a different dwell every time), the plank goes over
+    at once when a bale touches it (`SNAP`, set once: setting it every step batted him), and
+    the throw is one speed (`throw`), not the bale's.
+  - The gold arm is longer than a bale, or the bale props itself on the floor beside it.
+  - Tap to throw is about 1.2 s, so the window has to open before he is on the cushion and
+    still be open a second after: it is two seconds and more, and `npm test` holds it there.
+  - Test it with him arriving in more than one way (a cushion bale that burst, one that did
+    not): he comes on a fifth of a second apart.
+- A hole he must not jump is cut level, with upright sides (`DRAIN`). On a sloping floor he
+  cleared an open hole about two times in five after a long fall.
+- The Buttery's contraption is a revolving door (`DoorDef`), from the user: "a revolving door
+  that lets the egg out in different places depending on some action the user takes". A
+  drum, open at the top, with shutters right, bottom and left (`SHUTTER`). It turns at
+  `DOOR_TURN` once he is in it; a bale on the brake's pan stops it at the next quarter and
+  opens that quarter's shutter. So when the bale lands is where he comes out, and the three
+  ways out have three prices. What building it taught:
+  - The door is moved, not pushed: a kinematic body turned a set angle each step, stopped
+    exactly on a quarter. A free one never stopped where it was meant to.
+  - Its leaves are quilted (soft). He drops into it hard enough to crack otherwise.
+  - A brake put on before he is in still has to let him out: it stops at the first quarter.
+  - With no brake he would ride for ever, so the clockwork runs down after `DOOR_LAPS` with
+    him at the top, which is shut below him, and the hook has him.
+  - No bale may be thrown into the drum (`free` refuses it).
 - A bale that bursts under him goes on breaking his fall for `STRAW_GRACE`: without that, he
   dropped through the place where it had been and cracked on the floor he had just been
   saved from.
@@ -79,15 +118,21 @@ them in passing; they are kept as they were on purpose.
   and tilt, so it drops in flush. Check with `game.aim()` that the seat reads as free. A
   floor a bale only just fits on, such as the one under a long drop beside a see-saw's seat,
   wants a socket too, or a bale put a little to one side ends up propped on the seat.
-- A cook has him if he gets nowhere for `IDLE` seconds: measured by how far he has moved, not
-  by speed, so rocking on the spot counts as stopped.
+- Getting nowhere is measured by how far he has moved, not by speed, so rocking on the spot
+  counts as stopped. Being carried round in a door does not.
 - A failed go restarts the room at once, and a whole room is about a quarter of a minute.
 - Puzzles should have more than one way through, at different prices (the user asked for
   this of the last game, and it still holds).
 - Portrait and one thumb come first. The whole room should fit on a phone without scrolling
   where it can; a taller machine scrolls with him.
+- Nothing the player needs is to be under the bar at the top. The user: "The controls at the
+  top really obscure what's happening there", and of the Mill, "the placement of the bail to
+  release the water is barely visible because of the controls". The page tells the view how
+  much of the screen the bar covers (`stage.cover`), and the room is fitted into what is
+  left: its ceiling starts just under the bar, and on a short screen the view goes down the
+  room with him from there.
 - The look is the toy theatre: chunky shapes, warm light, a medieval kitchen, the Egg King with
-  his crown and sash, the Queen's cooks, the Empress Hen.
+  his crown and sash, the Queen's cooks and her hook, the Empress Hen.
 - Everything soft looks like the bales: gold, strapped, with stalks sticking out of it (the
   `bed` and `nest` looks). Flour sacks drawn as pale lumps were soft too, and the user saw
   them as "the row of eggs", which "doesn't really read as a soft landing spot". Nothing soft
@@ -113,7 +158,7 @@ them in passing; they are kept as they were on purpose.
 
 - Development: `npm run dev` (port 5180); `?auto` lets the scripted player play
 - Tests: `npm test`; full acceptance: `npm run check`
-- Trace a run event by event: `npx tsx scripts/kitchen.ts [room=scullery|mill] [time:x,y ...]`
+- Trace a run event by event: `npx tsx scripts/kitchen.ts [room=scullery|mill|buttery] [time:x,y ...]`
   (heights as if the room stood where the Larder does)
 - In a browser console, `__egg.step(seconds, { x, y })` drives the game where frames do not
   tick (a hidden tab); set `__egg.stage.app.timeScale = 0` first, `__egg.restart()` to begin,

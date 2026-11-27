@@ -31,9 +31,16 @@ const SOFT_GRACE = 0.06;
 /** Seconds the straw of a burst bale goes on breaking his fall: it is still under him, on its way to the floor. */
 const STRAW_GRACE = 0.6;
 
-/** Seconds he may stand still before a cook has him, and when the warning comes. */
-export const IDLE = 8;
-export const IDLE_WARN = 4;
+/**
+ * Seconds he may get nowhere before the Queen's hook has him, and when it is first let down.
+ * In the seat of a see-saw that waits for him there is longer: that is where a player thinks.
+ */
+export const IDLE = 4;
+export const IDLE_WARN = 1.8;
+export const SEAT_IDLE = 8;
+export const SEAT_WARN = 4.5;
+/** Seconds in a cage before the hook has him out of it. There is no way out of a cage. */
+export const CAGE = 1.5;
 /** Getting nowhere means not having moved this far from where the count began. */
 const STILL = 0.5;
 
@@ -41,6 +48,15 @@ const STILL = 0.5;
 const PLANK_BALL = 0.9;
 const PLANK_DENSITY = 0.3;
 const PLANK_BIAS = 3;
+/** A see-saw he rolls across is held down harder, so that his own weight on the gold end does not tip it. */
+const PASS_BIAS = 9;
+/**
+ * The cushion of such a see-saw does not hold him. However he came on to it, he wallows across
+ * at this pace (metres a second) and off the low end: so how long he is on it is always the same.
+ */
+export const CRAWL = 0.4;
+/** How fast such a see-saw goes over when the bale comes down on it, radians a second. */
+const SNAP = 8;
 /**
  * The throw is a rule, not a collision: when the seat end comes up against its stop, whoever
  * is in the seat leaves at this share of the speed the bale came down on the other end with,
@@ -62,6 +78,23 @@ const WHEEL_PUSH = 40;
 const WHEEL_DRAG = 0.6;
 const WHEEL_BALL = 1;
 const WHEEL_DENSITY = 0.48;
+
+/**
+ * A revolving door, seen from the side: four leaves in a drum. It turns by clockwork at this
+ * rate (radians a second) from the moment he is in it until its brake is put on, and then it
+ * runs on to the next quarter and stops there.
+ */
+export const DOOR_TURN = Math.PI / 3;
+const QUARTER = Math.PI / 2;
+/** How many times round it will carry him before the clockwork has run down. */
+export const DOOR_LAPS = 3;
+/** The ways out of the drum, by how many quarters it has turned: none at the top, then right, bottom, left. */
+export const PORTS = ["top", "right", "bottom", "left"] as const;
+export type Port = (typeof PORTS)[number];
+/** Where each shutter is on the drum, in degrees anticlockwise from three o'clock; and half the slot in the top. */
+export const SHUTTER: Record<Exclude<Port, "top">, [number, number]> = { right: [-52, 4], bottom: [-116, -64], left: [-184, -128] };
+export const DOOR_SLOT = 24;
+export const DOOR_WALL = 0.2;
 
 /**
  * The egg: half an ellipse below its waist and a taller half above, turned about his long axis
@@ -106,6 +139,13 @@ export interface SeesawDef {
   tip: number;
   /** Which way it throws whoever is in the seat when the seat end comes up against its stop: radians off straight up, towards the bale end. */
   cast: number;
+  /**
+   * He does not stop in this one. He comes on over the gold end and wallows across the cushion,
+   * and off the low end of it: the bale has to come down behind him while he is on the cushion.
+   */
+  pass?: boolean;
+  /** This one always throws at the same speed, however the bale came down: with it, the skill is when. */
+  throw?: number;
 }
 
 /** A hole in a floor with a frying pan under it. */
@@ -142,6 +182,21 @@ export interface WheelDef {
 }
 
 /**
+ * A revolving door. He drops in through a slot in the top of the drum; the door starts to turn,
+ * and carries him round past three shutters: right, bottom, left. A bale on the brake's pan
+ * stops it at the next quarter, and the shutter he is against opens.
+ */
+export interface DoorDef {
+  /** The axle. */
+  x: number;
+  y: number;
+  /** Out to the edges of the leaves. */
+  r: number;
+  /** The pan on the brake lever: the middle of its top face, and how wide it is. */
+  pan: { x: number; y: number; w: number };
+}
+
+/**
  * A place a bale is meant for. A tap within `reach` across, between `y0` and `y1`, is taken to
  * mean exactly here across; and with `seat`, exactly there and at that tilt, so it drops in.
  */
@@ -175,7 +230,10 @@ export interface LevelDef {
   blocks: Block[];
   seesaws: SeesawDef[];
   wheels: WheelDef[];
+  doors: DoorDef[];
   pits: PitDef[];
+  /** Places there is no way out of: the hook has him out of one in `CAGE` seconds. */
+  cages: Array<{ x0: number; x1: number; y0: number; y1: number }>;
   sockets: SocketDef[];
   /** The nest at the bottom: once he is inside this box he has done the room. */
   nest: { x0: number; x1: number; y0: number; y1: number };
@@ -266,6 +324,8 @@ export const LARDER: LevelDef = {
   ],
   seesaws: [{ x: 0.7, y: 21.55, seat: 1.25, load: 1.3, side: 1, tip: 0.31, cast: 0.7 }],
   wheels: [],
+  doors: [],
+  cages: [],
   pits: [{ x: PIT.x, y: lowAt(PIT.x) - WELL_DEEP, w: PIT.w, pan: FLOOR + 0.7, hung: false }],
   sockets: [
     { x: PIT.x, y0: lowAt(PIT.x) - 1.2, y1: lowAt(PIT.x) + 1.4, reach: 1, seat: { y: lowAt(PIT.x) - WELL_DEEP / 2 + 0.08, turn: LOW_TURN } },
@@ -292,7 +352,9 @@ function lowered(level: LevelDef, by: number): LevelDef {
       tank: { ...wheel.tank, y0: wheel.tank.y0 - by, y1: wheel.tank.y1 - by },
       spout: { x: wheel.spout.x, y: wheel.spout.y - by },
     })),
+    doors: level.doors.map((door) => ({ ...door, y: door.y - by, pan: { ...door.pan, y: door.pan.y - by } })),
     pits: level.pits.map((pit) => ({ ...pit, y: pit.y - by, pan: pit.pan - by })),
+    cages: level.cages.map((cage) => ({ ...cage, y0: cage.y0 - by, y1: cage.y1 - by })),
     sockets: level.sockets.map((socket) => ({
       x: socket.x,
       y0: socket.y0 - by,
@@ -311,29 +373,52 @@ export const STOREY = 18;
 const RACK = { y: 29.5, fall: 0.36 };
 const rackAt = (x: number): number => RACK.y - RACK.fall * (4 - x);
 const RACK_TURN = Math.atan(RACK.fall);
-const GAP = { x: 1.3, w: 1.1, well: BALE_W * Math.cos(RACK_TURN) + 0.12 };
+/**
+ * The gap is most of the way along the shelf, so that there are a good two seconds to bridge it
+ * in; and its pan hangs close under it, to leave the air over the see-saw clear for a bale.
+ */
+const GAP = { x: -0.9, w: 1.1, well: BALE_W * Math.cos(RACK_TURN) + 0.12, hang: 1.1 };
 const GAP_DEEP = BALE_H / Math.cos(RACK_TURN);
 const GAP_WELL = { x0: GAP.x - GAP.well / 2, x1: GAP.x + GAP.well / 2 };
-/** The scullery's see-saw is the larder's, the other way round: its pivot, and the step down into its seat. */
-const TIP = { x: -1, y: 22.55, wall: -1 - 1.42 };
+/**
+ * The scullery's see-saw does not wait for him. He rolls on over its gold end and wallows across
+ * the cushion: a bale has to come down on the gold behind him while he is there. Off the end of
+ * the cushion is a cage.
+ */
+/** Its gold arm is longer than a bale, so that one lies on it clear of the floor beside it. */
+const TIP = { x: -0.5, y: 22.5, seat: 1.25, load: 1.75, tip: 0.31 };
+/** The gold end where it rests, up in the air; and the short floor that falls to the right on to it. */
+const TIP_END = { x: TIP.x - TIP.load * Math.cos(TIP.tip), y: TIP.y + TIP.load * Math.sin(TIP.tip) + 0.07 };
+const LAND_END = TIP_END.x - 0.2;
+const landAt = (x: number): number => TIP_END.y + 0.03 + 0.356 * (LAND_END - x);
 /** Where the bale under the long drop goes: hard up against the wall, which is all the room there is. */
 const CATCH = -4 + BALE_W / 2 + 0.02;
-/** The short floor he comes down on, which falls to the right into that seat. */
-const landAt = (x: number): number => TIP.y + 0.48 + 0.356 * (TIP.wall - x);
+/** The cage off the low end of the cushion, and the wall he has to be thrown over. */
+const CAGE_X0 = TIP.x + TIP.seat * Math.cos(TIP.tip) + 0.02;
+const CAGE_BOX = { x0: CAGE_X0, x1: CAGE_X0 + 1.25, floor: 21.15, top: 23.1 };
 /** The bottom floor, which falls to the left, over the hole and on to the nest. */
 const SINK = { y: 19.8, fall: 0.36 };
 const sinkAt = (x: number): number => SINK.y - SINK.fall * (4 - x);
 const SINK_TURN = Math.atan(SINK.fall);
 const PLUG = { x: 1.1, w: 1.1, well: BALE_W * Math.cos(SINK_TURN) + 0.12 };
 const PLUG_DEEP = BALE_H / Math.cos(SINK_TURN);
-const PLUG_WELL = { x0: PLUG.x - PLUG.well / 2, x1: PLUG.x + PLUG.well / 2 };
+/**
+ * The scullery's own hole is cut level, not on the slope. He comes down the bed fast after a
+ * long fall, and a hole that fell away under him he jumped two times in five; one that is
+ * level takes him every time, and a bale laid in it is a level bridge.
+ */
+const DRAIN = { x: 0.6, w: 1.1, well: BALE_W + 0.12 };
+const DRAIN_WELL = { x0: DRAIN.x - DRAIN.well / 2, x1: DRAIN.x + DRAIN.well / 2 };
+const DRAIN_Y = sinkAt(DRAIN_WELL.x1);
+/** The floor beyond the hole, which goes on falling to the left from the hole's own level. */
+const DRAIN_LIP = DRAIN_WELL.x0 - 0.3;
+const sunkAt = (x: number): number => DRAIN_Y - SINK.fall * (DRAIN_LIP - x);
 
 /**
  * The second screen, written as if it stood where the first does and then lowered a storey.
- * He comes in through the hatch at the top right, already rolling, and the first thing in his
- * way is a gap over a pan: bridge it, and quickly. Then the long drop at the far wall, which
- * wants a bale under it; the see-saw, thrown the other way; and the hole in the bottom floor.
- * Four things to do and five bales: one to spare.
+ * He comes in through the hatch at the top right and rolls down a long shelf to a gap over a
+ * pan: bridge it. Then the long drop at the far wall, which wants a bale under it; the see-saw,
+ * which has to be timed; and the hole in the bottom floor. Four things to do and five bales.
  */
 const SCULLERY_HERE: LevelDef = {
   key: "scullery",
@@ -360,44 +445,57 @@ const SCULLERY_HERE: LevelDef = {
     slab(GAP_WELL.x0 - 0.12, rackAt(GAP_WELL.x0 - 0.12) - GAP_DEEP, GAP.x - GAP.w / 2, rackAt(GAP.x - GAP.w / 2) - GAP_DEEP, 0.4, "bed", true),
     slab(GAP.x + GAP.w / 2, rackAt(GAP.x + GAP.w / 2) - GAP_DEEP, GAP_WELL.x1 + 0.12, rackAt(GAP_WELL.x1 + 0.12) - GAP_DEEP, 0.4, "wood"),
     slab(GAP_WELL.x0 - 0.2, rackAt(GAP_WELL.x0 - 0.2), GAP_WELL.x0 - 0.04, rackAt(GAP_WELL.x0 - 0.04), 0.4, "bed", true),
-    slab(-2.5, rackAt(-2.5), GAP_WELL.x0 - 0.2, rackAt(GAP_WELL.x0 - 0.2), 0.4, "wood"),
+    slab(-2.6, rackAt(-2.6), GAP_WELL.x0 - 0.2, rackAt(GAP_WELL.x0 - 0.2), 0.4, "wood"),
     // The sides of the pan's flue, hung under the gap.
-    box(GAP.x - GAP.w / 2 - 0.2, rackAt(GAP.x) - GAP_DEEP - 2, GAP.x - GAP.w / 2, rackAt(GAP.x) - GAP_DEEP - 0.7, "iron"),
-    box(GAP.x + GAP.w / 2, rackAt(GAP.x) - GAP_DEEP - 2, GAP.x + GAP.w / 2 + 0.2, rackAt(GAP.x) - GAP_DEEP - 0.5, "iron"),
-    box(GAP.x - GAP.w / 2 - 0.2, rackAt(GAP.x) - GAP_DEEP - 2.2, GAP.x + GAP.w / 2 + 0.2, rackAt(GAP.x) - GAP_DEEP - 2, "iron"),
+    box(GAP.x - GAP.w / 2 - 0.2, rackAt(GAP.x) - GAP_DEEP - GAP.hang - 0.1, GAP.x - GAP.w / 2, rackAt(GAP.x) - GAP_DEEP - 0.7, "iron"),
+    box(GAP.x + GAP.w / 2, rackAt(GAP.x) - GAP_DEEP - GAP.hang - 0.1, GAP.x + GAP.w / 2 + 0.2, rackAt(GAP.x) - GAP_DEEP - 0.5, "iron"),
+    box(GAP.x - GAP.w / 2 - 0.2, rackAt(GAP.x) - GAP_DEEP - GAP.hang - 0.3, GAP.x + GAP.w / 2 + 0.2, rackAt(GAP.x) - GAP_DEEP - GAP.hang - 0.1, "iron"),
     // Straw on the wall where he comes off the end of the shelf. Under it, a long drop.
-    box(-4, 25.4, -3.8, 28.6, "nest", true),
+    box(-4, 25.2, -3.8, 28.6, "nest", true),
 
-    // Where he comes down: a short floor falling to the right, into the see-saw's seat.
-    slab(-4, landAt(-4), TIP.wall, landAt(TIP.wall), 0.4, "stone"),
-    box(TIP.wall - 0.68, TIP.y - 0.75, TIP.wall, TIP.y + 0.15, "stone"),
-    box(TIP.wall, TIP.y - 0.75, TIP.x + 1.6, TIP.y - 0.45, "stone"),
+    // Where he comes down: a short floor falling to the right, on to the gold end of the see-saw.
+    slab(-4, landAt(-4), LAND_END, landAt(LAND_END), 0.4, "stone"),
+    box(LAND_END - 0.5, TIP.y - 1, LAND_END, landAt(LAND_END) - 0.4, "stone"),
+    // What the see-saw stands on, and the cage off the end of it: iron, and too high to roll out of.
+    box(LAND_END - 0.5, TIP.y - 1, CAGE_BOX.x0, TIP.y - 0.7, "stone"),
+    box(CAGE_BOX.x0 - 0.2, CAGE_BOX.floor, CAGE_BOX.x0, TIP.y - 1, "iron"),
+    box(CAGE_BOX.x0 - 0.2, CAGE_BOX.floor - 0.25, CAGE_BOX.x1 + 0.2, CAGE_BOX.floor, "iron"),
+    box(CAGE_BOX.x1, CAGE_BOX.floor, CAGE_BOX.x1 + 0.2, CAGE_BOX.top, "iron"),
+    // Straw on the floor of it: he is to be caught there, not cracked.
+    box(CAGE_BOX.x0, CAGE_BOX.floor, CAGE_BOX.x1, CAGE_BOX.floor + 0.12, "bed", true),
 
-    // The bed of straw he is thrown on to, and the floor with the hole in it.
-    slab(PLUG_WELL.x1 + 0.05, sinkAt(PLUG_WELL.x1 + 0.05) + 0.4, 4, sinkAt(4) + 0.4, 0.4, "bed", true),
-    slab(PLUG_WELL.x1, sinkAt(PLUG_WELL.x1), 4, sinkAt(4), 0.5, "stone"),
-    slab(PLUG_WELL.x0 - 0.12, sinkAt(PLUG_WELL.x0 - 0.12) - PLUG_DEEP, PLUG.x - PLUG.w / 2, sinkAt(PLUG.x - PLUG.w / 2) - PLUG_DEEP, 0.4, "stone"),
-    slab(PLUG.x + PLUG.w / 2, sinkAt(PLUG.x + PLUG.w / 2) - PLUG_DEEP, PLUG_WELL.x1 + 0.12, sinkAt(PLUG_WELL.x1 + 0.12) - PLUG_DEEP, 0.4, "stone"),
-    slab(-1.9, sinkAt(-1.9), PLUG_WELL.x0 - 0.04, sinkAt(PLUG_WELL.x0 - 0.04), 0.5, "stone"),
-    box(PLUG.x - PLUG.w / 2 - 0.25, FLOOR + 1.9, PLUG.x - PLUG.w / 2, sinkAt(PLUG.x) - PLUG_DEEP - 0.7, "iron"),
-    box(PLUG.x + PLUG.w / 2, FLOOR + 1.9, PLUG.x + PLUG.w / 2 + 0.25, sinkAt(PLUG.x) - PLUG_DEEP - 0.5, "iron"),
+    // The bed of straw he is thrown on to, the straw up the wall behind it, and the floor with the hole in it.
+    slab(DRAIN_WELL.x1 + 0.6, sinkAt(DRAIN_WELL.x1 + 0.6) + 0.4, 4, sinkAt(4) + 0.4, 0.4, "bed", true),
+    box(3.8, sinkAt(4) + 0.4, 4, 26.5, "nest", true),
+    slab(DRAIN_WELL.x1, DRAIN_Y, 4, sinkAt(4), 0.5, "stone"),
+    box(DRAIN_WELL.x0 - 0.12, DRAIN_Y - BALE_H - 0.4, DRAIN.x - DRAIN.w / 2, DRAIN_Y - BALE_H, "stone"),
+    box(DRAIN.x + DRAIN.w / 2, DRAIN_Y - BALE_H - 0.4, DRAIN_WELL.x1 + 0.12, DRAIN_Y - BALE_H, "stone"),
+    // Its walls stand upright, so a bale goes in flat; the floor takes up its slope again a step beyond.
+    box(DRAIN_LIP, DRAIN_Y - BALE_H - 0.4, DRAIN_WELL.x0, DRAIN_Y, "stone"),
+    box(DRAIN_WELL.x1, DRAIN_Y - BALE_H - 0.4, DRAIN_WELL.x1 + 0.3, DRAIN_Y - 0.03, "stone"),
+    slab(-1.9, sunkAt(-1.9), DRAIN_LIP, DRAIN_Y, 0.5, "stone"),
+    box(DRAIN.x - DRAIN.w / 2 - 0.25, FLOOR + 1.9, DRAIN.x - DRAIN.w / 2, DRAIN_Y - BALE_H - 0.4, "iron"),
+    box(DRAIN.x + DRAIN.w / 2, FLOOR + 1.9, DRAIN.x + DRAIN.w / 2 + 0.25, DRAIN_Y - BALE_H - 0.4, "iron"),
 
     // The nest, bottom left, with straw banked up the wall behind it.
     box(-4, FLOOR, -1.5, FLOOR + 0.5, "nest", true),
     box(-1.5, FLOOR, -1.2, FLOOR + 1, "nest", true),
     box(-4, FLOOR, -3.7, FLOOR + 3.8, "nest", true),
   ],
-  seesaws: [{ x: TIP.x, y: TIP.y, seat: 1.25, load: 1.3, side: -1, tip: 0.31, cast: 0.7 }],
+  seesaws: [{ x: TIP.x, y: TIP.y, seat: TIP.seat, load: TIP.load, side: 1, tip: TIP.tip, cast: -0.5, pass: true, throw: 7 }],
   wheels: [],
+  doors: [],
   pits: [
-    { x: GAP.x, y: rackAt(GAP.x) - GAP_DEEP, w: GAP.w, pan: rackAt(GAP.x) - GAP_DEEP - 1.9, hung: true },
-    { x: PLUG.x, y: sinkAt(PLUG.x) - PLUG_DEEP, w: PLUG.w, pan: FLOOR + 0.7, hung: false },
+    { x: GAP.x, y: rackAt(GAP.x) - GAP_DEEP, w: GAP.w, pan: rackAt(GAP.x) - GAP_DEEP - GAP.hang, hung: true },
+    { x: DRAIN.x, y: DRAIN_Y - BALE_H, w: DRAIN.w, pan: FLOOR + 0.7, hung: false },
   ],
+  cages: [{ x0: CAGE_BOX.x0, x1: CAGE_BOX.x1, y0: CAGE_BOX.floor, y1: TIP.y - 0.2 }],
   sockets: [
     { x: GAP.x, y0: rackAt(GAP.x) - 1.2, y1: rackAt(GAP.x) + 1.4, reach: 1, seat: { y: rackAt(GAP.x) - GAP_DEEP / 2 + 0.08, turn: RACK_TURN } },
-    { x: TIP.x + 0.72, y0: TIP.y - 0.55, y1: 27, reach: 0.85 },
-    { x: CATCH, y0: TIP.y, y1: TIP.y + 3, reach: 0.95 },
-    { x: PLUG.x, y0: sinkAt(PLUG.x) - 1.2, y1: sinkAt(PLUG.x) + 1.4, reach: 1, seat: { y: sinkAt(PLUG.x) - PLUG_DEEP / 2 + 0.08, turn: SINK_TURN } },
+    // Over the gold end, a bale is always let go from the same height: here it is when, not how hard.
+    { x: TIP.x - 0.82, y0: TIP.y - 0.3, y1: TIP.y + 3.1, reach: 0.9, seat: { y: TIP.y + 0.8, turn: -TIP.tip } },
+    { x: CATCH, y0: landAt(CATCH) - 0.3, y1: landAt(CATCH) + 2.8, reach: 0.95 },
+    { x: DRAIN.x, y0: DRAIN_Y - 1.4, y1: DRAIN_Y + 1.4, reach: 1, seat: { y: DRAIN_Y - BALE_H / 2 + 0.03, turn: 0 } },
   ],
   nest: { x0: -3.7, x1: -1.5, y0: FLOOR + 0.4, y1: FLOOR + 1.9 },
 };
@@ -439,7 +537,7 @@ const SLUICE = { x: 1.75, y: 29.95, w: 1.3 };
 const MILL_HERE: LevelDef = {
   key: "mill",
   name: "The Mill",
-  ends: "nest",
+  ends: "roost",
   hatch: true,
   left: -4,
   right: 4,
@@ -475,12 +573,14 @@ const MILL_HERE: LevelDef = {
     box(HOLE.x - HOLE.w / 2 - 0.25, FLOOR + 1.9, HOLE.x - HOLE.w / 2, baseAt(HOLE.x) - PLUG_DEEP - 0.7, "iron"),
     box(HOLE.x + HOLE.w / 2, FLOOR + 1.9, HOLE.x + HOLE.w / 2 + 0.25, baseAt(HOLE.x) - PLUG_DEEP - 0.5, "iron"),
 
-    // The Empress Hen's nest, bottom left, with straw banked up the wall behind it.
+    // The nest, bottom left, with straw banked up the wall behind it.
     box(-4, FLOOR, -1.5, FLOOR + 0.5, "nest", true),
     box(-1.5, FLOOR, -1.2, FLOOR + 1, "nest", true),
     box(-4, FLOOR, -3.7, FLOOR + 3.8, "nest", true),
   ],
   seesaws: [],
+  doors: [],
+  cages: [],
   wheels: [
     {
       x: MILL.x,
@@ -509,8 +609,88 @@ const MILL_HERE: LevelDef = {
 
 export const MILLROOM: LevelDef = lowered(MILL_HERE, STOREY * 2);
 
+/** The buttery's revolving door, and how far out its drum comes. */
+const TURN = { x: 0, y: 26.3, r: 1.5 };
+const DRUM = TURN.r + 0.06 + DOOR_WALL;
+/** The shelf he comes in on, which falls to the right and stops at the slot in the top of the drum. */
+const LEAD = { x: -DRUM * Math.sin((DOOR_SLOT * Math.PI) / 180) - 0.02, y: TURN.y + DRUM + 0.2 };
+const leadAt = (x: number): number => LEAD.y + 0.36 * (LEAD.x - x);
+/** The shelves under the two side doors: each begins at the lip of its shutter and falls away from the drum. */
+const SILL = { x: 1.1, y: TURN.y - 1.32, end: 2.7 };
+const sillAt = (x: number): number => SILL.y - 0.36 * (Math.abs(x) - SILL.x);
+/** The pan on the brake lever, up to the right of the drum. */
+const BRAKE = { x: 2.75, y: 28.3, w: 1.5 };
+const SPOUT = { x: 0.4, w: 1.1 };
+const SPOUT_WELL = { x0: SPOUT.x - PLUG.well / 2, x1: SPOUT.x + PLUG.well / 2 };
+
+/**
+ * The fourth screen, written as if it stood where the first does. He comes in through the hatch
+ * at the top left and drops into a revolving door, which begins to turn and carries him round
+ * past three shutters. A bale on the brake stops it at the next quarter, and he comes out of
+ * whichever he is against: the right, early, on to a shelf with a long drop and a hole after it;
+ * the bottom, into a pan; or the left, late, with nothing between him and the nest but air.
+ * So it is one bale for whoever can wait, and three for whoever cannot. Four bales.
+ */
+const BUTTERY_HERE: LevelDef = {
+  key: "buttery",
+  name: "The Buttery",
+  ends: "nest",
+  hatch: true,
+  left: -4,
+  right: 4,
+  top: 31,
+  bottom: 13,
+  start: { x: -3.5, y: 30.2 },
+  shove: 3,
+  bales: 4,
+  spare: 2,
+  blocks: [
+    box(-4.8, 12.6, -4, 31.4, "wall"),
+    box(4, 12.6, 4.8, 31.4, "wall"),
+    box(-4, 13.4, 4, FLOOR, "stone"),
+
+    // The shelf under the hatch, and the board across the slot that brings him down into it.
+    slab(-4, leadAt(-4), LEAD.x, LEAD.y, 0.3, "wood"),
+    box(0.6, TURN.y + DRUM - 0.1, 0.75, TURN.y + DRUM + 1.5, "board"),
+    // The shelves under the side doors. The one on the left is short: beyond it there is nothing.
+    slab(SILL.x, sillAt(SILL.x), SILL.end, sillAt(SILL.end), 0.3, "wood"),
+    slab(-SILL.end, sillAt(SILL.end), -SILL.x, sillAt(SILL.x), 0.3, "wood"),
+    // The tray under the bottom door.
+    box(-1.05, TURN.y - DRUM - 1.05, 1.05, TURN.y - DRUM - 0.85, "iron"),
+
+    // The bottom floor with the hole in it, and the flue to the pan.
+    slab(SPOUT_WELL.x1, baseAt(SPOUT_WELL.x1), 4, baseAt(4), 0.5, "stone"),
+    slab(SPOUT_WELL.x0 - 0.12, baseAt(SPOUT_WELL.x0 - 0.12) - PLUG_DEEP, SPOUT.x - SPOUT.w / 2, baseAt(SPOUT.x - SPOUT.w / 2) - PLUG_DEEP, 0.4, "stone"),
+    slab(SPOUT.x + SPOUT.w / 2, baseAt(SPOUT.x + SPOUT.w / 2) - PLUG_DEEP, SPOUT_WELL.x1 + 0.12, baseAt(SPOUT_WELL.x1 + 0.12) - PLUG_DEEP, 0.4, "stone"),
+    slab(-1.9, baseAt(-1.9), SPOUT_WELL.x0 - 0.04, baseAt(SPOUT_WELL.x0 - 0.04), 0.5, "stone"),
+    box(SPOUT.x - SPOUT.w / 2 - 0.25, FLOOR + 1.9, SPOUT.x - SPOUT.w / 2, baseAt(SPOUT.x) - PLUG_DEEP - 0.7, "iron"),
+    box(SPOUT.x + SPOUT.w / 2, FLOOR + 1.9, SPOUT.x + SPOUT.w / 2 + 0.25, baseAt(SPOUT.x) - PLUG_DEEP - 0.5, "iron"),
+
+    // The Empress Hen's nest, bottom left, with straw banked high up the wall behind it.
+    box(-4, FLOOR, -1.5, FLOOR + 0.5, "nest", true),
+    box(-1.5, FLOOR, -1.2, FLOOR + 1, "nest", true),
+    box(-4, FLOOR, -3.7, FLOOR + 3.8, "nest", true),
+  ],
+  seesaws: [],
+  wheels: [],
+  doors: [{ x: TURN.x, y: TURN.y, r: TURN.r, pan: BRAKE }],
+  pits: [
+    { x: TURN.x, y: TURN.y - DRUM + 0.05, w: 2.1, pan: TURN.y - DRUM - 0.8, hung: true },
+    { x: SPOUT.x, y: baseAt(SPOUT.x) - PLUG_DEEP, w: SPOUT.w, pan: FLOOR + 0.7, hung: false },
+  ],
+  cages: [],
+  sockets: [
+    { x: BRAKE.x, y0: BRAKE.y - 0.7, y1: 31, reach: 1.25, seat: { y: BRAKE.y + BALE_H / 2 + 0.02, turn: 0 } },
+    { x: MILL_CATCH, y0: baseAt(MILL_CATCH) - 0.4, y1: baseAt(MILL_CATCH) + 2.8, reach: 0.95 },
+    { x: SPOUT.x, y0: baseAt(SPOUT.x) - 1.2, y1: baseAt(SPOUT.x) + 1.4, reach: 1, seat: { y: baseAt(SPOUT.x) - PLUG_DEEP / 2 + 0.08, turn: SINK_TURN } },
+  ],
+  nest: { x0: -3.7, x1: -1.5, y0: FLOOR + 0.4, y1: FLOOR + 1.9 },
+};
+
+export const BUTTERY: LevelDef = lowered(BUTTERY_HERE, STOREY * 3);
+
 /** The house, from the top down. Each room is a game of its own; the roost between two is a waypoint. */
-export const LEVELS: LevelDef[] = [LARDER, SCULLERY, MILLROOM];
+export const LEVELS: LevelDef[] = [LARDER, SCULLERY, MILLROOM, BUTTERY];
 
 export type Phase = "ready" | "run" | "home" | "fried" | "broken" | "caught";
 
@@ -527,6 +707,10 @@ export type GameEvent =
   | { type: "fling"; speed: number }
   | { type: "sluice"; x: number; y: number }
   | { type: "water"; x: number; y: number }
+  | { type: "turning"; x: number; y: number }
+  | { type: "brake"; x: number; y: number }
+  | { type: "port"; port: Port; x: number; y: number }
+  | { type: "caged"; x: number; y: number }
   | { type: "warn" }
   | { type: "caught" }
   | { type: "fried"; x: number; y: number }
@@ -605,8 +789,24 @@ export class Game {
   private readonly planks: Array<{ body: RAPIER.RigidBody; def: SeesawDef; hit: number; up: boolean; spin: number }> = [];
   /** `openAt` is when a bale came down on its sluice pan (before that, -1); `wet` once the water has reached it. */
   private readonly mills: Array<{ body: RAPIER.RigidBody; def: WheelDef; pan: RAPIER.Collider; wood: RAPIER.Collider[]; openAt: number; wet: boolean }> = [];
-  /** The padded seats: he sinks into one and stays put. */
+  /** The revolving doors: how far each has turned, and where it is to stop. */
+  private readonly gates: Array<{
+    body: RAPIER.RigidBody;
+    def: DoorDef;
+    pan: RAPIER.Collider;
+    shutters: Record<Exclude<Port, "top">, RAPIER.Collider[]>;
+    state: "still" | "turning" | "stopped";
+    turned: number;
+    target: number;
+    braked: boolean;
+    open: Port | null;
+  }> = [];
+  /** The padded seats: he sinks into one and stays put. And the cushions he only wallows across. */
   private readonly seats = new Set<number>();
+  private readonly cushions = new Set<number>();
+  private inSeat = false;
+  /** Seconds he has been in a cage. */
+  private snared = 0;
   private flungAt = -1;
   /** Where he was when he last got anywhere, and when. */
   private anchor = { x: 0, y: 0 };
@@ -672,18 +872,23 @@ export class Game {
           .setRestitution(0),
         body,
       );
-      const lip = this.world.createCollider(
-        RAPIER.ColliderDesc.cuboid(0.06, 0.2, 0.9)
-          .setTranslation(def.side * (def.seat - 0.06), 0.3, 0)
-          .setDensity(0)
-          .setFriction(1)
-          .setRestitution(0),
-        body,
-      );
       this.soft.add(pad.handle);
-      this.soft.add(lip.handle);
-      this.seats.add(pad.handle);
-      body.addTorque({ x: 0, y: 0, z: -def.side * PLANK_BIAS }, true);
+      if (def.pass) {
+        // Nothing to keep him on it: he goes off the low end unless he is thrown first.
+        this.cushions.add(pad.handle);
+      } else {
+        const lip = this.world.createCollider(
+          RAPIER.ColliderDesc.cuboid(0.06, 0.2, 0.9)
+            .setTranslation(def.side * (def.seat - 0.06), 0.3, 0)
+            .setDensity(0)
+            .setFriction(1)
+            .setRestitution(0),
+          body,
+        );
+        this.soft.add(lip.handle);
+        this.seats.add(pad.handle);
+      }
+      body.addTorque({ x: 0, y: 0, z: -def.side * (def.pass ? PASS_BIAS : PLANK_BIAS) }, true);
       this.planks.push({ body, def, hit: 0, up: false, spin: 0 });
     }
 
@@ -724,6 +929,51 @@ export class Game {
         ground,
       );
       this.mills.push({ body, def, pan, wood, openAt: -1, wet: false });
+    }
+
+    for (const def of level.doors) {
+      // The leaves are clockwork: nothing he does can turn them or stop them.
+      const body = this.world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(def.x, def.y, 0));
+      // The leaves are quilted, like the seat of a see-saw: he drops in on them and is not hurt.
+      this.soft.add(this.world.createCollider(RAPIER.ColliderDesc.ball(0.3).setFriction(0.3).setRestitution(0), body).handle);
+      for (let leaf = 0; leaf < 4; leaf += 1) {
+        const turn = Math.PI / 4 + leaf * QUARTER;
+        const mid = (0.2 + def.r) / 2;
+        const quilt = this.world.createCollider(
+          RAPIER.ColliderDesc.cuboid((def.r - 0.2) / 2, 0.07, 0.8)
+            .setTranslation(Math.cos(turn) * mid, Math.sin(turn) * mid, 0)
+            .setRotation(quat(turn))
+            .setFriction(0.3)
+            .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min)
+            .setRestitution(0),
+          body,
+        );
+        this.soft.add(quilt.handle);
+      }
+      // The drum: a ring of short staves, with a slot left in the top and three lots that open.
+      const ring = def.r + 0.06 + DOOR_WALL / 2;
+      const shutters: Record<Exclude<Port, "top">, RAPIER.Collider[]> = { right: [], bottom: [], left: [] };
+      for (let from = -184; from < 176; from += 6) {
+        const mid = from + 3;
+        if (Math.abs(mid - 90) < DOOR_SLOT) continue;
+        const turn = (mid * Math.PI) / 180;
+        const stave = this.world.createCollider(
+          RAPIER.ColliderDesc.cuboid(DOOR_WALL / 2, ring * Math.tan((3 * Math.PI) / 180) + 0.02, 0.8)
+            .setTranslation(def.x + Math.cos(turn) * ring, def.y + Math.sin(turn) * ring, 0)
+            .setRotation(quat(turn))
+            .setFriction(0.5)
+            .setRestitution(0),
+          ground,
+        );
+        for (const port of ["right", "bottom", "left"] as const) {
+          if (mid > SHUTTER[port][0] && mid < SHUTTER[port][1]) shutters[port].push(stave);
+        }
+      }
+      const pan = this.world.createCollider(
+        RAPIER.ColliderDesc.cuboid(def.pan.w / 2, 0.05, 0.6).setTranslation(def.pan.x, def.pan.y - 0.05, 0).setFriction(1).setRestitution(0),
+        ground,
+      );
+      this.gates.push({ body, def, pan, shutters, state: "still", turned: 0, target: -1, braked: false, open: null });
     }
 
     this.eggBody = this.world.createRigidBody(
@@ -788,6 +1038,34 @@ export class Game {
     }));
   }
 
+  /** `turn` is how far the leaves have gone round; `open` the shutter that has been let up, once it has stopped. */
+  get doors(): Array<Pose & { def: DoorDef; turning: boolean; braked: boolean; open: Port | null; stopped: boolean }> {
+    return this.gates.map((gate) => ({
+      x: gate.def.x,
+      y: gate.def.y,
+      turn: 0 - gate.turned,
+      def: gate.def,
+      turning: gate.state === "turning",
+      braked: gate.braked,
+      open: gate.open,
+      stopped: gate.state === "stopped",
+    }));
+  }
+
+  /** He is in a cage. */
+  get caged(): boolean {
+    return this.snared > 0;
+  }
+
+  /** How far down the Queen's hook has come for him: 0 not let down yet, 1 it has him. */
+  get hook(): number {
+    if (this.phase === "caught") return 1;
+    if (this.phase !== "run") return 0;
+    const patience = this.inSeat ? SEAT_IDLE : IDLE;
+    const warn = this.inSeat ? SEAT_WARN : IDLE_WARN;
+    return Math.max(0, Math.min(1, Math.max((this.idle - warn) / (patience - warn), this.snared / CAGE)));
+  }
+
   drain(): GameEvent[] {
     const events = this.events;
     this.events = [];
@@ -817,15 +1095,19 @@ export class Game {
   }
 
   private free(x: number, y: number, turn = 0): boolean {
+    // Nothing is thrown into the drum of a door: its leaves would have the bale in splinters.
+    for (const gate of this.gates) {
+      if (Math.hypot(x - gate.def.x, y - gate.def.y) < gate.def.r + DOOR_WALL + 0.3) return false;
+    }
     const shape = new RAPIER.Cuboid(BALE_W / 2 - 0.03, BALE_H / 2 - 0.03, 0.5);
     return this.world.intersectionWithShape({ x, y, z: 0 }, quat(turn), shape) === null;
   }
 
   private lifted(x: number, y: number): number {
-    for (let up = 0; up <= 3; up += 0.1) {
+    for (let up = 0; up <= 4.5; up += 0.1) {
       if (this.free(x, y + up)) return y + up;
     }
-    return y + 3;
+    return y + 4.5;
   }
 
   step(input: Input = {}): void {
@@ -853,10 +1135,12 @@ export class Game {
     this.last = { x: before.x, y: before.y };
     for (const bale of this.live) bale.fall = Math.max(0, -bale.body.linvel().y);
     this.drive();
+    this.revolve();
     this.world.step();
     this.time += STEP;
     this.weigh();
     this.sluice();
+    this.brake();
     this.stop();
     if (this.phase !== "run") return;
 
@@ -899,7 +1183,9 @@ export class Game {
         });
         if (!on) continue;
         bale.spent = true;
-        plank.hit = Math.max(plank.hit, bale.fall);
+        plank.hit = Math.max(plank.hit, bale.fall, 0.01);
+        // A see-saw that is to be timed goes over at once, wherever on it he is sitting.
+        if (plank.def.pass) plank.body.setAngvel({ x: 0, y: 0, z: plank.def.side * SNAP }, true);
       }
     }
   }
@@ -940,6 +1226,54 @@ export class Game {
     }
   }
 
+  /** A door that is turning goes on turning, to the quarter after its brake went on. */
+  private revolve(): void {
+    for (const gate of this.gates) {
+      if (gate.state !== "turning") continue;
+      gate.turned += DOOR_TURN * STEP;
+      if (gate.braked && gate.turned >= gate.target - 1e-9) {
+        gate.turned = gate.target;
+        gate.state = "stopped";
+        const port = PORTS[Math.round(gate.target / QUARTER) % 4]!;
+        gate.open = port;
+        if (port !== "top") for (const stave of gate.shutters[port]) stave.setEnabled(false);
+        this.events.push({ type: "port", port, x: gate.def.x, y: gate.def.y });
+      }
+      gate.body.setNextKinematicRotation(quat(-gate.turned));
+    }
+  }
+
+  /** A door starts to turn when he is well inside it, and a bale on its brake's pan stops it at the next quarter. */
+  private brake(): void {
+    const p = this.eggBody.translation();
+    for (const gate of this.gates) {
+      if (!gate.braked) {
+        let on = false;
+        this.world.contactPairsWith(gate.pan, (other) => {
+          if (!this.live.some((bale) => bale.collider.handle === other.handle)) return;
+          this.world.contactPair(gate.pan, other, (manifold) => {
+            if (manifold.numContacts() > 0) on = true;
+          });
+        });
+        if (on) {
+          // Put on before he is in it, the brake stops it at the first quarter.
+          gate.braked = true;
+          gate.target = Math.max(QUARTER, Math.ceil((gate.turned + 0.03) / QUARTER) * QUARTER);
+          this.events.push({ type: "brake", x: gate.def.pan.x, y: gate.def.pan.y });
+        }
+      }
+      // Left to itself the clockwork runs down, and it runs down with him at the top.
+      if (!gate.braked && gate.turned >= DOOR_LAPS * 4 * QUARTER - 0.03) {
+        gate.braked = true;
+        gate.target = DOOR_LAPS * 4 * QUARTER;
+      }
+      if (gate.state === "still" && this.phase === "run" && Math.hypot(p.x - gate.def.x, p.y - gate.def.y) < 0.95) {
+        gate.state = "turning";
+        this.events.push({ type: "turning", x: gate.def.x, y: gate.def.y });
+      }
+    }
+  }
+
   /** A plank goes no further than its stops, and when the seat end comes up against its stop, that is what throws him. */
   private stop(): void {
     for (const plank of this.planks) {
@@ -956,7 +1290,7 @@ export class Game {
       if (!plank.up && raised >= tip - 0.04) {
         plank.up = true;
         const coming = Math.max(spin * plank.def.side, plank.spin);
-        if (this.phase === "run") this.fling(plank.def, plank.hit > 0 ? plank.hit * FLING_GAIN : coming);
+        if (this.phase === "run") this.fling(plank.def, plank.hit > 0 ? (plank.def.throw ?? plank.hit * FLING_GAIN) : coming);
         plank.hit = 0;
       }
       plank.spin = spin * plank.def.side;
@@ -972,6 +1306,7 @@ export class Game {
     const dy = p.y - def.y;
     const along = (dx * Math.cos(turn) + dy * Math.sin(turn)) * def.side;
     const above = -dx * Math.sin(turn) + dy * Math.cos(turn);
+    // Off the end of a cushion with no lip he is already on his way down: the plank comes up past him.
     if (along < 0.1 || along > def.seat + 0.5 || above < 0 || above > 1.6) return;
     const speed = Math.min(FLING_TOP, power);
     this.eggBody.setLinvel({ x: -def.side * Math.sin(def.cast) * speed, y: Math.cos(def.cast) * speed, z: 0 }, true);
@@ -982,10 +1317,33 @@ export class Game {
     this.events.push({ type: "fling", speed });
   }
 
+  /**
+   * On a cushion with no lip he goes outward at a crawl, whatever he was doing before: it has
+   * him as soon as he is over it, so that one who comes in fast does not skip half of it.
+   */
+  private wallow(): void {
+    const p = this.eggBody.translation();
+    for (const plank of this.planks) {
+      const def = plank.def;
+      if (!def.pass) continue;
+      const turn = turnOf(plank.body.rotation());
+      const dx = p.x - def.x;
+      const dy = p.y - def.y;
+      const along = (dx * Math.cos(turn) + dy * Math.sin(turn)) * def.side;
+      const above = -dx * Math.sin(turn) + dy * Math.cos(turn);
+      if (along < -0.05 || along > def.seat + 0.1 || above < 0 || above > 1) continue;
+      const v = this.eggBody.linvel();
+      this.eggBody.setLinvel({ x: def.side * CRAWL * Math.cos(turn), y: Math.min(v.y, 0.5), z: 0 }, true);
+      this.eggBody.setAngvel({ x: 0, y: 0, z: (-def.side * CRAWL) / EGG.wide }, true);
+      this.softUntil = Math.max(this.softUntil, this.time + SOFT_GRACE);
+    }
+  }
+
   /** What he is touching that is soft, if anything; and which bales. */
-  private touching(): { soft: boolean; seat: boolean; bales: Bale[] } {
+  private touching(): { soft: boolean; seat: boolean; cushion: boolean; bales: Bale[] } {
     let soft = false;
     let seat = false;
+    let cushion = false;
     const bales: Bale[] = [];
     this.world.contactPairsWith(this.eggCollider, (other) => {
       if (!this.soft.has(other.handle)) return;
@@ -996,10 +1354,11 @@ export class Game {
       if (!contact) return;
       soft = true;
       if (this.seats.has(other.handle)) seat = true;
+      if (this.cushions.has(other.handle)) cushion = true;
       const bale = this.live.find((candidate) => candidate.collider.handle === other.handle);
       if (bale) bales.push(bale);
     });
-    return { soft, seat, bales };
+    return { soft, seat, cushion, bales };
   }
 
   /** The one rule: a sharp change in his velocity is a knock, unless what did it was soft. */
@@ -1012,8 +1371,11 @@ export class Game {
     if (touch.soft) this.softUntil = Math.max(this.softUntil, this.time + SOFT_GRACE);
     // A padded seat holds him: he does not rock about in it.
     const held = touch.seat && this.time > this.flungAt + 0.5;
+    this.inSeat = held;
     this.eggBody.setLinearDamping(held ? 4 : 0);
     this.eggBody.setAngularDamping(held ? 6 : 0.15);
+    // A cushion with no lip to it only slows him: he wallows across it and off the end.
+    if (this.time > this.flungAt + 0.5) this.wallow();
     if (jolt < CRACK) return;
 
     if (this.time <= this.softUntil) {
@@ -1077,17 +1439,32 @@ export class Game {
       this.homeAt = -1;
     }
 
-    // Standing still, or rocking on the spot: either way he is getting nowhere.
+    // In a cage there is nothing to wait for: the hook is on its way down as he goes in.
     void v;
-    const still = Math.hypot(p.x - this.anchor.x, p.y - this.anchor.y) < STILL;
+    if (level.cages.some((cage) => p.x > cage.x0 && p.x < cage.x1 && p.y > cage.y0 && p.y < cage.y1)) {
+      if (this.snared === 0) this.events.push({ type: "caged", x: p.x, y: p.y });
+      this.snared += STEP;
+      if (this.snared >= CAGE) {
+        this.phase = "caught";
+        this.events.push({ type: "caught" });
+        return;
+      }
+    } else {
+      this.snared = 0;
+    }
+
+    // Standing still, or rocking on the spot: either way he is getting nowhere. A door that is
+    // carrying him round is taking him somewhere, however little he moves in it.
+    const carried = this.gates.some((gate) => gate.state === "turning" && Math.hypot(p.x - gate.def.x, p.y - gate.def.y) < gate.def.r);
+    const still = !carried && Math.hypot(p.x - this.anchor.x, p.y - this.anchor.y) < STILL;
     if (!still) this.anchor = { x: p.x, y: p.y };
     this.idle = still ? this.idle + STEP : 0;
     if (!still) this.warned = false;
-    if (this.idle >= IDLE_WARN && !this.warned) {
+    if (this.idle >= (this.inSeat ? SEAT_WARN : IDLE_WARN) && !this.warned) {
       this.warned = true;
       this.events.push({ type: "warn" });
     }
-    if (this.idle >= IDLE) {
+    if (this.idle >= (this.inSeat ? SEAT_IDLE : IDLE)) {
       this.phase = "caught";
       this.events.push({ type: "caught" });
     }

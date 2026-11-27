@@ -32,21 +32,22 @@ export function larderPlan(drop = GOOD_DROP, stopHole = true): Move[] {
   ];
 }
 
-/** Heights in the scullery's plan are written as if it stood where the larder does: it hangs a storey down. */
-export const GOOD_TOSS = 24.9;
-
 /**
- * The second screen played properly: bridge the gap over the pan at once, a bale under the
- * long drop, one in the hole, and one dropped on the see-saw once he is sitting in it.
+ * The second screen played properly: bridge the gap over the pan, a bale under the long drop,
+ * one on the gold end of the see-saw as he comes to it, and one in the hole once he is thrown.
+ * `toss` as a number is a time to throw that third bale at, whatever he is doing.
+ * Heights are written as if the scullery stood where the larder does: it hangs a storey down.
  */
-export function sculleryPlan(drop = GOOD_TOSS, options: { bridge?: number | false; cushion?: boolean; stopHole?: boolean } = {}): Move[] {
-  const { bridge = 0.3, cushion = true, stopHole = true } = options;
+export function sculleryPlan(options: { bridge?: number | false; cushion?: boolean; toss?: number | false; stopHole?: boolean } = {}): Move[] {
+  const { bridge = 0.5, cushion = true, toss, stopHole = true } = options;
   const at = (when: Move["when"], x: number, y: number): Move => ({ when, x, y: y - STOREY });
+  // He has come down the long drop and is on his way to the see-saw.
+  const coming = (game: Game): boolean => game.egg.x > -2.4 && game.egg.x < 0 && game.egg.y + STOREY < 25;
   return [
-    ...(bridge === false ? [] : [at((game) => game.time > bridge, 1.3, 28.5)]),
-    ...(cushion ? [at((game) => game.time > 2.7, -3.05, 24)] : []),
-    ...(stopHole ? [at((game) => game.time > 4.6, 1.1, 18.9)] : []),
-    at(settled, -0.3, drop),
+    ...(bridge === false ? [] : [at((game) => game.time > bridge, -0.9, 27.7)]),
+    ...(cushion ? [at((game) => game.time > 3.2, -3.1, 24.3)] : []),
+    ...(toss === false ? [] : [at(typeof toss === "number" ? (game) => game.time > toss : coming, -1.3, 23.5)]),
+    ...(stopHole ? [at((game) => game.egg.x > 1.6 && game.egg.y + STOREY > 22, 0.6, 18.9)] : []),
   ];
 }
 
@@ -66,11 +67,32 @@ export function millPlan(options: { sluice?: number | false; cushion?: boolean |
   ];
 }
 
+/**
+ * The fourth screen played properly. The best way is to wait: the brake goes on as the door
+ * carries him past the bottom, and he comes out on the left with nothing between him and the
+ * nest. The other way is to brake at once, come out on the right, and then put a bale under
+ * the long drop at the wall and one in the hole. `brake` as a number is how far round the door
+ * has gone (in quarters) when the bale is thrown.
+ */
+export function butteryPlan(options: { brake?: "left" | "right" | number | false; cushion?: boolean; stopHole?: boolean } = {}): Move[] {
+  const { brake = "left", cushion = true, stopHole = true } = options;
+  const at = (when: Move["when"], x: number, y: number): Move => ({ when, x, y: y - STOREY * 3 });
+  const quarters = brake === "left" ? 2.1 : brake === "right" ? 0.05 : brake;
+  const round = (game: Game): number => -(game.doors[0]?.turn ?? 0) / (Math.PI / 2);
+  const out = (game: Game): boolean => game.egg.x > 1.3 && game.egg.y + STOREY * 3 < 25.2;
+  return [
+    ...(quarters === false ? [] : [at((game) => round(game) >= quarters, 2.75, 28.6)]),
+    ...(cushion ? [at(out, 3.2, 21.2)] : []),
+    ...(stopHole ? [at((game) => game.egg.x > 2.2 && game.egg.y + STOREY * 3 < 23.5, 0.4, 19.2)] : []),
+  ];
+}
+
 /** Each room played properly, by its key. */
 export const PLANS: Record<string, () => Move[]> = {
   larder: () => larderPlan(),
   scullery: () => sculleryPlan(),
   mill: () => millPlan(),
+  buttery: () => butteryPlan(),
 };
 
 /** A driver for tests and `?auto`: makes each move, in order, as soon as its moment comes. */

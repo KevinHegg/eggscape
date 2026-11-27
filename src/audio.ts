@@ -349,6 +349,33 @@ export class Sound {
     this.tone("sine", 140, 50, 0.3, 0.5);
   }
 
+  /** The hook being let down: a ratchet, click by click. */
+  ratchet(): void {
+    for (let click = 0; click < 9; click += 1) this.tone("square", 760 - click * 28, 520 - click * 20, 0.035, 0.16, click * 0.11);
+    this.hiss("bandpass", 1500, 900, 1, 0.08);
+  }
+
+  /** The hook has him: the prongs shut, and the winch takes him up. */
+  winch(): void {
+    this.tone("square", 300, 200, 0.06, 0.3);
+    this.hiss("highpass", 3600, 2400, 0.06, 0.3);
+    this.tone("sawtooth", 110, 520, 1, 0.2, 0.25);
+    for (let click = 0; click < 10; click += 1) this.tone("square", 500 + click * 60, 420 + click * 50, 0.03, 0.12, 0.25 + click * 0.085);
+  }
+
+  /** The revolving door's clockwork taking up: a clunk and a run of ticks. */
+  clockwork(): void {
+    this.tone("square", 140, 90, 0.1, 0.3);
+    for (let tick = 0; tick < 6; tick += 1) this.tone("triangle", 1300, 1100, 0.03, 0.14, 0.12 + tick * 0.25);
+  }
+
+  /** A shutter drawn back, or a cage shut: iron on iron. */
+  shutter(): void {
+    this.tone("square", 220, 110, 0.12, 0.3);
+    this.tone("sine", 1320, 1300, 0.3, 0.16);
+    this.hiss("highpass", 3800, 2200, 0.08, 0.3);
+  }
+
   /** Home: a fanfare and the Empress Hen. */
   fanfare(): void {
     for (const [note, at, length] of [[523, 0, 0.14], [659, 0.14, 0.14], [784, 0.28, 0.14], [1047, 0.42, 0.5], [784, 0.62, 0.12], [1047, 0.74, 0.7]] as const) {
