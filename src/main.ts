@@ -1,7 +1,7 @@
 import "./style.css";
 import { Sound } from "./audio";
 import { Stage } from "./render/stage";
-import { Game, IDLE, LEVELS, STEP, loadPhysics, type GameEvent, type Input, type LevelDef } from "./sim/kitchen";
+import { BOIL, Game, IDLE, LEVELS, STEP, loadPhysics, type GameEvent, type Input, type LevelDef } from "./sim/kitchen";
 import { PLANS, pilot, seated } from "./sim/pilot";
 
 const STORAGE_KEY = "eggscape:kitchen:v2";
@@ -20,7 +20,12 @@ function load(): Saved {
     const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}") as Partial<Saved>;
     const stars: Record<string, number> = {};
     for (const level of LEVELS) stars[level.key] = Math.min(3, Math.max(0, Number(raw.stars?.[level.key]) || 0));
-    return { stars, reached: Math.min(LEVELS.length - 1, Math.max(0, Number(raw.reached) || 0)), muted: Boolean(raw.muted) };
+    let reached = Math.min(LEVELS.length - 1, Math.max(0, Number(raw.reached) || 0));
+    // A room that has been done is a roost reached, even if the house has grown under it since.
+    LEVELS.forEach((level, index) => {
+      if ((stars[level.key] ?? 0) > 0) reached = Math.max(reached, Math.min(LEVELS.length - 1, index + 1));
+    });
+    return { stars, reached, muted: Boolean(raw.muted) };
   } catch {
     return { stars: {}, reached: 0, muted: false };
   }
@@ -83,6 +88,12 @@ let trodden: "threw" | "empty" | null = null;
 let crushed = false;
 /** A mine went off under him. */
 let mined = false;
+/** In the bakehouse: he is in the embers; where bales have burned away; and whether the kettle has blown, and with him on it. */
+let toasted = false;
+let ashes: number[] = [];
+let blown: "threw" | "empty" | null = null;
+/** In the pastry: the blackbirds are out, and whether they took him. */
+let flown: "took" | "empty" | null = null;
 /** He is being shown coming down from the roost above, and cannot be let go until he has landed. */
 let arriving = false;
 
@@ -95,6 +106,8 @@ const OPENING: Record<string, [string, string]> = {
   cistern: ["raft", "The cistern is dry. A bale in the bottom of it, before he drops in"],
   servery: ["hoist", "The lift is at the bottom. A bale on the gold pan hauls it up a landing, and its roof is his bridge"],
   cellar: ["barrel", "Not yet. Once he is down in the bucket, a bale on the gold pan lets the barrel go"],
+  bakehouse: ["embers", "Straw burns: on embers a bale lasts four seconds. One in the tray in his shelf, now"],
+  pastry: ["jelly", "Each jelly throws him to the next, and the last throws him in the pan. A bale in a jelly stops it"],
 };
 
 /** What each room has in it, for the map. */
@@ -106,6 +119,8 @@ const FEATURE: Record<string, string> = {
   cistern: "A raft",
   servery: "A dumbwaiter",
   cellar: "A barrel",
+  bakehouse: "Embers and a kettle",
+  pastry: "Jellies and a pie",
 };
 
 function show(id: "title" | "result" | "run"): void {
@@ -196,6 +211,10 @@ function fresh(index = room, arrive: { x: number; y: number; turn: number } | nu
   trodden = null;
   crushed = false;
   mined = false;
+  toasted = false;
+  ashes = [];
+  blown = null;
+  flown = null;
   accumulator = 0;
   $("toast").replaceChildren();
   drawHud(game);
@@ -340,6 +359,37 @@ function narrate(event: GameEvent, current: Game): void {
         toast(event.near ? "Too close!" : "Boom!", event.near ? "bad" : "");
       }
       break;
+    case "kindle":
+      sound.fuse();
+      if (event.kettle) sound.whistle(BOIL);
+      break;
+    case "ash":
+      ashes.push(event.x);
+      sound.sizzle();
+      break;
+    case "toast":
+      toasted = true;
+      break;
+    case "blow":
+      blown = event.threw ? "threw" : "empty";
+      sound.pop();
+      if (event.threw) hint("grill", "Now, while he is in the air: a bale in the embers ahead of him");
+      else toast("It blew without him", "bad");
+      break;
+    case "boing":
+      sound.boing();
+      break;
+    case "set":
+      sound.squelch();
+      break;
+    case "birds":
+      flown = event.took ? "took" : "empty";
+      sound.birds();
+      if (!event.took) toast("They have flown without him", "bad");
+      break;
+    case "drop":
+      sound.cluck();
+      break;
     case "unbar":
       unbarred = true;
       sound.shutter();
@@ -353,7 +403,8 @@ function narrate(event: GameEvent, current: Game): void {
     case "fling":
       flung = true;
       sound.seesaw();
-      if (holeOpen(current)) hint("hole", "Now stop that hole, before he rolls into it");
+      // (A jelly's throw is a fling too, and no bale stops the pan it ends in.)
+      if (holeOpen(current) && current.level.jellies.length === 0 && current.level.kettles.length === 0) hint("hole", "Now stop that hole, before he rolls into it");
       break;
     case "turning":
       sound.clockwork();
@@ -437,6 +488,12 @@ function coach(current: Game): void {
   // In the cellar, the barrel is let go when he is in the bucket, and not before.
   const barrel = current.barrels[0];
   if (barrel && barrel.state === "chocked" && inBucket(current) && current.idle > 0.3) hint("release", "Now: a bale on the gold pan, and the barrel goes over his head");
+  // In the bakehouse, the kettle wants its fire once he is on the lid, and not before.
+  const kettle = current.kettles[0];
+  if (kettle && kettle.on && kettle.heat === 0 && current.idle > 0.3) hint("boil", "He is on the lid. A bale in the fire under the kettle, and it will boil");
+  // In the pastry, the pie is opened once he is on the crust.
+  const pie = current.pies[0];
+  if (pie && pie.on && current.idle > 0.3) hint("pie", "He is on the pie. A bale on the gold pan lets the blackbirds out");
   // In the scullery, once the gap is bridged, the long drop at the far wall is next; and then
   // the see-saw, which does not wait for him.
   if (current.level.key === "scullery") {
@@ -463,7 +520,7 @@ function verdict(current: Game): { eyebrow: string; title: string; line: string 
         if (current.cracks > 0) return { eyebrow: "Safe on the roost", title: current.level.name, line: `Cracked, but the hen will sit on him until he is mended. Whatever happens in ${below}, he starts again from here.` };
         return { eyebrow: "Safe on the roost", title: current.level.name, line: `Whole, though it took most of the straw. Whatever happens in ${below}, he starts again from here.` };
       }
-      if (current.stars === 3) return { eyebrow: "Home", title: "Not a mark on him", line: "Into the nest, whole, and with straw to spare. The Empress Hen has counted him twice." };
+      if (current.stars === 3) return { eyebrow: "Home", title: "Not a mark on him", line: "Set down in the nest by four and twenty blackbirds, whole, and with straw to spare. The Empress Hen has counted him twice." };
       if (current.cracks > 0) return { eyebrow: "Home", title: "Home, and cracked", line: flung && lastKnock > 0 ? "He met something harder than straw on the way. A gentler throw, or a bale where he hit." : "He is home, with a crack to show his mother." };
       return { eyebrow: "Home", title: "Home", line: `Whole, but it took all the straw in the room. Keep ${spare === 1 ? "one bale" : `${spare} bales`} back for the third star.` };
     case "broken":
@@ -480,6 +537,17 @@ function verdict(current: Game): { eyebrow: string; title: string; line: string 
       }
       return { eyebrow: "A great fall", title: "Humpty Dumpty", line: overAt < 4 ? "A long drop, and nothing under him. Tap the floor where he will come down, and do it early: the bale takes a moment." : "That was harder than a shell can take. Straw and sacks are soft; wood, stone and iron are not." };
     case "fried":
+      if (toasted) {
+        const egg = current.egg;
+        return ashes.some((x) => Math.abs(x - egg.x) < 1.2)
+          ? { eyebrow: "The Queen's breakfast", title: "Roasted", line: "That bale had burned away before he was over it. Straw lasts four seconds on embers: throw it when he is nearly there, not before." }
+          : { eyebrow: "The Queen's breakfast", title: "Roasted", line: "Into the embers. A bale in the tray is a floor for as long as it burns, which is four seconds: long enough, if it is thrown as he comes to it." };
+      }
+      if (current.level.jellies.length > 0) {
+        return current.jellies.some((jelly) => jelly.set)
+          ? { eyebrow: "The Queen's breakfast", title: "Sunny side up", line: "A jelly that is stopped only lets him down on to the next one, and the last one still threw him in the pan. It is the last one that wants the bale." }
+          : { eyebrow: "The Queen's breakfast", title: "Sunny side up", line: "The last jelly threw him clean over the pie and into the pan. A bale in that jelly stops it: then he only rolls off it, on to the pie." };
+      }
       if (friedHung && stoppedAt === "bottom") {
         return {
           eyebrow: "The Queen's breakfast",
@@ -514,6 +582,17 @@ function verdict(current: Game): { eyebrow: string; title: string; line: string 
       }
       if (stoppedAt === "right" && reentered) {
         return { eyebrow: "The Queen's hook", title: "Hooked", line: "Out on the right again, and the see-saw has thrown already. The second time round, brake as he passes the bottom: the bar is off the left-hand shutter now." };
+      }
+      if (current.kettles.length > 0 && current.kettles[0]!.on) {
+        return blown === "empty"
+          ? { eyebrow: "The Queen's hook", title: "Hooked", line: "The kettle boiled before he was on it, and blew its lid at nothing. Light the fire once he is sitting on the lid: it takes two seconds to boil." }
+          : { eyebrow: "The Queen's hook", title: "Hooked", line: "He sat on the kettle's lid until the hook came down. A bale in the fire under it, and in two seconds the lid goes, and he with it." };
+      }
+      if (current.pies.length > 0 && flown === "empty") {
+        return { eyebrow: "The Queen's hook", title: "Baked in a pie", line: "The pie was opened before he was on it, and the blackbirds went without him. Wait until he is sitting on the crust, and then the gold pan." };
+      }
+      if (current.pies.length > 0 && current.pies[0]!.on) {
+        return { eyebrow: "The Queen's hook", title: "Hooked", line: "He sat on the pie until the hook came down. A bale on the gold pan opens it, and the blackbirds do the rest." };
       }
       if (current.lifts.length > 0) {
         const lift = current.lifts[0]!;
@@ -713,7 +792,7 @@ function drawRoom(g: Element, level: LevelDef, index: number): void {
     mark(g, "rect", { x: lift.x - lift.half, y: lift.floor, width: lift.half * 2, height: lift.tall, fill: "#7a4e22" });
   }
   for (const block of level.blocks) {
-    if (block.look === "wall") continue;
+    if (block.look === "wall" || block.look === "bare") continue;
     const ink = MAP_INK[block.look] ?? "#8d8a84";
     if (block.h <= 0.6 && block.w > block.h) {
       const dx = (Math.cos(block.turn) * block.w) / 2;
@@ -731,6 +810,18 @@ function drawRoom(g: Element, level: LevelDef, index: number): void {
   for (const door of level.doors) mark(g, "ellipse", { ...line, cx: door.x, cy: door.y, rx: door.r, ry: door.r, stroke: "#4a2f14", "stroke-width": 2.4 });
   for (const barrel of level.barrels) mark(g, "ellipse", { cx: barrel.x, cy: barrel.y, rx: barrel.r, ry: barrel.r, fill: "#7a4e22" });
   for (const pit of level.pits) mark(g, "rect", { x: pit.x - pit.w / 2, y: pit.pan - 0.5, width: pit.w, height: 0.9, fill: "#cf3420" });
+  // Embers, a kettle, jellies and a pie.
+  for (const hearth of level.hearths) {
+    const dx = (Math.cos(hearth.turn) * hearth.w) / 2;
+    const dy = (Math.sin(hearth.turn) * hearth.w) / 2;
+    mark(g, "line", { ...line, x1: hearth.x - dx, y1: hearth.y - dy, x2: hearth.x + dx, y2: hearth.y + dy, stroke: "#e2571c", "stroke-width": 3.4 });
+  }
+  for (const kettle of level.kettles) mark(g, "ellipse", { cx: kettle.x, cy: kettle.y - 0.9, rx: 0.95, ry: 0.95, fill: "#b5651d" });
+  level.jellies.forEach((jelly, each) => mark(g, "ellipse", { cx: jelly.x, cy: jelly.y - 0.3, rx: jelly.w / 2, ry: 0.55, fill: ["#d8283c", "#5fb84a", "#8a4fc0"][each % 3]! }));
+  for (const pie of level.pies) {
+    mark(g, "rect", { x: pie.x - pie.w / 2 - 0.15, y: pie.y - pie.deep, width: pie.w + 0.3, height: pie.deep, fill: "#24439a" });
+    mark(g, "ellipse", { cx: pie.x, cy: pie.y, rx: pie.w / 2, ry: 0.4, fill: "#c98a3a" });
+  }
   // A mine: its pennant.
   for (const mine of level.mines) {
     mark(g, "path", { d: `M${mine.x} ${mine.y} V${mine.y + 2.6} L${mine.x + 1.1} ${mine.y + 2} L${mine.x} ${mine.y + 1.4}`, fill: "#cf3420", stroke: "#1d1512", "stroke-width": 1, "vector-effect": "non-scaling-stroke" });

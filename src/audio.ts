@@ -244,6 +244,42 @@ export class Sound {
     this.tone("sine", 260, 90, 0.14, 0.3, 0.02);
   }
 
+  /** A kettle coming to the boil: a whistle that climbs for as long as it takes, and no longer. */
+  whistle(length: number): void {
+    this.tone("sine", 900, 2500, length, 0.16);
+    this.tone("sine", 1810, 5000, length, 0.05);
+    this.hiss("highpass", 3000, 7000, length, 0.14);
+  }
+
+  /** The lid going. */
+  pop(): void {
+    this.tone("sine", 320, 60, 0.22, 0.9);
+    this.hiss("bandpass", 900, 5200, 0.6, 0.7);
+    this.tone("triangle", 1500, 700, 0.5, 0.18, 0.05);
+  }
+
+  /** A jelly throwing something: down, and up, and a wobble after. */
+  boing(): void {
+    this.tone("sine", 240, 110, 0.07, 0.5);
+    this.tone("sine", 130, 520, 0.24, 0.5, 0.06);
+    for (let index = 0; index < 3; index += 1) this.tone("sine", 300 - index * 40, 380 - index * 40, 0.07, 0.16 - index * 0.04, 0.3 + index * 0.09);
+  }
+
+  /** A bale going into a jelly. */
+  squelch(): void {
+    this.hiss("lowpass", 1400, 240, 0.3, 0.5);
+    this.tone("sine", 210, 70, 0.26, 0.4);
+  }
+
+  /** Four and twenty blackbirds, all at once. */
+  birds(): void {
+    this.hiss("bandpass", 600, 2400, 0.9, 0.35);
+    for (let index = 0; index < 14; index += 1) {
+      const note = 1900 + ((index * 577) % 1500);
+      this.tone("sine", note, note * (index % 2 ? 1.35 : 0.75), 0.08, 0.14, index * 0.07 + (index % 3) * 0.02);
+    }
+  }
+
   /** A fuse catching: a spit and a fizz. */
   fuse(): void {
     this.hiss("highpass", 5200, 3000, 0.4, 0.22);

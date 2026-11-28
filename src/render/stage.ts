@@ -148,6 +148,16 @@ export class Stage {
   /** The barrel, its chock and pan, the treadle's lever, the crates, and what is left of them. */
   /** The mines: each as it stands, and the scorch it leaves. */
   private charges: Array<{ root: pc.Entity; scorch: pc.Entity; spark: pc.Entity }> = [];
+  /** The trays of embers: the flames over each, which show while a bale burns there. */
+  private fires: Array<{ flames: pc.Entity[]; x: number; y: number }> = [];
+  /** The black that creeps up a burning bale. */
+  private chars = new Map<number, pc.Entity>();
+  private boilers: Array<{ pot: pc.Entity; lid: pc.Entity; x: number; y: number }> = [];
+  private jells: Array<{ dome: pc.Entity; straw: pc.Entity }> = [];
+  private pasties: Array<{ crust: pc.Entity; crumbs: pc.Entity; x: number; y: number }> = [];
+  /** The blackbirds: where they are gathered, and since when they have been on their own. */
+  private birds: Array<{ root: pc.Entity; wings: pc.Entity[]; seed: number }> = [];
+  private flock = { x: 0, y: 0, loose: -1 };
   private kegs: Array<{ def: BarrelDef; keg: pc.Entity; chock: pc.Entity; pan: pc.Entity; lever: pc.Entity; crates: pc.Entity; lid: pc.Entity; kick: number; k: number }> = [];
   private flames: pc.Entity[] = [];
   private fried: pc.Entity | null = null;
@@ -269,6 +279,13 @@ export class Stage {
       steam: this.paint("steam", new pc.Color(0.95, 0.95, 0.95), { opacity: 0.5 }),
       vellum: this.paint("vellum", INK.vellum),
       ember: this.paint("ember", new pc.Color(0.7, 0.2, 0.08), { glow: 0.7 }),
+      char: this.paint("char", new pc.Color(0.09, 0.07, 0.06)),
+      crust: this.paint("crust", new pc.Color(0.8, 0.56, 0.26), { gloss: 0.35 }),
+      crustDark: this.paint("crust-dark", new pc.Color(0.55, 0.33, 0.14), { gloss: 0.3 }),
+      china: this.paint("china", new pc.Color(0.9, 0.9, 0.86), { gloss: 0.8 }),
+      jellyRed: this.paint("jelly-red", new pc.Color(0.86, 0.16, 0.24), { gloss: 0.95, glow: 0.35, opacity: 0.86 }),
+      jellyGreen: this.paint("jelly-green", new pc.Color(0.38, 0.74, 0.3), { gloss: 0.95, glow: 0.35, opacity: 0.86 }),
+      jellyPlum: this.paint("jelly-plum", new pc.Color(0.56, 0.28, 0.78), { gloss: 0.95, glow: 0.35, opacity: 0.86 }),
       water: this.paint("water", INK.water, { gloss: 0.9, glow: 0.45, opacity: 0.88 }),
       pool: this.paint("pool", INK.water, { gloss: 0.9, glow: 0.12, opacity: 0.36 }),
       spray: this.paint("spray", new pc.Color(0.8, 0.9, 1), { glow: 0.5 }),
@@ -420,6 +437,13 @@ export class Stage {
     this.hoists = [];
     this.kegs = [];
     this.charges = [];
+    this.fires = [];
+    this.chars.clear();
+    this.boilers = [];
+    this.jells = [];
+    this.pasties = [];
+    this.birds = [];
+    this.flock = { x: 0, y: 0, loose: -1 };
     this.holdAsk = null;
     if (!arrive) {
       this.snap = true;
@@ -438,6 +462,10 @@ export class Stage {
       this.buildLifts(level, here);
       this.buildBarrels(level, here);
       this.buildMines(level, here);
+      this.buildHearths(level, here);
+      this.buildKettles(level, here);
+      this.buildJellies(level, here);
+      this.buildPies(level, here);
       this.buildCages(level);
       this.buildPans(level);
       this.buildNest(level, here);
@@ -451,6 +479,7 @@ export class Stage {
     this.ghost.enabled = false;
     for (const socket of game.level.sockets) {
       if (!socket.seat) continue;
+      if (game.level.jellies.some((jelly) => Math.hypot(jelly.x - socket.x, jelly.y - socket.seat!.y) < 0.8)) continue;
       const entity = this.baleShape(this.scene, m.socket);
       entity.setLocalPosition(socket.x, socket.seat.y, 0);
       entity.setLocalEulerAngles(0, 0, socket.seat.turn * RAD);
@@ -513,6 +542,8 @@ export class Stage {
 
   private buildBlock(block: Block): void {
     const m = this.m;
+    // A machine draws its own.
+    if (block.look === "bare") return;
     const root = this.group(block.look, this.scene, [block.x, block.y, 0], [0, 0, block.turn * RAD]);
     if (block.look === "wall") {
       this.shape("box", root, [0, 0, -0.15], [block.w, block.h, DEPTH + 0.5], m.stoneDark, [0, 0, 0], true);
@@ -1036,6 +1067,125 @@ export class Stage {
     }
   }
 
+  /** A tray of embers: a bed of coals, and flames that only stand up while a bale is burning there. */
+  private buildHearths(level: LevelDef, here: boolean): void {
+    const m = this.m;
+    for (const def of level.hearths) {
+      const root = this.group("hearth", this.scene, [def.x, def.y, 0], [0, 0, def.turn * RAD]);
+      this.shape("box", root, [0, 0.04, 0], [def.w - 0.04, 0.1, 1.36], m.ember);
+      const coals = Math.round(def.w / 0.2);
+      for (let index = 0; index < coals; index += 1) {
+        const at = -def.w / 2 + 0.12 + (index / (coals - 1)) * (def.w - 0.24);
+        const paint = index % 3 === 0 ? m.fire : index % 3 === 1 ? m.ember : m.char;
+        this.shape("sphere", root, [at, 0.1, ((index * 7) % 5) * 0.24 - 0.48], [0.2, 0.13, 0.2], paint);
+      }
+      const flames = [-0.36, -0.12, 0.12, 0.36].map((along, index) => {
+        const flame = this.shape("cone", root, [along * def.w, 0.5, index % 2 ? 0.5 : -0.45], [0.3, 0.8, 0.2], index % 2 ? m.fire : m.gold);
+        flame.enabled = false;
+        return flame;
+      });
+      if (here) this.fires.push({ flames, x: def.x, y: def.y });
+    }
+  }
+
+  /** A copper kettle on an iron fire-box: its lid is a cushion, and the fire-box stands open at the front. */
+  private buildKettles(level: LevelDef, here: boolean): void {
+    const m = this.m;
+    for (const def of level.kettles) {
+      const hearth = level.hearths[def.hearth];
+      if (!hearth) continue;
+      const far = Math.sign(def.toss.x) || 1;
+      // The fire-box: a floor, two sides and a back plate that holds it to the wall.
+      this.shape("box", this.scene, [hearth.x, hearth.y - 0.125, 0], [2.16, 0.25, 1.6], m.iron, [0, 0, 0], true);
+      for (const side of [-1, 1]) this.shape("box", this.scene, [hearth.x + side * 0.98, hearth.y + 0.375, 0], [0.2, 0.75, 1.6], m.iron, [0, 0, 0], true);
+      this.shape("box", this.scene, [hearth.x, hearth.y + 0.3, BACK + 0.3], [2.5, 1.5, 0.12], m.stoneDark, [0, 0, 0], true);
+      for (const side of [-1, 1]) this.shape("box", this.scene, [hearth.x + side * 0.6, hearth.y - 0.5, BACK + 0.7], [0.12, 0.7, 0.12], m.iron, [35, 0, 0], true);
+      // The kettle rocks as it comes to the boil.
+      const pot = this.group("kettle", this.scene, [def.x, hearth.y + 0.75, 0]);
+      const tall = def.y - 0.12 - (hearth.y + 0.75);
+      this.shape("box", pot, [0, 0.06, 0], [1.74, 0.12, 1.5], m.iron);
+      this.shape("sphere", pot, [0, tall * 0.5, 0], [1.72, tall * 1.08, 1.5], m.copper);
+      this.shape("cylinder", pot, [0, tall * 0.2, 0], [1.6, 0.08, 1.6], m.gold);
+      // The spout, on the side he comes from.
+      this.shape("box", pot, [-far * 0.98, tall * 0.62, 0.35], [0.7, 0.2, 0.24], m.copper, [0, 0, far * 38]);
+      this.shape("cylinder", pot, [-far * 1.24, tall * 0.83, 0.35], [0.26, 0.1, 0.26], m.gold, [0, 0, far * 38]);
+      const lid = this.group("lid", this.scene, [def.x, def.y, 0]);
+      this.shape("cylinder", lid, [0, -0.1, 0], [def.w + 0.2, 0.12, 1.45], m.copper);
+      this.shape("box", lid, [0, -0.02, 0], [def.w - 0.06, 0.06, 1.2], m.vermilion);
+      this.shape("box", lid, [0, 0.01, 0], [def.w - 0.36, 0.02, 1], m.gold);
+      this.shape("box", lid, [far * (def.w / 2 - 0.06), 0.2, 0], [0.12, 0.4, 1.3], m.vermilion);
+      if (here) this.boilers.push({ pot, lid, x: def.x, y: def.y });
+    }
+  }
+
+  /** A jelly on a china stand: it shivers when it has thrown something, and sags with a bale in it. */
+  private buildJellies(level: LevelDef, here: boolean): void {
+    const m = this.m;
+    const paints = [m.jellyRed, m.jellyGreen, m.jellyPlum];
+    level.jellies.forEach((def, index) => {
+      const root = this.group("jelly", this.scene, [def.x, def.y, 0], [0, 0, def.turn * RAD]);
+      // The stand: a plate, a stem, and a foot against the wall.
+      this.shape("cylinder", root, [0, -0.62, 0], [def.w + 0.24, 0.07, 1.7], m.china, [0, 0, 0], true);
+      this.shape("cylinder", root, [0, -0.58, 0], [def.w + 0.3, 0.03, 1.76], m.gold, [0, 0, 0], true);
+      this.shape("box", this.scene, [def.x, def.y - 0.9, BACK + 0.55], [0.16, 0.5, 1.1], m.china, [0, 0, 0], true);
+      const dome = this.group("dome", root, [0, -0.6, 0]);
+      const paint = paints[index % paints.length]!;
+      this.shape("box", dome, [0, 0.28, 0], [def.w, 0.56, 1.4], paint);
+      this.shape("sphere", dome, [0, 0.52, 0], [def.w * 0.98, 0.42, 1.38], paint);
+      for (const along of [-0.34, 0, 0.34]) this.shape("sphere", dome, [along * def.w, 0.64, 0.5], [0.26, 0.2, 0.3], paint);
+      const straw = this.baleShape(root);
+      straw.setLocalPosition(0, -0.08, 0.05);
+      straw.setLocalScale(0.94, 0.8, 1.04);
+      straw.enabled = false;
+      if (here) this.jells.push({ dome, straw });
+    });
+  }
+
+  /** A pie in a blue dish on a stand, the gold pan that opens it, and the blackbirds inside. */
+  private buildPies(level: LevelDef, here: boolean): void {
+    const m = this.m;
+    for (const def of level.pies) {
+      const wide = def.w + 0.3;
+      this.shape("box", this.scene, [def.x, def.y - def.deep - 0.1, 0], [wide, 0.2, 1.6], m.lapis, [0, 0, 0], true);
+      this.shape("box", this.scene, [def.x - def.w / 2 - 0.075, def.y - def.deep / 2 + 0.05, 0], [0.15, def.deep + 0.1, 1.6], m.lapis, [0, 0, 0], true);
+      this.shape("box", this.scene, [def.x + def.w / 2 + 0.075, def.y - def.deep / 2 + 0.175, 0], [0.15, def.deep + 0.35, 1.6], m.lapis, [0, 0, 0], true);
+      this.shape("box", this.scene, [def.x, def.y - def.deep / 2, 0.82], [wide, def.deep, 0.06], m.lapis, [0, 0, 0], true);
+      this.shape("box", this.scene, [def.x, def.y - def.deep * 0.5, 0.86], [wide * 0.9, 0.08, 0.03], m.gold, [0, 0, 0], true);
+      const crust = this.group("crust", this.scene, [def.x, def.y, 0]);
+      this.shape("box", crust, [0, -0.07, 0], [def.w, 0.14, 1.5], m.crust);
+      for (let index = 0; index < 7; index += 1) this.shape("sphere", crust, [-def.w / 2 + 0.1 + index * ((def.w - 0.2) / 6), -0.04, 0.72], [0.24, 0.2, 0.2], m.crustDark);
+      for (const along of [-0.3, 0, 0.3]) this.shape("box", crust, [along * def.w, 0.005, 0.1], [0.05, 0.02, 0.5], m.crustDark, [0, 25, 0]);
+      const crumbs = this.group("crumbs", this.scene, [def.x, def.y, 0]);
+      for (const [x, lean] of [[-0.55, 55], [-0.2, -20], [0.5, -50]] as const) this.shape("box", crumbs, [x * def.w * 0.9, -0.12, 0.3], [0.5, 0.1, 0.6], m.crust, [0, 0, lean]);
+      this.shape("box", crumbs, [0, -def.deep + 0.05, 0], [def.w, 0.1, 1.5], m.crustDark);
+      crumbs.enabled = false;
+      // The gold pan on its bracket, and the cord from it down to the pie.
+      const pan = def.pan;
+      this.shape("box", this.scene, [pan.x, pan.y - 0.05, 0], [pan.w, 0.1, 1.3], m.gold, [0, 0, 0], true);
+      this.shape("box", this.scene, [pan.x, pan.y - 0.35, BACK + 0.6], [0.14, 0.5, 1.2], m.iron, [0, 0, 0], true);
+      const from = { x: pan.x - pan.w / 2, y: pan.y - 0.1 };
+      const to = { x: def.x + def.w / 2 + 0.1, y: def.y + 0.35 };
+      this.shape("box", this.scene, [(from.x + to.x) / 2, (from.y + to.y) / 2, -0.5], [Math.hypot(to.x - from.x, to.y - from.y), 0.04, 0.04], m.ink, [0, 0, Math.atan2(to.y - from.y, to.x - from.x) * RAD], true);
+      if (!here) continue;
+      this.pasties.push({ crust, crumbs, x: def.x, y: def.y });
+      this.flock = { x: def.x, y: def.y, loose: -1 };
+      for (let index = 0; index < 12; index += 1) {
+        const bird = this.group("blackbird", this.scene, [def.x, def.y, 0]);
+        this.shape("sphere", bird, [0, 0, 0], [0.3, 0.2, 0.2], m.ink);
+        this.shape("sphere", bird, [0.14, 0.07, 0], [0.16, 0.15, 0.15], m.ink);
+        this.shape("cone", bird, [0.26, 0.06, 0], [0.07, 0.14, 0.07], m.gold, [0, 0, -90]);
+        this.shape("box", bird, [-0.2, 0.02, 0], [0.18, 0.03, 0.12], m.ink, [0, 0, 12]);
+        const wings = [-1, 1].map((side) => {
+          const wing = this.group("wing", bird, [0, 0.04, side * 0.08]);
+          this.shape("box", wing, [0, 0, side * 0.16], [0.2, 0.03, 0.32], m.ink);
+          return wing;
+        });
+        bird.enabled = false;
+        this.birds.push({ root: bird, wings, seed: index });
+      }
+    }
+  }
+
   /** A cage: iron bars across the front and the back of it, low enough to see him over. */
   private buildCages(level: LevelDef): void {
     const m = this.m;
@@ -1328,11 +1478,24 @@ export class Stage {
       }
       entity.setLocalPosition(bale.x, bale.y, 0);
       entity.setLocalEulerAngles(0, 0, bale.turn * RAD);
+      if (bale.burnt > 0) {
+        let char = this.chars.get(bale.id);
+        if (!char) {
+          char = this.shape("box", entity, [0, 0, 0], [BALE_W * 1.02, 0.01, 0.94], this.m.char);
+          this.chars.set(bale.id, char);
+        }
+        const up = Math.min(1, bale.burnt * 1.05) * BALE_H * 1.04;
+        char.setLocalScale(BALE_W * 1.02, up, 0.94);
+        char.setLocalPosition(0, -BALE_H * 0.52 + up / 2, 0);
+        // It sags as it goes.
+        entity.setLocalScale(1, 1 - 0.35 * bale.burnt * bale.burnt, 1);
+      }
     }
     for (const [id, entity] of this.bales) {
       if (live.has(id)) continue;
       entity.destroy();
       this.bales.delete(id);
+      this.chars.delete(id);
     }
 
     // Bales on their way in come from the audience's side of the missing wall.
@@ -1522,6 +1685,75 @@ export class Stage {
         onRoof.setLocalPosition(def.x, state.y + def.tall + 0.02 + (state.down + 0.5) * (BALE_H + 0.01), 0);
         onRoof.setLocalEulerAngles(0, 0, def.side * LIFT_TILT * RAD);
         onRoof.setLocalScale(pulse, pulse, 1);
+      }
+    });
+
+    game.hearths.forEach((state, index) => {
+      const fire = this.fires[index];
+      if (!fire) return;
+      fire.flames.forEach((flame, each) => {
+        flame.enabled = state.left > 0;
+        const lick = (0.55 + Math.abs(Math.sin(this.clock * 11 + each * 1.9)) * 0.7) * (0.45 + 0.55 * state.left);
+        flame.setLocalScale(0.3, lick, 0.2);
+        flame.setLocalPosition(flame.getLocalPosition().x, 0.55 + lick / 2, flame.getLocalPosition().z);
+      });
+      if (state.left > 0 && Math.random() < dt * 9) this.puff([fire.x + (Math.random() - 0.5) * 1.2, fire.y + 0.9, 0.2], Math.random() < 0.5 ? this.m.fire : this.m.steam, 0.2, 0.7, [(Math.random() - 0.5) * 0.6, 1.8 + Math.random(), 0]);
+    });
+
+    game.kettles.forEach((state, index) => {
+      const boiler = this.boilers[index];
+      if (!boiler) return;
+      // It rocks harder the nearer the boil, and steams at the spout.
+      boiler.pot.setLocalEulerAngles(0, 0, Math.sin(this.clock * 34) * 2.6 * state.heat * state.heat);
+      const far = Math.sign(state.def.toss.x) || 1;
+      if (state.heat > 0 && Math.random() < dt * (4 + 26 * state.heat)) {
+        this.puff([boiler.x - far * 1.3, boiler.y - 0.2, 0.35], this.m.steam, 0.2 + 0.25 * state.heat, 0.8, [-far * (0.6 + state.heat), 1.6 + 1.6 * state.heat, 0]);
+      }
+      // The lid goes up with a bang, turns over and comes down again.
+      const t = state.blew;
+      const up = t >= 0 && t < 1.3 ? Math.max(0, 7.5 * t - 5.8 * t * t) : 0;
+      const rattle = state.heat > 0.4 ? Math.abs(Math.sin(this.clock * 40)) * 0.05 * state.heat : 0;
+      boiler.lid.setLocalPosition(boiler.x - far * up * 0.25, boiler.y + up + rattle, up > 0 ? -0.6 * Math.min(1, up) : 0);
+      boiler.lid.setLocalEulerAngles(0, 0, up > 0 ? far * t * 290 : 0);
+    });
+
+    game.jellies.forEach((state, index) => {
+      const jell = this.jells[index];
+      if (!jell) return;
+      // A shiver that dies away; and for ever after a bale, a sag.
+      const t = state.threw;
+      const shiver = t >= 0 && t < 1.6 ? Math.exp(-3 * t) * Math.cos(t * 24) * 0.34 : Math.sin(this.clock * 2.3 + index) * 0.015;
+      const sag = state.set ? 0.82 : 1;
+      jell.dome.setLocalScale(1 - shiver * 0.5, (1 + shiver) * sag, 1);
+      jell.straw.enabled = state.set;
+    });
+
+    game.pies.forEach((state, index) => {
+      const pie = this.pasties[index];
+      if (!pie) return;
+      pie.crust.enabled = state.open < 0;
+      pie.crumbs.enabled = state.open >= 0;
+      // The crust heaves a little: there is something under it.
+      if (state.open < 0) pie.crust.setLocalPosition(pie.x, pie.y + Math.max(0, Math.sin(this.clock * 5.2)) * 0.025, 0);
+      const out = state.open >= 0;
+      if (out && game.flying) {
+        const egg = game.egg;
+        this.flock = { x: egg.x, y: egg.y, loose: -1 };
+      } else if (out && this.flock.loose < 0) {
+        this.flock.loose = this.clock;
+      }
+      const away = this.flock.loose < 0 ? 0 : this.clock - this.flock.loose;
+      for (const bird of this.birds) {
+        bird.root.enabled = out && away < 3.2;
+        if (!bird.root.enabled) continue;
+        const turn = bird.seed * 2.4 + this.clock * (2.2 + (bird.seed % 3) * 0.5);
+        const ring = 0.55 + (bird.seed % 4) * 0.16 + away * (1.2 + (bird.seed % 5) * 0.5);
+        const rise = away * (2.4 + (bird.seed % 3)) + 0.6 + Math.sin(turn * 1.7) * 0.22;
+        const x = this.flock.x + Math.cos(turn) * ring;
+        bird.root.setLocalPosition(x, this.flock.y + rise + Math.sin(turn) * 0.2, Math.sin(turn) * 0.8);
+        bird.root.setLocalEulerAngles(0, Math.sin(turn) > 0 ? 180 : 0, 0);
+        const flap = Math.sin(this.clock * 26 + bird.seed) * 55;
+        bird.wings.forEach((wing, side) => wing.setLocalEulerAngles((side === 0 ? 1 : -1) * flap, 0, 0));
       }
     });
 
@@ -1747,6 +1979,40 @@ export class Stage {
       case "splash":
         this.burst(event.x, event.y, m.spray, 18, 0.3, 4.4);
         this.shake = Math.max(this.shake, 0.2);
+        break;
+      case "kindle":
+        this.burst(event.x, event.y + 0.5, m.fire, 9, 0.3, 3);
+        this.burst(event.x, event.y + 0.5, m.gold, 5, 0.16, 4);
+        break;
+      case "ash":
+        this.burst(event.x, event.y, m.char, 12, 0.3, 2.2);
+        this.burst(event.x, event.y + 0.2, m.steam, 6, 0.5, 1.4);
+        break;
+      case "toast":
+        this.burst(event.x, event.y - 0.3, m.fire, 12, 0.3, 4);
+        break;
+      case "blow":
+        this.burst(event.x, event.y + 0.2, m.steam, 22, 0.7, 5.5);
+        this.burst(event.x, event.y + 0.2, m.spray, 10, 0.25, 7);
+        this.shake = Math.max(this.shake, 0.6);
+        break;
+      case "boing": {
+        const index = game.jellies.findIndex((jelly) => jelly.def.x === event.x && jelly.def.y === event.y);
+        this.burst(event.x, event.y + 0.2, [m.jellyRed, m.jellyGreen, m.jellyPlum][Math.max(0, index) % 3]!, 7, 0.22, 3.4);
+        this.shake = Math.max(this.shake, 0.12);
+        break;
+      }
+      case "set":
+        this.burst(event.x, event.y + 0.2, m.hay, 10, 0.34, 3);
+        this.burst(event.x, event.y + 0.2, m.hayDark, 5, 0.22, 2);
+        break;
+      case "birds":
+        this.burst(event.x, event.y + 0.1, m.crust, 12, 0.3, 5);
+        this.burst(event.x, event.y + 0.1, m.ink, 14, 0.14, 6.5);
+        this.shake = Math.max(this.shake, 0.3);
+        break;
+      case "drop":
+        this.burst(event.x, event.y + 0.6, m.ink, 8, 0.12, 3);
         break;
       case "blast":
         this.burst(event.x, event.y + 0.3, m.fire, 18, 0.55, 6.5);

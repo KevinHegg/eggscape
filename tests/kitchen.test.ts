@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { before, test } from "node:test";
-import { BUTTERY, CAGE, CELLAR, CISTERN, DOOR_LAPS, DOOR_TURN, Game, IDLE, LARDER, LEVELS, LIFT_SPEED, MILLROOM, RACE, RISE, SCULLERY, SEAT_IDLE, SERVERY, STEP, STOREY, WHEEL_TURN, loadPhysics, type GameEvent, type Input, type LevelDef } from "../src/sim/kitchen";
-import { GOOD_DROP, PLANS, butteryPlan, cellarPlan, cisternPlan, larderPlan, millPlan, pilot, sculleryPlan, serveryPlan, type Move } from "../src/sim/pilot";
+import { BAKEHOUSE, BOIL, BURN, BUTTERY, CAGE, CELLAR, CISTERN, DOOR_LAPS, DOOR_TURN, Game, IDLE, LARDER, LEVELS, LIFT_SPEED, MILLROOM, PASTRY, RACE, RISE, SCULLERY, SEAT_IDLE, SERVERY, STEP, STOREY, WHEEL_TURN, loadPhysics, type GameEvent, type Input, type LevelDef } from "../src/sim/kitchen";
+import { GOOD_DROP, PLANS, bakehousePlan, butteryPlan, cellarPlan, cisternPlan, larderPlan, millPlan, pastryPlan, pilot, sculleryPlan, serveryPlan, type Move } from "../src/sim/pilot";
 
 before(async () => {
   await loadPhysics();
@@ -785,4 +785,228 @@ test("mines: set off when he is nearly on it, it cracks him and throws him", () 
   assert.ok(blast && blast.by === "bale" && blast.near);
   assert.ok(game.cracks >= 1);
   assert.ok(game.stars < 3);
+});
+
+// ------------------------------------------------------------------ the bakehouse
+
+const bakehouse = (hands: (game: Game) => Input, limit = 40) => run(hands, limit, BAKEHOUSE);
+const at = (events: GameEvent[], type: GameEvent["type"]): number[] => events.flatMap((event, index) => (event.type === type ? [index] : []));
+
+test("bakehouse: three bales, each when it is wanted, get him to the roost whole, with one to spare", () => {
+  const { game, events } = bakehouse(pilot(bakehousePlan()));
+  assert.equal(game.phase, "home");
+  assert.equal(game.cracks, 0);
+  assert.equal(game.balesLeft, BAKEHOUSE.bales - 3);
+  assert.equal(game.stars, 3);
+  assert.equal(count(events, "kindle"), 3);
+  assert.deepEqual(events.flatMap((event) => (event.type === "blow" ? [event.threw] : [])), [true]);
+});
+
+test("bakehouse: left alone, he rolls into the embers in his own shelf", () => {
+  const { game, events } = bakehouse(() => ({}));
+  assert.equal(game.phase, "fried");
+  assert.equal(count(events, "toast"), 1);
+  assert.ok(Math.abs(game.egg.x - BAKEHOUSE.hearths[0]!.x) < 1);
+});
+
+test("bakehouse: straw on embers is alight as it lands, and ash four seconds after", () => {
+  const game = new Game(BAKEHOUSE);
+  const hearth = BAKEHOUSE.hearths[2]!;
+  game.start();
+  let lit = -1;
+  let gone = -1;
+  let first = true;
+  while (gone < 0 && game.time < 10) {
+    game.step(first ? { bale: { x: hearth.x, y: hearth.y + 0.5 } } : {});
+    first = false;
+    for (const event of game.drain()) {
+      if (event.type === "kindle") lit = game.time;
+      if (event.type === "ash") gone = game.time;
+    }
+    if (lit >= 0 && gone < 0) assert.ok(game.bales.some((bale) => bale.burnt > 0) || game.time - lit < 0.05, "it is seen to burn");
+  }
+  assert.ok(lit > 0 && lit < 0.7, `alight at ${lit.toFixed(2)}s`);
+  assert.ok(Math.abs(gone - lit - BURN) < 0.05, `burned for ${(gone - lit).toFixed(2)}s`);
+  assert.equal(game.bales.length, 0);
+  game.dispose();
+});
+
+test("bakehouse: the first tray gives him two seconds, and takes a bale thrown as he is let go", () => {
+  for (const tray of [0, 0.5, 1, 1.5, 2]) {
+    const { game } = bakehouse(pilot(bakehousePlan({ tray })));
+    assert.equal(game.phase, "home", `thrown at ${tray}s`);
+    assert.equal(game.stars, 3, `thrown at ${tray}s`);
+  }
+  assert.equal(bakehouse(pilot(bakehousePlan({ tray: 2.6 }))).game.phase, "fried");
+});
+
+test("bakehouse: nothing in the kettle's fire, and he sits on its lid until the hook comes", () => {
+  const { game, events } = bakehouse(pilot(bakehousePlan({ boil: false, grill: false })));
+  assert.equal(game.phase, "caught");
+  assert.equal(game.kettles[0]!.on, true);
+  assert.equal(count(events, "blow"), 0);
+  assert.ok(game.time > SEAT_IDLE, "and it is slow to come, as it is to any seat");
+});
+
+test("bakehouse: a fire lit before he is on the lid blows it off at nothing", () => {
+  const { game, events } = bakehouse(pilot(bakehousePlan({ boil: 2, grill: false })));
+  assert.deepEqual(events.flatMap((event) => (event.type === "blow" ? [event.threw] : [])), [false]);
+  assert.equal(game.phase, "caught");
+});
+
+test("bakehouse: the kettle boils two seconds after its fire is lit, and there are seconds to light it in", () => {
+  const { events } = bakehouse(pilot(bakehousePlan()));
+  const lit = events[at(events, "kindle")[1]!]!;
+  assert.ok(lit.type === "kindle" && lit.kettle);
+  for (const boil of [5, 7, 9, 11]) {
+    const game = new Game(BAKEHOUSE);
+    const hands = pilot(bakehousePlan({ boil }));
+    game.start();
+    let kindled = -1;
+    let blew = -1;
+    while (!game.over && game.time < 40) {
+      game.step(hands(game));
+      for (const event of game.drain()) {
+        if (event.type === "kindle" && event.kettle) kindled = game.time;
+        if (event.type === "blow") blew = game.time;
+      }
+    }
+    assert.ok(Math.abs(blew - kindled - BOIL) < 0.05, `lit at ${boil}s: boiled in ${(blew - kindled).toFixed(2)}s`);
+    assert.equal(game.phase, "home", `lit at ${boil}s`);
+    assert.equal(game.stars, 3, `lit at ${boil}s`);
+    game.dispose();
+  }
+});
+
+test("bakehouse: the hob's bale thrown with the kettle's has burned away before he is across the room", () => {
+  const { game, events } = bakehouse(pilot(bakehousePlan({ boil: 7, grill: 7 })));
+  assert.equal(game.phase, "fried");
+  assert.equal(count(events, "ash"), 3);
+  assert.equal(count(events, "toast"), 1);
+});
+
+test("bakehouse: thrown while he is in the air, or just down, it is there for him", () => {
+  // The lid goes at 9.6s; he is down on the hob at 11.3s, and at the tray a second and a half after that.
+  for (const grill of [8.9, 9.6, 10.4, 11.2, 12]) {
+    const { game } = bakehouse(pilot(bakehousePlan({ boil: 7, grill })));
+    assert.equal(game.phase, "home", `thrown at ${grill}s`);
+    assert.equal(game.cracks, 0, `thrown at ${grill}s`);
+  }
+});
+
+// ------------------------------------------------------------------ the pastry
+
+const pastry = (hands: (game: Game) => Input, limit = 40) => run(hands, limit, PASTRY);
+const throws = (list: Array<[number, number, number]>): ((game: Game) => Input) =>
+  pilot(list.map(([time, x, y]) => ({ when: (game: Game) => game.time >= time, x, y })));
+
+test("pastry: a bale in the last jelly and one on the gold pan get him home whole, with one to spare", () => {
+  const { game, events } = pastry(pilot(pastryPlan()));
+  assert.equal(game.phase, "home");
+  assert.equal(game.cracks, 0);
+  assert.equal(game.balesLeft, PASTRY.bales - 2);
+  assert.equal(game.stars, 3);
+  assert.equal(count(events, "boing"), 2);
+  assert.deepEqual(events.flatMap((event) => (event.type === "birds" ? [event.took] : [])), [true]);
+  assert.equal(count(events, "drop"), 1);
+});
+
+test("pastry: left alone, each jelly throws him to the next and the last throws him in the pan", () => {
+  const { game, events } = pastry(() => ({}));
+  assert.equal(game.phase, "fried");
+  assert.deepEqual(events.flatMap((event) => (event.type === "boing" ? [event.x] : [])), PASTRY.jellies.map((jelly) => jelly.x));
+});
+
+test("pastry: a bale sinks into a jelly, and is not there afterwards", () => {
+  const { game, events } = pastry(pilot(pastryPlan({ open: false })), 3);
+  assert.equal(count(events, "set"), 1);
+  assert.equal(game.bales.length, 0);
+  assert.deepEqual(game.jellies.map((jelly) => jelly.set), [false, false, true]);
+});
+
+test("pastry: stop the first or the second and he only rolls off it on to the next, and so to the pan", () => {
+  for (const which of [0, 1]) {
+    const { game, events } = pastry(pilot(pastryPlan({ which, open: false })));
+    assert.equal(game.phase, "fried", `jelly ${which + 1}`);
+    assert.equal(count(events, "boing"), 2, `jelly ${which + 1}`);
+  }
+});
+
+test("pastry: the wrong jelly costs a bale and not the run", () => {
+  const first = PASTRY.jellies[0]!;
+  const last = PASTRY.jellies[2]!;
+  const pan = PASTRY.pies[0]!.pan;
+  const { game } = pastry(throws([[0.5, first.x, first.y + 0.3], [2, last.x, last.y + 0.3], [9, pan.x, pan.y + 0.5]]));
+  assert.equal(game.phase, "home");
+  assert.equal(game.cracks, 0);
+  assert.equal(game.stars, 2);
+});
+
+test("pastry: the last jelly can be stopped at any time before he is on it", () => {
+  for (const set of [0, 1.5, 3, 4]) {
+    const { game } = pastry(pilot(pastryPlan({ set })));
+    assert.equal(game.phase, "home", `thrown at ${set}s`);
+    assert.equal(game.stars, 3, `thrown at ${set}s`);
+  }
+});
+
+test("pastry: open the pie before he is on it and the blackbirds go without him", () => {
+  for (const open of [1, 4]) {
+    const { game, events } = pastry(pilot(pastryPlan({ open })));
+    assert.deepEqual(events.flatMap((event) => (event.type === "birds" ? [event.took] : [])), [false], `opened at ${open}s`);
+    assert.equal(game.phase, "caught", `opened at ${open}s`);
+    assert.equal(game.caged, true, "an open pie is a cage");
+    assert.ok(game.time < 6 + CAGE + 1.5, "and the hook is quick about it");
+  }
+});
+
+test("pastry: he can sit on the crust for seconds before it is opened", () => {
+  for (const open of [5.4, 7, 9, 11, 13]) {
+    const { game } = pastry(pilot(pastryPlan({ open })));
+    assert.equal(game.phase, "home", `opened at ${open}s`);
+    assert.equal(game.cracks, 0, `opened at ${open}s`);
+  }
+  assert.equal(pastry(pilot(pastryPlan({ open: false }))).game.phase, "caught");
+});
+
+test("pastry: the blackbirds carry him clear of everything, and set him down over the nest", () => {
+  const game = new Game(PASTRY);
+  const hands = pilot(pastryPlan());
+  game.start();
+  let flew = 0;
+  let knocked = false;
+  while (!game.over && game.time < 40) {
+    game.step(hands(game));
+    for (const event of game.drain()) if (event.type === "knock") knocked = true;
+    if (game.flying) flew += STEP;
+  }
+  assert.ok(flew > 2 && flew < 3.2, `in the air ${flew.toFixed(2)}s`);
+  assert.equal(knocked, false);
+  assert.equal(game.phase, "home");
+  game.dispose();
+});
+
+test("pastry: a jelly that keeps getting him back has had enough the third time", () => {
+  // Two bales stood on the pie are a wall the last jelly throws him at, and he comes back off it.
+  const down = STOREY * 8;
+  const { game, events } = pastry(throws([[0.68, 1.34, 17.45 - down], [1.73, 1.29, 18.02 - down], [4.31, -1.7, 18 - down]]), 60);
+  assert.ok(game.over, "it ends");
+  assert.ok(events.some((event) => event.type === "set" && event.id === -1));
+});
+
+test("the house is nine rooms, each under the last, and only the bottom one is home", () => {
+  assert.equal(LEVELS.length, 9);
+  LEVELS.forEach((level, index) => {
+    assert.equal(level.top, LARDER.top - STOREY * index, level.name);
+    assert.equal(level.ends, index === LEVELS.length - 1 ? "nest" : "roost", level.name);
+    assert.ok(PLANS[level.key], `${level.name} has a plan`);
+  });
+});
+
+test("every room is done by its plan, whole and with straw to spare", () => {
+  for (const level of LEVELS) {
+    const { game } = run(pilot(PLANS[level.key]!()), 60, level);
+    assert.equal(game.phase, "home", level.name);
+    assert.equal(game.stars, 3, level.name);
+  }
 });

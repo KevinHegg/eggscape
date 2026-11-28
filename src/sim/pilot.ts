@@ -1,4 +1,4 @@
-import { BUTTERY, CISTERN, SCULLERY, STOREY, type Game, type Input, type LevelDef } from "./kitchen";
+import { BUTTERY, CISTERN, PASTRY, SCULLERY, STOREY, type Game, type Input, type LevelDef } from "./kitchen";
 
 /** What a player does on a screen, as a list of things to wait for and where to put the bale. */
 export interface Move {
@@ -152,6 +152,39 @@ export function cellarPlan(options: { release?: boolean | number; cushion?: bool
   ];
 }
 
+/**
+ * The eighth screen played properly: a bale in the tray of embers in the top shelf; one in the
+ * kettle's fire once he is sitting on its lid; and one in the tray in the hob once the lid has
+ * gone, and he with it. `boil` and `grill` as numbers are times to throw at, whatever he is doing.
+ */
+export function bakehousePlan(options: { tray?: number | false; boil?: boolean | number; grill?: boolean | number } = {}): Move[] {
+  const { tray = 0.5, boil = true, grill = true } = options;
+  const at = (when: Move["when"], x: number, y: number): Move => ({ when, x, y: y - STOREY * 7 });
+  const onLid = (game: Game): boolean => game.idle > 0.4 && game.kettles[0]?.on === true;
+  const blown = (game: Game): boolean => (game.kettles[0]?.blew ?? -1) >= 0;
+  return [
+    ...(tray === false ? [] : [at((game) => game.time > tray, -0.6, 28)]),
+    ...(boil === false ? [] : [at(boil === true ? onLid : (game) => game.time > boil, -0.2, 23)]),
+    ...(grill === false ? [] : [at(grill === true ? blown : (game) => game.time > grill, 0.9, 20.5)]),
+  ];
+}
+
+/**
+ * The ninth screen played properly: a bale in the last jelly, and one on the pie's gold pan
+ * once he is sitting on the crust. `which` is the jelly, counting from the top; `open` as a
+ * number is a time to throw at, whatever he is doing.
+ */
+export function pastryPlan(options: { set?: number | false; which?: number; open?: boolean | number } = {}): Move[] {
+  const { set = 1, which = 2, open = true } = options;
+  const jelly = PASTRY.jellies[which]!;
+  const pie = PASTRY.pies[0]!;
+  const onCrust = (game: Game): boolean => game.idle > 0.4 && game.pies[0]?.on === true;
+  return [
+    ...(set === false ? [] : [{ when: (game: Game) => game.time > set, x: jelly.x, y: jelly.y + 0.3 }]),
+    ...(open === false ? [] : [{ when: open === true ? onCrust : (game: Game) => game.time > open, x: pie.pan.x, y: pie.pan.y + 0.5 }]),
+  ];
+}
+
 /** Each room played properly, by its key. */
 export const PLANS: Record<string, () => Move[]> = {
   larder: () => larderPlan(),
@@ -161,6 +194,8 @@ export const PLANS: Record<string, () => Move[]> = {
   cistern: () => cisternPlan(),
   servery: () => serveryPlan(),
   cellar: () => cellarPlan(),
+  bakehouse: () => bakehousePlan(),
+  pastry: () => pastryPlan(),
 };
 
 /** A driver for tests and `?auto`: makes each move, in order, as soon as its moment comes. */

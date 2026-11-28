@@ -100,6 +100,14 @@ export const WASH = 0.4;
 export const MINE_W = 0.7;
 export const MINE_BLAST = 1.6;
 export const MINE_SHOVE = 4;
+/** Straw burns. A bale that comes to lie on embers is alight at once, and this long after that it is ash. */
+export const BURN = 4;
+/** A kettle over a fire that has burned this long blows its lid off, and whoever is sitting on it. */
+export const BOIL = 2;
+/** How long the blackbirds take to carry him where they are going. */
+export const FLOCK = 2.6;
+/** How fast he comes off a jelly that a bale has stopped. */
+const JELLY_CRAWL = 0.8;
 export const LIFT_SPEED = 3;
 export const LIFT_TILT = 0.1;
 /** How fast something has to be going to do damage: a barrel to straw and to him. */
@@ -132,7 +140,7 @@ export function eggOutline(count: number): Array<{ y: number; r: number }> {
   return outline;
 }
 
-export type Look = "stone" | "wood" | "board" | "wall" | "bed" | "nest" | "iron";
+export type Look = "stone" | "wood" | "board" | "wall" | "bed" | "nest" | "iron" | "bare";
 
 /** A fixed piece of the kitchen: a box with its centre, size and tilt (radians, anticlockwise). */
 export interface Block {
@@ -316,6 +324,60 @@ export interface BarrelDef {
   pit: { x: number; y: number; w: number };
 }
 
+/**
+ * A tray of embers let into a shelf or a floor: the middle of its bed, how the bed leans, and
+ * how wide it is. An egg that comes down on it is done. A bale that does is alight, and for as
+ * long as it burns it is as good a floor as any other bale.
+ */
+export interface HearthDef {
+  x: number;
+  y: number;
+  turn: number;
+  w: number;
+}
+
+/**
+ * A kettle with a fire-box under it. Its lid is a padded seat. A bale in the fire-box brings
+ * it to the boil, and then the lid goes, and whoever is on it.
+ */
+export interface KettleDef {
+  /** The middle of the top of the lid, and how wide it is. */
+  x: number;
+  y: number;
+  w: number;
+  /** Which of the room's hearths is its fire-box. */
+  hearth: number;
+  /** How he is thrown when it blows. */
+  toss: { x: number; y: number };
+}
+
+/**
+ * A jelly on a stand. Whatever comes down on it is thrown, and always the same way. A bale
+ * sinks into it and stops it: after that it is only something soft, with a lean to it.
+ */
+export interface JellyDef {
+  /** The middle of its top face, how wide it is, and how it leans. */
+  x: number;
+  y: number;
+  w: number;
+  turn: number;
+  toss: { x: number; y: number };
+}
+
+/**
+ * A pie with four and twenty blackbirds in it. Its crust is a padded seat. A bale on the pan
+ * opens it, and the birds take whoever is sitting on it by `way`, and let go at the end of it.
+ */
+export interface PieDef {
+  /** The middle of the top of the crust, how wide it is, and how deep the dish is under it. */
+  x: number;
+  y: number;
+  w: number;
+  deep: number;
+  pan: { x: number; y: number; w: number };
+  way: Array<{ x: number; y: number }>;
+}
+
 /** A mine: the middle of its plate, which lies in the face of a shelf; how that shelf leans; and how wide the plate is. */
 export interface MineDef {
   x: number;
@@ -362,6 +424,10 @@ export interface LevelDef {
   barrels: BarrelDef[];
   mats: MatDef[];
   mines: MineDef[];
+  hearths: HearthDef[];
+  kettles: KettleDef[];
+  jellies: JellyDef[];
+  pies: PieDef[];
   pits: PitDef[];
   /** Places there is no way out of: the hook has him out of one in `CAGE` seconds. */
   cages: Array<{ x0: number; x1: number; y0: number; y1: number }>;
@@ -463,6 +529,10 @@ export const LARDER: LevelDef = {
   mats: [],
   cages: [],
   mines: [],
+  hearths: [],
+  kettles: [],
+  jellies: [],
+  pies: [],
   pits: [{ x: PIT.x, y: lowAt(PIT.x) - WELL_DEEP, w: PIT.w, pan: FLOOR + 0.7, hung: false }],
   sockets: [
     { x: PIT.x, y0: lowAt(PIT.x) - 1.2, y1: lowAt(PIT.x) + 1.4, reach: 1, seat: { y: lowAt(PIT.x) - WELL_DEEP / 2 + 0.08, turn: LOW_TURN } },
@@ -512,6 +582,15 @@ function lowered(level: LevelDef, by: number): LevelDef {
       pan: { ...lift.pan, y: lift.pan.y - by },
     })),
     mines: level.mines.map((mine) => ({ ...mine, y: mine.y - by })),
+    hearths: level.hearths.map((hearth) => ({ ...hearth, y: hearth.y - by })),
+    kettles: level.kettles.map((kettle) => ({ ...kettle, y: kettle.y - by })),
+    jellies: level.jellies.map((jelly) => ({ ...jelly, y: jelly.y - by })),
+    pies: level.pies.map((pie) => ({
+      ...pie,
+      y: pie.y - by,
+      pan: { ...pie.pan, y: pie.pan.y - by },
+      way: pie.way.map((point) => ({ x: point.x, y: point.y - by })),
+    })),
     barrels: level.barrels.map((barrel) => ({
       ...barrel,
       y: barrel.y - by,
@@ -661,6 +740,10 @@ const SCULLERY_HERE: LevelDef = {
   barrels: [],
   mats: [],
   mines: [{ x: -1.25, y: sunkAt(-1.25), turn: SINK_TURN, w: MINE_W }],
+  hearths: [],
+  kettles: [],
+  jellies: [],
+  pies: [],
   pits: [
     { x: GAP.x, y: rackAt(GAP.x) - GAP_DEEP, w: GAP.w, pan: rackAt(GAP.x) - GAP_DEEP - GAP.hang, hung: true },
     { x: DRAIN.x, y: DRAIN_Y - BALE_H, w: DRAIN.w, pan: FLOOR + 0.7, hung: false },
@@ -776,6 +859,10 @@ const MILL_HERE: LevelDef = {
     },
   ],
   mines: [],
+  hearths: [],
+  kettles: [],
+  jellies: [],
+  pies: [],
   pits: [
     // Anything that comes out of the bottom of the wheel is in the tray.
     { x: (TRAY.x0 + TRAY.x1 - 0.2) / 2, y: MILL.y - MILL.r - 0.05, w: TRAY.x1 - 0.2 - TRAY.x0, pan: TRAY.y + 0.05, hung: true },
@@ -889,6 +976,10 @@ const BUTTERY_HERE: LevelDef = {
   barrels: [],
   mats: [],
   mines: [{ x: 1.4, y: backAt(1.4), turn: Math.atan(BACKWAY.fall), w: MINE_W }],
+  hearths: [],
+  kettles: [],
+  jellies: [],
+  pies: [],
   pits: [{ x: TURN.x, y: TURN.y - DRUM + 0.05, w: 2.1, pan: TURN.y - DRUM - 0.8, hung: true }],
   cages: [],
   sockets: [
@@ -992,6 +1083,10 @@ const CISTERN_HERE: LevelDef = {
   barrels: [],
   mats: [],
   mines: [{ x: -1.6, y: runC(-1.6), turn: -Math.atan(RUN.fall), w: MINE_W }],
+  hearths: [],
+  kettles: [],
+  jellies: [],
+  pies: [],
   pits: [{ x: -3.1, y: VAT.lip - GUTTER.drop, w: 1.8, pan: 16.85, hung: true }],
   cages: [],
   sockets: [
@@ -1095,6 +1190,10 @@ const SERVERY_HERE: LevelDef = {
   barrels: [],
   mats: [],
   mines: [],
+  hearths: [],
+  kettles: [],
+  jellies: [],
+  pies: [],
   pits: [],
   cages: [],
   sockets: [],
@@ -1131,7 +1230,7 @@ const UNDER_RUN = -2.75;
 const CELLAR_HERE: LevelDef = {
   key: "cellar",
   name: "The Cellar",
-  ends: "nest",
+  ends: "roost",
   hatch: true,
   left: -4,
   right: 4,
@@ -1166,7 +1265,7 @@ const CELLAR_HERE: LevelDef = {
     box(VAULT.x - VAULT.w / 2, VAULT.pan - 0.2, VAULT.x + VAULT.w / 2, VAULT.pan, "iron"),
     box(VAULT.x + VAULT.w / 2, FLOOR, VAULT.x + VAULT.w / 2 + 0.6, skidAt(SKID.end), "stone"),
 
-    // The Empress Hen's nest, bottom right.
+    // The roost, bottom right.
     box(VAULT.x + VAULT.w / 2 + 0.6, FLOOR, 4, FLOOR + 0.5, "nest", true),
     box(3.9, FLOOR, 4, FLOOR + 4.6, "nest", true),
   ],
@@ -1192,6 +1291,10 @@ const CELLAR_HERE: LevelDef = {
   ],
   mats: [{ x0: RUN_END, y0: runwayAt(RUN_END), x1: GAPE.x0, y1: runwayAt(GAPE.x0), crawl: 0.3 }],
   mines: [],
+  hearths: [],
+  kettles: [],
+  jellies: [],
+  pies: [],
   pits: [{ x: VAULT.x, y: skidAt(SKID.end), w: VAULT.w, pan: VAULT.pan, hung: true }],
   cages: [],
   sockets: [
@@ -1204,7 +1307,228 @@ const CELLAR_HERE: LevelDef = {
 
 export const CELLAR: LevelDef = lowered(CELLAR_HERE, STOREY * 6);
 
-export const LEVELS: LevelDef[] = [LARDER, SCULLERY, MILLROOM, BUTTERY, CISTERN, SERVERY, CELLAR];
+/** The bakehouse's top shelf: its height at the right wall, and its fall to the left. */
+const BAKE = { y: 29.6, fall: 0.36 };
+const bakeAt = (x: number): number => BAKE.y - BAKE.fall * (4 - x);
+const BAKE_TURN = Math.atan(BAKE.fall);
+/** A tray of embers in a shelf that falls to the left: as long as a bale lying along the slope, and as deep as one. */
+const TRAY_W = BALE_W * Math.cos(BAKE_TURN) + 0.12;
+const TRAY_DEEP = BALE_H / Math.cos(BAKE_TURN);
+const EMBER = { x: -0.6 };
+/** The bed he comes down on, on the left, and the feather bed that takes him on to the kettle's lid. */
+const proveAt = (x: number): number => 25.3 - 0.36 * (x + 4);
+/** The kettle: the middle of its lid, how wide that is, and the floor of the fire-box under it. */
+const KETTLE = { x: -0.2, y: 23.75, w: 1.3, fire: 21.45 };
+/** The hob he is thrown on to, on the right: its height at the right wall, and its fall to the left; and the tray in it. */
+const HOB = { y: 21, fall: 0.36 };
+const hobAt = (x: number): number => HOB.y - HOB.fall * (4 - x);
+const GRILL = { x: 0.9 };
+
+/**
+ * The eighth screen, written as if it stood where the first does. Straw burns. There is a
+ * tray of embers in the shelf under the hatch: a bale in it is a floor for four seconds, and
+ * then it is ash. The shelf takes him round to a feather bed and on to the lid of a kettle,
+ * where he stops. A bale in the fire-box under it brings it to the boil, and two seconds
+ * later the lid goes, and he with it, across to the hob on the right. That has a tray of
+ * embers in it as well, and he is across the room from it for longer than a bale burns: so
+ * that one is thrown while he is in the air, not before. Three bales, and four to do it with.
+ */
+const BAKEHOUSE_HERE: LevelDef = {
+  key: "bakehouse",
+  name: "The Bakehouse",
+  ends: "roost",
+  hatch: true,
+  left: -4,
+  right: 4,
+  top: 31,
+  bottom: 13,
+  start: { x: 3.5, y: 30.2 },
+  shove: -3,
+  bales: 4,
+  spare: 1,
+  blocks: [
+    box(-4.8, 12.6, -4, 31.4, "wall"),
+    box(4, 12.6, 4.8, 31.4, "wall"),
+    box(-4, 13.4, 4, FLOOR, "stone"),
+
+    // The shelf under the hatch, with the tray in it; and straw on the wall where he comes off the end.
+    slab(EMBER.x + TRAY_W / 2, bakeAt(EMBER.x + TRAY_W / 2), 4, BAKE.y, 0.5, "wood"),
+    slab(EMBER.x - TRAY_W / 2 - 0.12, bakeAt(EMBER.x - TRAY_W / 2 - 0.12) - TRAY_DEEP, EMBER.x + TRAY_W / 2 + 0.12, bakeAt(EMBER.x + TRAY_W / 2 + 0.12) - TRAY_DEEP, 0.3, "iron"),
+    slab(-2.6, bakeAt(-2.6), EMBER.x - TRAY_W / 2, bakeAt(EMBER.x - TRAY_W / 2), 0.5, "wood"),
+    box(-4, 24.6, -3.8, 28, "nest", true),
+
+    // The bed he comes down on, and the feather bed that brings him to the kettle at a crawl.
+    slab(-4, proveAt(-4), KETTLE.x - KETTLE.w / 2 - 0.1, proveAt(KETTLE.x - KETTLE.w / 2 - 0.1), 0.3, "bed", true),
+    // The kettle, and the fire-box under it: the machine draws these.
+    box(KETTLE.x - 0.75, KETTLE.fire + 0.75, KETTLE.x + 0.75, KETTLE.y - 0.12, "bare"),
+    box(KETTLE.x - 1.08, KETTLE.fire - 0.25, KETTLE.x + 1.08, KETTLE.fire, "bare"),
+    box(KETTLE.x - 1.08, KETTLE.fire, KETTLE.x - 0.88, KETTLE.fire + 0.75, "bare"),
+    box(KETTLE.x + 0.88, KETTLE.fire, KETTLE.x + 1.08, KETTLE.fire + 0.75, "bare"),
+
+    // The hob: a bed where he comes down, straw up the wall behind it, and the tray.
+    slab(2.1, hobAt(2.1) + 0.4, 4, hobAt(4) + 0.4, 0.4, "bed", true),
+    box(3.8, hobAt(4) + 0.4, 4, 25.4, "nest", true),
+    slab(GRILL.x + TRAY_W / 2, hobAt(GRILL.x + TRAY_W / 2), 4, HOB.y, 0.5, "stone"),
+    slab(GRILL.x - TRAY_W / 2 - 0.12, hobAt(GRILL.x - TRAY_W / 2 - 0.12) - TRAY_DEEP, GRILL.x + TRAY_W / 2 + 0.12, hobAt(GRILL.x + TRAY_W / 2 + 0.12) - TRAY_DEEP, 0.3, "iron"),
+    slab(-1.4, hobAt(-1.4), GRILL.x - TRAY_W / 2, hobAt(GRILL.x - TRAY_W / 2), 0.5, "stone"),
+
+    // The roost, bottom left.
+    box(-4, FLOOR, -1.9, FLOOR + 0.5, "nest", true),
+    box(-1.9, FLOOR, -1.6, FLOOR + 1, "nest", true),
+    box(-4, FLOOR, -3.9, FLOOR + 5.6, "nest", true),
+  ],
+  seesaws: [],
+  wheels: [],
+  doors: [],
+  flaps: [],
+  tanks: [],
+  lifts: [],
+  barrels: [],
+  mats: [{ x0: -2.5, y0: proveAt(-2.5), x1: KETTLE.x - KETTLE.w / 2 - 0.1, y1: proveAt(KETTLE.x - KETTLE.w / 2 - 0.1), crawl: 0.9 }],
+  mines: [],
+  hearths: [
+    { x: EMBER.x, y: bakeAt(EMBER.x) - TRAY_DEEP, turn: BAKE_TURN, w: TRAY_W },
+    { x: KETTLE.x, y: KETTLE.fire, turn: 0, w: 1.76 },
+    { x: GRILL.x, y: hobAt(GRILL.x) - TRAY_DEEP, turn: BAKE_TURN, w: TRAY_W },
+  ],
+  kettles: [{ x: KETTLE.x, y: KETTLE.y, w: KETTLE.w, hearth: 1, toss: { x: 2.13, y: 6.5 } }],
+  jellies: [],
+  pies: [],
+  pits: [],
+  cages: [],
+  sockets: [
+    { x: EMBER.x, y0: bakeAt(EMBER.x) - 1.2, y1: bakeAt(EMBER.x) + 1.6, reach: 1.1, seat: { y: bakeAt(EMBER.x) - TRAY_DEEP / 2 + 0.08, turn: BAKE_TURN } },
+    // Anywhere on the kettle is a bale for its fire.
+    { x: KETTLE.x, y0: KETTLE.fire - 0.6, y1: KETTLE.y + 0.2, reach: 1.2, seat: { y: KETTLE.fire + BALE_H / 2 + 0.04, turn: 0 } },
+    { x: GRILL.x, y0: hobAt(GRILL.x) - 1.2, y1: hobAt(GRILL.x) + 1.6, reach: 1.1, seat: { y: hobAt(GRILL.x) - TRAY_DEEP / 2 + 0.08, turn: BAKE_TURN } },
+  ],
+  nest: { x0: -3.9, x1: -1.9, y0: FLOOR + 0.4, y1: FLOOR + 1.9 },
+};
+
+export const BAKEHOUSE: LevelDef = lowered(BAKEHOUSE_HERE, STOREY * 7);
+
+/**
+ * The pastry's three jellies, top to bottom. The low side of each hangs over the next, so that
+ * one a bale has stopped only lets him down on to the one below; and between them they are a
+ * roof over the nest, which nothing comes to by falling.
+ */
+const JELLY_W = 1.5;
+const JELLY_LEAN = 0.26;
+const JELLIES = [
+  { x: -1.1, y: 26.4, lean: 1 },
+  { x: -2.6, y: 23.6, lean: -1 },
+  { x: -0.9, y: 20.4, lean: -1 },
+] as const;
+/** The pie beside the last of them; and the stove beyond the pie, with the pan let into the top of it. */
+const PIE = { x: 0.8, y: 19.1, w: 1.5, deep: 0.7 };
+const RANGE = { top: 16.9, pit: 2.7, w: 1.3, pan: 15.6 };
+/** How a jelly throws: from the middle of one to the middle of the next, in this many seconds. */
+function lob(from: { x: number; y: number }, to: { x: number; y: number }, time: number): { x: number; y: number } {
+  return { x: (to.x - from.x) / time, y: (to.y - from.y + 0.5 * G * time * time) / time };
+}
+
+/**
+ * The ninth screen, written as if it stood where the first does. Three jellies stand one below
+ * another, and each throws whatever comes down on it to the next: the last throws him clean
+ * over a pie and into the Queen's pan. A bale sinks into a jelly and stops it. Stop the first
+ * or the second and he only rolls off it on to the next; stop the last and he rolls off it on
+ * to the crust of the pie. A bale on the gold pan opens the pie, and the four and twenty
+ * blackbirds that come out of it carry him back over the jelly to the Empress Hen. Open it
+ * before he is on it and they go without him. Two bales, and three to do it with.
+ */
+const PASTRY_HERE: LevelDef = {
+  key: "pastry",
+  name: "The Pastry",
+  ends: "nest",
+  hatch: true,
+  left: -4,
+  right: 4,
+  top: 31,
+  bottom: 13,
+  start: { x: -3.5, y: 30.2 },
+  shove: 3,
+  bales: 3,
+  spare: 1,
+  blocks: [
+    box(-4.8, 12.6, -4, 31.4, "wall"),
+    box(4, 12.6, 4.8, 31.4, "wall"),
+    box(-4, 13.4, 4, FLOOR, "stone"),
+
+    // The shelf under the hatch, and the padded board that drops him on the first jelly.
+    slab(-4, 29.6, -2.3, 29.6 - 0.36 * 1.7, 0.3, "wood"),
+    box(-0.5, 27.5, -0.2, 29.7, "nest", true),
+
+    // The pie's dish, on its stand.
+    box(PIE.x - PIE.w / 2 - 0.15, PIE.y - PIE.deep - 0.2, PIE.x + PIE.w / 2 + 0.15, PIE.y - PIE.deep, "bare"),
+    box(PIE.x - PIE.w / 2 - 0.15, PIE.y - PIE.deep, PIE.x - PIE.w / 2, PIE.y + 0.1, "bare", true),
+    box(PIE.x + PIE.w / 2, PIE.y - PIE.deep, PIE.x + PIE.w / 2 + 0.15, PIE.y + 0.35, "bare", true),
+    box(PIE.x - 0.45, FLOOR, PIE.x + 0.45, PIE.y - PIE.deep - 0.2, "stone"),
+
+    // The stove beyond it, with the pan in it.
+    box(PIE.x + 0.45, FLOOR, RANGE.pit - RANGE.w / 2, RANGE.top, "stone"),
+    box(RANGE.pit + RANGE.w / 2, FLOOR, 4, RANGE.top, "stone"),
+
+    // The Empress Hen's nest, bottom left, and the post that is its other side.
+    box(-4, FLOOR, -2.05, FLOOR + 0.5, "nest", true),
+    box(-2.05, FLOOR, -1.75, 16.9, "stone"),
+    box(-4, FLOOR, -3.9, FLOOR + 4.6, "nest", true),
+  ],
+  seesaws: [],
+  wheels: [],
+  doors: [],
+  flaps: [],
+  tanks: [],
+  lifts: [],
+  barrels: [],
+  mats: [],
+  mines: [],
+  hearths: [],
+  kettles: [],
+  jellies: JELLIES.map((jelly, index) => {
+    const next = JELLIES[index + 1];
+    const from = { x: jelly.x, y: jelly.y + 0.6 };
+    return {
+      x: jelly.x,
+      y: jelly.y,
+      w: JELLY_W,
+      turn: jelly.lean * JELLY_LEAN,
+      toss: next ? lob(from, { x: next.x, y: next.y + 0.6 }, 1.1) : lob(from, { x: RANGE.pit - 0.15, y: RANGE.top + 0.4 }, 1.6),
+    };
+  }),
+  pies: [
+    {
+      x: PIE.x,
+      y: PIE.y,
+      w: PIE.w,
+      deep: PIE.deep,
+      pan: { x: 3.1, y: 23.5, w: 1.5 },
+      // Up over the last jelly, under the one above it, and down beyond into the nest.
+      way: [
+        { x: -0.9, y: 21.85 },
+        { x: -2.3, y: 21.5 },
+        { x: -2.95, y: 19.3 },
+        { x: -2.95, y: 17.2 },
+      ],
+    },
+  ],
+  pits: [{ x: RANGE.pit, y: RANGE.top, w: RANGE.w, pan: RANGE.pan, hung: false }],
+  cages: [],
+  sockets: [
+    ...JELLIES.map((jelly) => ({
+      x: jelly.x - Math.sin(jelly.lean * JELLY_LEAN) * (BALE_H / 2 + 0.05),
+      y0: jelly.y - 0.9,
+      y1: jelly.y + 1.5,
+      reach: 1,
+      seat: { y: jelly.y + Math.cos(JELLY_LEAN) * (BALE_H / 2 + 0.05), turn: jelly.lean * JELLY_LEAN },
+    })),
+    { x: 3.1, y0: 22.9, y1: 25.7, reach: 1.1, seat: { y: 23.5 + BALE_H / 2 + 0.02, turn: 0 } },
+  ],
+  nest: { x0: -3.9, x1: -2.05, y0: FLOOR + 0.4, y1: FLOOR + 1.9 },
+};
+
+export const PASTRY: LevelDef = lowered(PASTRY_HERE, STOREY * 8);
+
+export const LEVELS: LevelDef[] = [LARDER, SCULLERY, MILLROOM, BUTTERY, CISTERN, SERVERY, CELLAR, BAKEHOUSE, PASTRY];
 
 export type Phase = "ready" | "run" | "home" | "fried" | "broken" | "caught";
 
@@ -1239,6 +1563,14 @@ export type GameEvent =
   | { type: "bung"; x: number; y: number }
   | { type: "flat"; x: number; y: number }
   | { type: "blast"; by: "egg" | "bale"; near: boolean; x: number; y: number }
+  | { type: "kindle"; id: number; kettle: boolean; x: number; y: number }
+  | { type: "ash"; id: number; x: number; y: number }
+  | { type: "toast"; x: number; y: number }
+  | { type: "blow"; threw: boolean; x: number; y: number }
+  | { type: "boing"; x: number; y: number }
+  | { type: "set"; id: number; x: number; y: number }
+  | { type: "birds"; took: boolean; x: number; y: number }
+  | { type: "drop"; x: number; y: number }
   | { type: "caged"; x: number; y: number }
   | { type: "warn" }
   | { type: "caught" }
@@ -1268,6 +1600,8 @@ interface Bale {
   washed: boolean;
   /** Made fast to the pan or the roof of a dumbwaiter: it goes where that goes. */
   held: boolean;
+  /** When it caught light, on embers; before that, -1. */
+  lit: number;
 }
 
 interface Incoming {
@@ -1287,6 +1621,20 @@ export function loadPhysics(): Promise<void> {
 
 const quat = (turn: number) => ({ x: 0, y: 0, z: Math.sin(turn / 2), w: Math.cos(turn / 2) });
 const turnOf = (q: { z: number; w: number }): number => 2 * Math.atan2(q.z, q.w);
+
+/** A smooth way through some points: where it has got to, `k` of the way along (0 to 1). */
+export function along(points: Array<{ x: number; y: number }>, k: number): { x: number; y: number } {
+  const last = points.length - 1;
+  const at = Math.min(last - 1e-6, Math.max(0, k * last));
+  const i = Math.floor(at);
+  const u = at - i;
+  const p0 = points[Math.max(0, i - 1)]!;
+  const p1 = points[i]!;
+  const p2 = points[i + 1]!;
+  const p3 = points[Math.min(last, i + 2)]!;
+  const spline = (a: number, b: number, c: number, d: number): number => 0.5 * (2 * b + (c - a) * u + (2 * a - 5 * b + 4 * c - d) * u * u + (3 * b - a - 3 * c + d) * u * u * u);
+  return { x: spline(p0.x, p1.x, p2.x, p3.x), y: spline(p0.y, p1.y, p2.y, p3.y) };
+}
 
 /** Points on the egg's skin, for its hull. */
 function eggPoints(): Float32Array {
@@ -1380,6 +1728,18 @@ export class Game {
   }> = [];
   /** The barrels: chocked, on their way, or down the pit; whether the treadle has been trodden; and the crates, while they stand. */
   private readonly charges: Array<{ def: MineDef; live: boolean }>;
+  /** The trays of embers, and the bale that is burning in each. */
+  private readonly fires: Array<{ def: HearthDef; bale: Bale | null }> = [];
+  /** The kettles: the bale each last blew for, and when. */
+  private readonly boilers: Array<{ def: KettleDef; blewFor: number; blewAt: number }> = [];
+  /** The jellies: whether a bale has stopped each, and when it last threw. */
+  private readonly jells: Array<{ def: JellyDef; collider: RAPIER.Collider; set: boolean; threw: number; again: number }> = [];
+  /** The jelly that threw him last. */
+  private lastJelly = -1;
+  /** The pies: the crust, while there is one. */
+  private readonly pasties: Array<{ def: PieDef; crust: RAPIER.Collider | null; pan: RAPIER.Collider; openAt: number }> = [];
+  /** The blackbirds have him: where from, and since when. */
+  private flight: { def: PieDef; from: { x: number; y: number }; at: number } | null = null;
   private readonly casks: Array<{
     def: BarrelDef;
     body: RAPIER.RigidBody;
@@ -1651,6 +2011,36 @@ export class Game {
     }
 
     this.charges = level.mines.map((def) => ({ def, live: true }));
+    for (const def of level.hearths) this.fires.push({ def, bale: null });
+    for (const def of level.kettles) {
+      // The lid: padded, with a lip on its far side. He comes down into it off the end of a shelf.
+      const far = Math.sign(def.toss.x) || 1;
+      const pad = this.world.createCollider(RAPIER.ColliderDesc.cuboid(def.w / 2, 0.06, 0.9).setTranslation(def.x, def.y - 0.06, 0).setFriction(1).setRestitution(0), ground);
+      const lip = this.world.createCollider(RAPIER.ColliderDesc.cuboid(0.06, 0.2, 0.9).setTranslation(def.x + far * (def.w / 2 - 0.06), def.y + 0.2, 0).setFriction(1).setRestitution(0), ground);
+      this.soft.add(pad.handle);
+      this.soft.add(lip.handle);
+      this.seats.add(pad.handle);
+      this.boilers.push({ def, blewFor: -1, blewAt: -1 });
+    }
+    for (const def of level.jellies) {
+      const top = slab(def.x - (Math.cos(def.turn) * def.w) / 2, def.y - (Math.sin(def.turn) * def.w) / 2, def.x + (Math.cos(def.turn) * def.w) / 2, def.y + (Math.sin(def.turn) * def.w) / 2, 0.6, "bare");
+      const collider = this.world.createCollider(
+        RAPIER.ColliderDesc.cuboid(top.w / 2, top.h / 2, 0.9).setTranslation(top.x, top.y, 0).setRotation(quat(top.turn)).setFriction(1).setRestitution(0),
+        ground,
+      );
+      this.soft.add(collider.handle);
+      this.jells.push({ def, collider, set: false, threw: -1, again: 0 });
+    }
+    for (const def of level.pies) {
+      const crust = this.world.createCollider(RAPIER.ColliderDesc.cuboid(def.w / 2, 0.06, 0.9).setTranslation(def.x, def.y - 0.06, 0).setFriction(1).setRestitution(0), ground);
+      this.soft.add(crust.handle);
+      this.seats.add(crust.handle);
+      const pan = this.world.createCollider(
+        RAPIER.ColliderDesc.cuboid(def.pan.w / 2, 0.05, 0.6).setTranslation(def.pan.x, def.pan.y - 0.05, 0).setFriction(1).setRestitution(0),
+        ground,
+      );
+      this.pasties.push({ def, crust, pan, openAt: -1 });
+    }
     for (const def of level.barrels) {
       // It stands until its chock is knocked out. It is heavy, and it is not soft.
       const body = this.world.createRigidBody(
@@ -1719,10 +2109,11 @@ export class Game {
     return { x: p.x, y: p.y, turn: turnOf(this.eggBody.rotation()), vx: v.x, vy: v.y };
   }
 
-  get bales(): Array<Pose & { id: number }> {
+  /** `burnt` is how far gone a bale on embers is: 0 not alight, 1 ash. */
+  get bales(): Array<Pose & { id: number; burnt: number }> {
     return this.live.map((bale) => {
       const p = bale.body.translation();
-      return { id: bale.id, x: p.x, y: p.y, turn: turnOf(bale.body.rotation()) };
+      return { id: bale.id, x: p.x, y: p.y, turn: turnOf(bale.body.rotation()), burnt: bale.lit < 0 ? 0 : Math.min(1, (this.time - bale.lit) / BURN) };
     });
   }
 
@@ -1795,6 +2186,42 @@ export class Game {
       over: hoist.over,
       doors: hoist.doors.map((door) => ({ side: door.side, above: door.above, open: door.open })),
     }));
+  }
+
+  /** Each tray of embers, and how much is left of the bale burning in it: 1 just alight, 0 none. */
+  get hearths(): Array<{ def: HearthDef; left: number }> {
+    return this.fires.map((fire) => ({ def: fire.def, left: fire.bale ? Math.max(0, 1 - (this.time - fire.bale.lit) / BURN) : 0 }));
+  }
+
+  /** Each kettle: how near the boil (0 cold, 1 about to go), and how long since it blew (-1 never). */
+  get kettles(): Array<{ def: KettleDef; heat: number; blew: number; on: boolean }> {
+    const p = this.eggBody.translation();
+    return this.boilers.map((boiler) => {
+      const bale = this.fires[boiler.def.hearth]?.bale;
+      const heat = bale && bale.id !== boiler.blewFor ? Math.min(1, (this.time - bale.lit) / BOIL) : 0;
+      const def = boiler.def;
+      return { def, heat, blew: boiler.blewAt < 0 ? -1 : this.time - boiler.blewAt, on: Math.abs(p.x - def.x) < def.w / 2 + 0.15 && p.y > def.y && p.y < def.y + 1.8 };
+    });
+  }
+
+  /** Each jelly: whether a bale has stopped it, and how long since it last threw (-1 never). */
+  get jellies(): Array<{ def: JellyDef; set: boolean; threw: number }> {
+    return this.jells.map((jelly) => ({ def: jelly.def, set: jelly.set, threw: jelly.threw < 0 ? -1 : this.time - jelly.threw }));
+  }
+
+  /** Each pie: how long it has been open (-1 shut), and whether he is on its crust. */
+  get pies(): Array<{ def: PieDef; open: number; on: boolean }> {
+    const p = this.eggBody.translation();
+    return this.pasties.map((pie) => ({
+      def: pie.def,
+      open: pie.openAt < 0 ? -1 : this.time - pie.openAt,
+      on: pie.openAt < 0 && Math.abs(p.x - pie.def.x) < pie.def.w / 2 && p.y > pie.def.y && p.y < pie.def.y + 1.6,
+    }));
+  }
+
+  /** The blackbirds have him. */
+  get flying(): boolean {
+    return this.flight !== null;
   }
 
   get mines(): Array<{ def: MineDef; live: boolean }> {
@@ -1926,6 +2353,9 @@ export class Game {
     this.stow();
     this.trundle();
     this.spring();
+    this.burn();
+    this.wobble();
+    this.flock();
     if (this.phase !== "run") return;
 
     this.feel();
@@ -1949,7 +2379,7 @@ export class Game {
       body,
     );
     this.soft.add(collider.handle);
-    this.live.push({ id: bale.id, body, collider, fall: 0, spent: false, tank: false, washed: false, held: false });
+    this.live.push({ id: bale.id, body, collider, fall: 0, spent: false, tank: false, washed: false, held: false, lit: -1 });
     this.events.push({ type: "bale", id: bale.id, x: bale.x, y });
   }
 
@@ -2312,6 +2742,157 @@ export class Game {
     }
   }
 
+  /** Straw on embers burns, and is a floor until it is ash. A fire under a kettle blows its lid off. */
+  private burn(): void {
+    const p = this.eggBody.translation();
+    for (const fire of this.fires) {
+      const def = fire.def;
+      const cos = Math.cos(def.turn);
+      const sin = Math.sin(def.turn);
+      const place = (at: { x: number; y: number }): { along: number; up: number } => ({
+        along: (at.x - def.x) * cos + (at.y - def.y) * sin,
+        up: (at.y - def.y) * cos - (at.x - def.x) * sin,
+      });
+      if (fire.bale && !this.live.includes(fire.bale)) fire.bale = null;
+      if (!fire.bale) {
+        const bale = this.live.find((each) => {
+          if (each.held || each.lit >= 0) return false;
+          const q = place(each.body.translation());
+          return Math.abs(q.along) < def.w / 2 && q.up > 0 && q.up < BALE_H / 2 + 0.2;
+        });
+        if (bale) {
+          fire.bale = bale;
+          bale.lit = this.time;
+          this.events.push({ type: "kindle", id: bale.id, kettle: this.boilers.some((boiler) => this.fires[boiler.def.hearth] === fire), x: def.x, y: def.y });
+        }
+      } else if (this.time >= fire.bale.lit + BURN) {
+        const at = fire.bale.body.translation();
+        this.events.push({ type: "ash", id: fire.bale.id, x: at.x, y: at.y });
+        this.scrap(fire.bale);
+        fire.bale = null;
+      }
+      // On the embers themselves he is done.
+      if (this.phase !== "run") continue;
+      const q = place(p);
+      if (Math.abs(q.along) < def.w / 2 && q.up > 0 && q.up < 0.72) {
+        this.phase = "fried";
+        this.events.push({ type: "toast", x: p.x, y: p.y });
+        this.events.push({ type: "fried", x: def.x, y: def.y });
+        return;
+      }
+    }
+    for (const boiler of this.boilers) {
+      const def = boiler.def;
+      const bale = this.fires[def.hearth]?.bale;
+      if (!bale || bale.id === boiler.blewFor || this.time < bale.lit + BOIL) continue;
+      boiler.blewFor = bale.id;
+      boiler.blewAt = this.time;
+      const on = this.phase === "run" && Math.abs(p.x - def.x) < def.w / 2 + 0.15 && p.y > def.y && p.y < def.y + 1.8;
+      this.events.push({ type: "blow", threw: on, x: def.x, y: def.y });
+      if (on) this.launch({ x: def.x, y: Math.max(p.y, def.y + 0.55) }, def.toss);
+    }
+  }
+
+  /** Thrown by a machine, from a place and at a speed that are always the same. */
+  private launch(from: { x: number; y: number }, toss: { x: number; y: number }): void {
+    this.eggBody.setTranslation({ x: from.x, y: from.y, z: 0 }, true);
+    this.eggBody.setLinvel({ x: toss.x, y: toss.y, z: 0 }, true);
+    this.eggBody.setAngvel({ x: 0, y: 0, z: -Math.sign(toss.x) * 4 }, true);
+    this.eggBody.setLinearDamping(0);
+    this.idle = 0;
+    this.warned = false;
+    this.flungAt = this.time;
+    this.softUntil = this.time + SOFT_GRACE * 2;
+    this.events.push({ type: "fling", speed: Math.hypot(toss.x, toss.y) });
+  }
+
+  /** A jelly throws whatever comes down on it, until a bale has sunk into it. */
+  private wobble(): void {
+    if (this.phase !== "run") return;
+    const p = this.eggBody.translation();
+    for (const jelly of this.jells) {
+      if (jelly.set) continue;
+      const def = jelly.def;
+      const cos = Math.cos(def.turn);
+      const sin = Math.sin(def.turn);
+      const on = (at: { x: number; y: number }, reach: number, high: number): boolean => {
+        const along = (at.x - def.x) * cos + (at.y - def.y) * sin;
+        const up = (at.y - def.y) * cos - (at.x - def.x) * sin;
+        return Math.abs(along) < def.w / 2 + reach && up > 0 && up < high;
+      };
+      const bale = this.live.find((each) => !each.held && on(each.body.translation(), 0.3, BALE_H / 2 + 0.15));
+      if (bale) {
+        jelly.set = true;
+        this.events.push({ type: "set", id: bale.id, x: def.x, y: def.y });
+        this.scrap(bale);
+        continue;
+      }
+      // Only what is coming down on it: not what it has just thrown, still on its way up.
+      const v = this.eggBody.linvel();
+      if (this.flight || this.time < jelly.threw + 0.3 || v.y * cos - v.x * sin > 0.5 || !on(p, 0.1, 0.7)) continue;
+      // One that keeps getting him back has had enough the third time, and splits.
+      const index = this.jells.indexOf(jelly);
+      jelly.again = this.lastJelly === index ? jelly.again + 1 : 1;
+      this.lastJelly = index;
+      if (jelly.again >= 3) {
+        jelly.set = true;
+        this.events.push({ type: "set", id: -1, x: def.x, y: def.y });
+        continue;
+      }
+      jelly.threw = this.time;
+      this.events.push({ type: "boing", x: def.x, y: def.y });
+      this.launch({ x: def.x - sin * 0.6, y: def.y + cos * 0.6 }, def.toss);
+    }
+  }
+
+  /** A bale on a pie's pan opens it, and the blackbirds take whoever is on the crust. */
+  private flock(): void {
+    const p = this.eggBody.translation();
+    for (const pie of this.pasties) {
+      const def = pie.def;
+      if (pie.openAt >= 0) continue;
+      let on = false;
+      this.world.contactPairsWith(pie.pan, (other) => {
+        if (!this.live.some((bale) => bale.collider.handle === other.handle)) return;
+        this.world.contactPair(pie.pan, other, (manifold) => {
+          if (manifold.numContacts() > 0) on = true;
+        });
+      });
+      if (!on) continue;
+      pie.openAt = this.time;
+      if (pie.crust) {
+        this.soft.delete(pie.crust.handle);
+        this.seats.delete(pie.crust.handle);
+        this.world.removeCollider(pie.crust, true);
+        pie.crust = null;
+      }
+      const took = this.phase === "run" && Math.abs(p.x - def.x) < def.w / 2 && p.y > def.y && p.y < def.y + 1.6;
+      this.events.push({ type: "birds", took, x: def.x, y: def.y });
+      if (took) {
+        this.flight = { def, from: { x: p.x, y: p.y }, at: this.time };
+        this.eggBody.setGravityScale(0, true);
+        this.eggBody.setLinearDamping(0);
+      }
+    }
+    const flight = this.flight;
+    if (!flight || this.phase !== "run") return;
+    // Up and over, slow at each end.
+    const k = Math.min(1, (this.time - flight.at) / FLOCK);
+    const e = k * k * (3 - 2 * k);
+    const { x, y } = along([flight.from, ...flight.def.way], e);
+    this.eggBody.setTranslation({ x, y, z: 0 }, true);
+    this.eggBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    this.eggBody.setAngvel({ x: 0, y: 0, z: Math.sin(this.time * 5) * 0.8 }, true);
+    this.last = { x: 0, y: 0 };
+    this.idle = 0;
+    this.warned = false;
+    this.softUntil = this.time + SOFT_GRACE * 2;
+    if (k < 1) return;
+    this.flight = null;
+    this.eggBody.setGravityScale(1, true);
+    this.events.push({ type: "drop", x, y });
+  }
+
   /** A bale that is no more: burst, or thrown off a brake. */
   private scrap(bale: Bale): void {
     this.soft.delete(bale.collider.handle);
@@ -2529,6 +3110,19 @@ export class Game {
       this.eggBody.setAngvel({ x: 0, y: 0, z: (-way * mat.crawl) / EGG.wide }, true);
       this.softUntil = Math.max(this.softUntil, this.time + SOFT_GRACE);
     }
+    // A jelly with a bale in it has him as a feather bed would, and lets him off its low side.
+    for (const jelly of this.jells) {
+      if (!jelly.set) continue;
+      const def = jelly.def;
+      const along = (p.x - def.x) * Math.cos(def.turn) + (p.y - def.y) * Math.sin(def.turn);
+      const up = (p.y - def.y) * Math.cos(def.turn) - (p.x - def.x) * Math.sin(def.turn);
+      if (Math.abs(along) > def.w / 2 + 0.05 || up < 0.2 || up > 0.85) continue;
+      const way = -Math.sign(def.turn);
+      const v = this.eggBody.linvel();
+      this.eggBody.setLinvel({ x: way * JELLY_CRAWL, y: Math.min(v.y, 0.5), z: 0 }, true);
+      this.eggBody.setAngvel({ x: 0, y: 0, z: (-way * JELLY_CRAWL) / EGG.wide }, true);
+      this.softUntil = Math.max(this.softUntil, this.time + SOFT_GRACE);
+    }
     for (const plank of this.planks) {
       const def = plank.def;
       if (!def.pass) continue;
@@ -2645,7 +3239,9 @@ export class Game {
 
     // In a cage there is nothing to wait for: the hook is on its way down as he goes in.
     void v;
-    if (level.cages.some((cage) => p.x > cage.x0 && p.x < cage.x1 && p.y > cage.y0 && p.y < cage.y1)) {
+    // A pie with no crust and no birds in it is one more.
+    const dished = this.pasties.some((pie) => pie.openAt >= 0 && !this.flight && Math.abs(p.x - pie.def.x) < pie.def.w / 2 && p.y > pie.def.y - pie.def.deep && p.y < pie.def.y + 0.35);
+    if (dished || level.cages.some((cage) => p.x > cage.x0 && p.x < cage.x1 && p.y > cage.y0 && p.y < cage.y1)) {
       if (this.snared === 0) this.events.push({ type: "caged", x: p.x, y: p.y });
       this.snared += STEP;
       if (this.snared >= CAGE) {
@@ -2662,7 +3258,8 @@ export class Game {
     const carried =
       this.gates.some((gate) => gate.state === "turning" && Math.hypot(p.x - gate.def.x, p.y - gate.def.y) < gate.def.r) ||
       this.cisterns.some((tank) => tank.aboard && tank.rising) ||
-      this.hoists.some((hoist) => hoist.moving && (hoist.aboard || hoist.over));
+      this.hoists.some((hoist) => hoist.moving && (hoist.aboard || hoist.over)) ||
+      this.flight !== null;
     // In a dumbwaiter's car, or in the bucket under a barrel's run, the hook is as slow to come as it is to a see-saw's seat.
     this.waiting =
       this.inSeat ||

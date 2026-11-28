@@ -1,8 +1,9 @@
 # The Great Eggscape: working rules
 
 A mobile-first physics game. The Egg King falls through the Queen's kitchen by himself, and the
-player's only move is to tap a place and have a straw bale thrown there. Prototype stage: seven
-rooms, The Larder, The Scullery, The Mill, The Buttery, The Cistern, The Servery and The Cellar, built to find out whether that one verb is fun,
+player's only move is to tap a place and have a straw bale thrown there. Prototype stage: nine
+rooms, The Larder, The Scullery, The Mill, The Buttery, The Cistern, The Servery, The Cellar,
+The Bakehouse and The Pastry, built to find out whether that one verb is fun,
 how one room hands him on to the next, and whether a room can bring a new contraption without
 a new control. The user's verdict on the Larder alone: "This is good."; on the first two
 rooms: "These are playing well."
@@ -154,6 +155,30 @@ them in passing; they are kept as they were on purpose.
   gets a bale more. What is said about it is said while he sits ready on the hatch (`#brief`),
   twice in a sitting, because once he is let go there is no time to read. The user's idea
   (2026-11-27): "IEDs, improvised egg explosion devices", "don't need to be hidden".
+- The Bakehouse's rule is that straw burns (`HearthDef`): a bale whose middle is over a tray
+  of embers is alight at once and ash `BURN` seconds later, and until then it is a floor like
+  any other bale. An egg on the embers themselves is done. So a bale there has a time it must
+  not be thrown before, as well as one it must not be thrown after: the first thing in the
+  house that punishes being early. The first tray is reached inside `BURN` seconds, so that
+  the lesson is seen before it is paid for; the last is not.
+  - The kettle (`KettleDef`) is a seat with a hearth under it. `BOIL` seconds after a bale
+    is alight there the lid goes, and whoever is on it is thrown from the middle of it at a
+    speed that is always the same (`launch`). Lit before he is on it, it blows at nothing,
+    and wants another bale.
+- The Pastry's jellies (`JellyDef`) throw him by rule, from the middle of the jelly and
+  always alike, so the chain from one to the next cannot drift. A bale that touches one sinks
+  in and is gone, and after that the jelly is a feather bed with a lean to it.
+  - The low side of each hangs over the next, and between them they roof the nest. Before
+    that, a stopped jelly let him fall past the others and straight into the straw of the
+    nest: one bale, three stars. Random play found it in a hundred runs.
+  - One that throws him three times running with no other in between gives up and sets
+    itself: two bales stood on the pie were a wall he came back off for ever.
+  - The pie (`PieDef`) is a seat. A bale on its pan takes the crust away and, if he is on
+    it, hands him to the blackbirds: `FLOCK` seconds along a spline (`along`) with gravity
+    off, over the last jelly, under the one above and down into the nest. An open pie with
+    nobody carried is a cage.
+- Blocks with the look `bare` collide and are not drawn: the machine they belong to draws them.
+- New rooms have no mines, on purpose: the user said a thing repeated loses its surprise.
 - The map (`drawMap` in `src/main.ts`) is drawn from the `LevelDef`s, so a new room is on it
   without being asked. `?room=n` opens the house at room n and takes it as reached.
 - A bale that bursts under him goes on breaking his fall for `STRAW_GRACE`: without that, he
@@ -222,7 +247,7 @@ them in passing; they are kept as they were on purpose.
 
 - Development: `npm run dev` (port 5180); `?auto` lets the scripted player play
 - Tests: `npm test`; full acceptance: `npm run check`
-- Trace a run event by event: `npx tsx scripts/kitchen.ts [room=scullery|mill|buttery|cistern|servery|cellar] [time:x,y ...]`
+- Trace a run event by event: `npx tsx scripts/kitchen.ts [room=scullery|mill|buttery|cistern|servery|cellar|bakehouse|pastry] [time:x,y ...]`
   (heights as if the room stood where the Larder does)
 - In a browser console, `__egg.step(seconds, { x, y })` drives the game where frames do not
   tick (a hidden tab); set `__egg.stage.app.timeScale = 0` first, `__egg.restart()` to begin,
