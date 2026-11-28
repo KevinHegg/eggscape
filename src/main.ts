@@ -901,7 +901,7 @@ function showResult(current: Game): void {
   const again = $("again");
   const other = $("other");
   if (home && !last) {
-    again.textContent = "Down he goes";
+    again.textContent = "Next drop";
     again.dataset.does = "descend";
     other.textContent = `${current.level.name} again`;
     other.dataset.does = "restart";
