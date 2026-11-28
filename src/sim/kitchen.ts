@@ -121,6 +121,10 @@ export const CAT_STIR = 2.6;
 export const CAT_LEAP = 0.6;
 /** She was half awake already: a bale that came this long before she woke is new to her too. */
 export const CAT_NAP = 1;
+/** Mice come out in the dark: how long a bale lasts once they are out. */
+export const GNAW = 5;
+/** A fan: how hard its wind pushes him, in metres a second, every second. */
+export const FAN_BLOW = 4.2;
 export const LIFT_SPEED = 3;
 export const LIFT_TILT = 0.1;
 /** How fast something has to be going to do damage: a barrel to straw and to him. */
@@ -452,6 +456,33 @@ export interface CatDef {
   y1: number;
 }
 
+/**
+ * A light switch on a wall: the middle of its plate, and which way out from the wall is. He
+ * knocks it as he goes by, and the room is dark until he is out of it or done for. Mice come
+ * out in the dark, and straw is what they come for: a bale lasts `GNAW` seconds.
+ */
+export interface SwitchDef {
+  x: number;
+  y: number;
+  side: 1 | -1;
+  /** How far out from the wall, and how far above and below, he sets it off. */
+  reach: number;
+  tall: number;
+}
+
+/**
+ * A fan on a wall, which blows across the room: its mouth, which way it blows, how far, and
+ * how far above and below the middle of it the wind is felt. Whatever of him is in the wind
+ * goes with it. A bale stood in its mouth stops the wind for as long as the bale is there.
+ */
+export interface FanDef {
+  x: number;
+  y: number;
+  side: 1 | -1;
+  reach: number;
+  tall: number;
+}
+
 /** A mine: the middle of its plate, which lies in the face of a shelf; how that shelf leans; and how wide the plate is. */
 export interface MineDef {
   x: number;
@@ -505,6 +536,8 @@ export interface LevelDef {
   gloves: GloveDef[];
   traps: TrapDef[];
   cats: CatDef[];
+  switches: SwitchDef[];
+  fans: FanDef[];
   skies: SkyDef[];
   pits: PitDef[];
   /** Places there is no way out of: the hook has him out of one in `CAGE` seconds. */
@@ -617,6 +650,8 @@ export const LARDER: LevelDef = {
   gloves: [],
   traps: [],
   // Asleep at the far end of the floor with the hole in it, by the way down to the nest.
+  switches: [],
+  fans: [],
   cats: [{ x: MOUSER_X, y: lowAt(MOUSER_X), x0: -4, x1: 1.9, y0: lowAt(1.9) - 0.4, y1: 21.25 }],
   skies: [],
   pits: [{ x: PIT.x, y: lowAt(PIT.x) - WELL_DEEP, w: PIT.w, pan: FLOOR + 0.7, hung: false }],
@@ -681,6 +716,8 @@ function lowered(level: LevelDef, by: number): LevelDef {
     traps: level.traps.map((trap) => ({ ...trap, floor: trap.floor - by, y0: trap.y0 - by, y1: trap.y1 - by })),
     skies: level.skies,
     cats: level.cats.map((cat) => ({ ...cat, y: cat.y - by, y0: cat.y0 - by, y1: cat.y1 - by })),
+    switches: level.switches.map((each) => ({ ...each, y: each.y - by })),
+    fans: level.fans.map((fan) => ({ ...fan, y: fan.y - by })),
     barrels: level.barrels.map((barrel) => ({
       ...barrel,
       y: barrel.y - by,
@@ -837,6 +874,8 @@ const SCULLERY_HERE: LevelDef = {
   gloves: [],
   traps: [],
   cats: [],
+  switches: [],
+  fans: [],
   skies: [],
   pits: [
     { x: GAP.x, y: rackAt(GAP.x) - GAP_DEEP, w: GAP.w, pan: rackAt(GAP.x) - GAP_DEEP - GAP.hang, hung: true },
@@ -960,6 +999,8 @@ const MILL_HERE: LevelDef = {
   gloves: [],
   traps: [],
   cats: [],
+  switches: [],
+  fans: [],
   skies: [],
   pits: [
     // Anything that comes out of the bottom of the wheel is in the tray.
@@ -1081,6 +1122,8 @@ const BUTTERY_HERE: LevelDef = {
   gloves: [],
   traps: [],
   cats: [],
+  switches: [],
+  fans: [],
   skies: [],
   pits: [{ x: TURN.x, y: TURN.y - DRUM + 0.05, w: 2.1, pan: TURN.y - DRUM - 0.8, hung: true }],
   cages: [],
@@ -1192,6 +1235,8 @@ const CISTERN_HERE: LevelDef = {
   gloves: [],
   traps: [],
   cats: [],
+  switches: [],
+  fans: [],
   skies: [],
   pits: [{ x: -3.1, y: VAT.lip - GUTTER.drop, w: 1.8, pan: 16.85, hung: true }],
   cages: [],
@@ -1303,6 +1348,8 @@ const SERVERY_HERE: LevelDef = {
   gloves: [],
   traps: [],
   cats: [],
+  switches: [],
+  fans: [],
   skies: [],
   pits: [],
   cages: [],
@@ -1408,6 +1455,8 @@ const CELLAR_HERE: LevelDef = {
   gloves: [],
   traps: [],
   cats: [],
+  switches: [],
+  fans: [],
   skies: [],
   pits: [{ x: VAULT.x, y: skidAt(SKID.end), w: VAULT.w, pan: VAULT.pan, hung: true }],
   cages: [],
@@ -1511,6 +1560,8 @@ const BAKEHOUSE_HERE: LevelDef = {
   gloves: [],
   traps: [],
   cats: [],
+  switches: [],
+  fans: [],
   skies: [],
   pits: [],
   cages: [],
@@ -1632,6 +1683,8 @@ const PASTRY_HERE: LevelDef = {
   gloves: [],
   traps: [],
   cats: [],
+  switches: [],
+  fans: [],
   skies: [],
   pits: [{ x: RANGE.pit, y: RANGE.top, w: RANGE.w, pan: RANGE.pan, hung: false }],
   cages: [],
@@ -1760,6 +1813,8 @@ const PANTRY_HERE: LevelDef = {
   ],
   traps: [{ x0: DECOY.x0, x1: DECOY.x1, floor: DECOY.floor, y0: pantryFloorAt(DECOY.x0), y1: pantryFloorAt(DECOY.x1) }],
   cats: [],
+  switches: [],
+  fans: [],
   skies: [],
   pits: [{ x: SKILLET.x, y: SKILLET.pan + 1.6, w: SKILLET.w, pan: SKILLET.pan, hung: true }],
   cages: [],
@@ -1773,6 +1828,139 @@ const PANTRY_HERE: LevelDef = {
 };
 
 export const PANTRY: LevelDef = lowered(PANTRY_HERE, STOREY * 9);
+
+/**
+ * A gap in a shelf with a pan hung under it, cut so that a bale lies in it flush: the blocks
+ * each side of it, the pan, and the place for the bale. `at` is the shelf's top face and
+ * `slope` how it rises to the right; he comes to it from the high side. The shelf itself
+ * stops at `high` on that side, and starts again at `low` on the other.
+ */
+function breach(at: (x: number) => number, slope: number, x: number, w = 1.1, hang = 1.1): { blocks: Block[]; pit: PitDef; socket: SocketDef; high: number; low: number } {
+  const turn = Math.atan(slope);
+  const well = BALE_W * Math.cos(turn) + 0.12;
+  const deep = BALE_H / Math.cos(turn);
+  const x0 = x - well / 2;
+  const x1 = x + well / 2;
+  /** The low side is the left if it rises to the right. */
+  const left = slope > 0;
+  return {
+    blocks: [
+      slab(x0 - 0.12, at(x0 - 0.12) - deep, x - w / 2, at(x - w / 2) - deep, 0.4, left ? "bed" : "wood", left),
+      slab(x + w / 2, at(x + w / 2) - deep, x1 + 0.12, at(x1 + 0.12) - deep, 0.4, left ? "wood" : "bed", !left),
+      left ? slab(x0 - 0.2, at(x0 - 0.2), x0 - 0.04, at(x0 - 0.04), 0.4, "bed", true) : slab(x1 + 0.04, at(x1 + 0.04), x1 + 0.2, at(x1 + 0.2), 0.4, "bed", true),
+      box(x - w / 2 - 0.2, at(x) - deep - hang - 0.1, x - w / 2, at(x) - deep - (left ? 0.7 : 0.5), "iron"),
+      box(x + w / 2, at(x) - deep - hang - 0.1, x + w / 2 + 0.2, at(x) - deep - (left ? 0.5 : 0.7), "iron"),
+    ],
+    pit: { x, y: at(x) - deep, w, pan: at(x) - deep - hang, hung: true },
+    socket: { x, y0: at(x) - 1.2, y1: at(x) + 1.3, reach: 1, seat: { y: at(x) - deep / 2 + 0.08, turn } },
+    high: left ? x1 : x0,
+    low: left ? x0 - 0.2 : x1 + 0.2,
+  };
+}
+
+/** The granary's stub of a shelf under the hatch, which falls to the right and stops well short of the wall: the switch is on the wall below the end of it. */
+const stubAt = (x: number): number => 29.9 - 0.36 * (x - 1.7);
+const STUB = { x0: 1.7, x1: 2.85 };
+/** The loft under that, which falls to the left from the right wall and stops short of the other. */
+const loftAt = (x: number): number => 28.1 - 0.36 * (4 - x);
+const LOFT_END = -1.2;
+const LOFT_GAP = breach(loftAt, 0.36, 1);
+/** The winnowing fan, on the right wall under the loft: its mouth, and the bracket in front of it that a bale stands on. */
+const WINNOW = { x: 3.85, y: 24.75, bracket: 24.3, wide: 1.75 };
+/** The floor under the end of the loft, which falls to the right, and stops short of the left wall: behind it is the way down to a pan. */
+const FLOOR_X0 = -2.7;
+const underAt = (x: number): number => 22 - 0.36 * (x - FLOOR_X0);
+const UNDER_GAP = breach(underAt, -0.36, 0.6);
+const GRANARY_ROOST = 2.05;
+/** The pan behind the floor, at the left wall. */
+const BEHIND = { x: (-4 + FLOOR_X0) / 2, w: FLOOR_X0 + 4, pan: 20.8 };
+
+/**
+ * The eleventh screen, written as if it stood where the first does. There is a light switch on
+ * the wall, and he knocks it as he drops past: after that the room is dark, and all that shows
+ * is him, the lamp on the fan, and a bale while it is in the air. So the room is learnt before
+ * he is let go. And mice come out in the dark: a bale lasts five seconds, wherever it is, so
+ * none can be thrown long before it is wanted. There is a gap in the loft, over a pan; then the
+ * end of the loft, where a winnowing fan blows him across to the wall and down behind the
+ * floor to another pan, unless a bale is standing in its mouth as he drops; then a gap in the
+ * floor. Three bales, and four to do it with.
+ */
+const GRANARY_HERE: LevelDef = {
+  key: "granary",
+  name: "The Granary",
+  ends: "roost",
+  hatch: true,
+  left: -4,
+  right: 4,
+  top: 31,
+  bottom: 13,
+  start: { x: 2.35, y: 30.2 },
+  shove: -3,
+  bales: 4,
+  spare: 1,
+  blocks: [
+    box(-4.8, 12.6, -4, 31.4, "wall"),
+    box(4, 12.6, 4.8, 31.4, "wall"),
+    box(-4, 13.4, 4, FLOOR, "stone"),
+
+    // The stub under the hatch.
+    slab(STUB.x0, stubAt(STUB.x0), STUB.x1, stubAt(STUB.x1), 0.3, "bed", true),
+
+    // The loft: straw from the wall to the gap, and board from the gap to the end of it.
+    slab(LOFT_GAP.high, loftAt(LOFT_GAP.high), 4, loftAt(4), 0.4, "bed", true),
+    ...LOFT_GAP.blocks,
+    slab(LOFT_END, loftAt(LOFT_END), LOFT_GAP.low, loftAt(LOFT_GAP.low), 0.4, "wood"),
+
+    // The bracket in front of the fan.
+    box(WINNOW.x - WINNOW.wide, WINNOW.bracket - 0.16, 4, WINNOW.bracket, "iron"),
+
+    // The floor: straw where he comes down, board to the gap, and board beyond it.
+    slab(FLOOR_X0, underAt(FLOOR_X0), -1.1, underAt(-1.1), 0.4, "bed", true),
+    slab(-1.1, underAt(-1.1), UNDER_GAP.high, underAt(UNDER_GAP.high), 0.4, "wood"),
+    ...UNDER_GAP.blocks,
+    slab(UNDER_GAP.low, underAt(UNDER_GAP.low), GRANARY_ROOST - 0.1, underAt(GRANARY_ROOST - 0.1), 0.4, "wood"),
+
+    // The roost, bottom right.
+    box(GRANARY_ROOST, FLOOR, 4, FLOOR + 0.5, "nest", true),
+    box(GRANARY_ROOST - 0.3, FLOOR, GRANARY_ROOST, FLOOR + 1, "nest", true),
+    box(3.9, FLOOR, 4, FLOOR + 6, "nest", true),
+  ],
+  seesaws: [],
+  wheels: [],
+  doors: [],
+  flaps: [],
+  tanks: [],
+  lifts: [],
+  barrels: [],
+  // He is slow where he comes down in the dark, slow to the end of the loft, and slow off the straw below.
+  mats: [
+    { x0: LOFT_GAP.high + 0.1, y0: loftAt(LOFT_GAP.high + 0.1), x1: 4, y1: loftAt(4), crawl: 0.6 },
+    { x0: LOFT_END, y0: loftAt(LOFT_END), x1: LOFT_GAP.low, y1: loftAt(LOFT_GAP.low), crawl: 0.5 },
+    { x0: FLOOR_X0, y0: underAt(FLOOR_X0), x1: -1.1, y1: underAt(-1.1), crawl: 0.6 },
+  ],
+  mines: [],
+  hearths: [],
+  kettles: [],
+  jellies: [],
+  pies: [],
+  gloves: [],
+  traps: [],
+  cats: [],
+  switches: [{ x: 4, y: 28.95, side: -1, reach: 1.1, tall: 0.4 }],
+  fans: [{ x: WINNOW.x, y: WINNOW.y, side: -1, reach: 8, tall: 1.6 }],
+  skies: [],
+  pits: [LOFT_GAP.pit, { x: BEHIND.x, y: underAt(FLOOR_X0), w: BEHIND.w, pan: BEHIND.pan, hung: true }, UNDER_GAP.pit],
+  cages: [],
+  sockets: [
+    LOFT_GAP.socket,
+    // A tap at the fan is a bale stood in its mouth.
+    { x: WINNOW.x - WINNOW.wide / 2, y0: WINNOW.bracket - 0.7, y1: WINNOW.y + 1.3, reach: 1, seat: { y: WINNOW.bracket + BALE_H / 2 + 0.03, turn: 0 } },
+    UNDER_GAP.socket,
+  ],
+  nest: { x0: GRANARY_ROOST, x1: 3.9, y0: FLOOR + 0.4, y1: FLOOR + 1.9 },
+};
+
+export const GRANARY: LevelDef = lowered(GRANARY_HERE, STOREY * 10);
 
 /** The yard's top shelf: a feather bed under the hatch and no more, which falls to the left. */
 const yardAt = (x: number): number => 29.6 - 0.36 * (4 - x);
@@ -1793,7 +1981,7 @@ const lastAt = (x: number): number => 19.4 - 0.36 * (x + 4);
 const SKY = { top: 1.1, gap: BREACH.x, bed: ROOF.x };
 
 /**
- * The eleventh screen, written as if it stood where the first does. He is out of the kitchen,
+ * The twelfth screen, written as if it stood where the first does. He is out of the kitchen,
  * and the Queen is throwing it after him: in three places a pot comes down every four seconds,
  * and they keep time before he is let go as well as after. One place is on the shelf in front
  * of him: he is let go when it suits. One is the gap in the long shelf: a pot goes through a
@@ -1867,6 +2055,8 @@ const YARD_HERE: LevelDef = {
   gloves: [],
   traps: [],
   cats: [],
+  switches: [],
+  fans: [],
   skies: [
     // One, two, three: where he comes down, then the gap, then the feather bed. Each bale goes after its own pot.
     { x: SKY.top, every: SKY_EVERY, first: 1 },
@@ -1882,9 +2072,9 @@ const YARD_HERE: LevelDef = {
   nest: { x0: 1.95, x1: 3.9, y0: FLOOR + 0.4, y1: FLOOR + 1.9 },
 };
 
-export const YARD: LevelDef = lowered(YARD_HERE, STOREY * 10);
+export const YARD: LevelDef = lowered(YARD_HERE, STOREY * 11);
 
-export const LEVELS: LevelDef[] = [LARDER, SCULLERY, MILLROOM, BUTTERY, CISTERN, SERVERY, CELLAR, BAKEHOUSE, PASTRY, PANTRY, YARD];
+export const LEVELS: LevelDef[] = [LARDER, SCULLERY, MILLROOM, BUTTERY, CISTERN, SERVERY, CELLAR, BAKEHOUSE, PASTRY, PANTRY, GRANARY, YARD];
 
 export type Phase = "ready" | "run" | "home" | "fried" | "broken" | "caught";
 
@@ -1936,6 +2126,9 @@ export type GameEvent =
   | { type: "leap"; at: "egg" | "bale"; x: number; y: number }
   | { type: "fetch"; id: number; x: number; y: number }
   | { type: "pounce"; x: number; y: number }
+  | { type: "dark"; x: number; y: number }
+  | { type: "gnawed"; id: number; fan: boolean; x: number; y: number }
+  | { type: "fan"; on: boolean; x: number; y: number }
   | { type: "caged"; x: number; y: number }
   | { type: "warn" }
   | { type: "caught" }
@@ -2122,6 +2315,10 @@ export class Game {
     from: { x: number; y: number };
     prey: Bale | "egg" | null;
   }> = [];
+  /** When the light went out: before that, -1. */
+  private darkAt = -1;
+  /** Each fan: whether a bale is in its mouth. */
+  private readonly blowers: Array<{ def: FanDef; choked: boolean }> = [];
   /** The sky's own clock, which runs before he is let go as well as after. */
   sky = 0;
   /** How many things each place in the sky has let go, and when the last of them came down on something. */
@@ -2434,6 +2631,7 @@ export class Game {
     }
     for (const def of level.gloves) this.fists.push({ def, readyAt: 0, hitAt: -1, told: true });
     for (const def of level.traps) this.decoys.push({ def, sprungAt: -1, by: null, inside: 0 });
+    for (const def of level.fans) this.blowers.push({ def, choked: false });
     for (const def of level.cats) this.mousers.push({ def, state: "asleep", since: 0, wokeAt: -1, x: def.x, y: def.y, from: { x: def.x, y: def.y }, prey: null });
     for (let column = 0; column < level.skies.length; column += 1) {
       this.dropped.push(0);
@@ -2510,12 +2708,34 @@ export class Game {
     return { x: p.x, y: p.y, turn: turnOf(this.eggBody.rotation()), vx: v.x, vy: v.y };
   }
 
-  /** `burnt` is how far gone a bale on embers is: 0 not alight, 1 ash. */
-  get bales(): Array<Pose & { id: number; burnt: number }> {
+  /** `burnt` is how far gone a bale on embers is: 0 not alight, 1 ash. `gnawed` is how far the mice have got with it: 0 not started, 1 gone. */
+  get bales(): Array<Pose & { id: number; burnt: number; gnawed: number }> {
     return this.live.map((bale) => {
       const p = bale.body.translation();
-      return { id: bale.id, x: p.x, y: p.y, turn: turnOf(bale.body.rotation()), burnt: bale.lit < 0 ? 0 : Math.min(1, (this.time - bale.lit) / BURN) };
+      return {
+        id: bale.id,
+        x: p.x,
+        y: p.y,
+        turn: turnOf(bale.body.rotation()),
+        burnt: bale.lit < 0 ? 0 : Math.min(1, (this.time - bale.lit) / BURN),
+        gnawed: this.dark ? Math.min(1, (this.time - Math.max(bale.born, this.darkAt)) / GNAW) : 0,
+      };
     });
+  }
+
+  /** The light is out: from when he knocks the switch until he is out of the room or done for. */
+  get dark(): boolean {
+    return this.darkAt >= 0 && this.phase === "run";
+  }
+
+  /** How long ago the light went out: -1 if it has not. */
+  get darkFor(): number {
+    return this.darkAt < 0 ? -1 : this.time - this.darkAt;
+  }
+
+  /** Each fan, and whether a bale is in its mouth. */
+  get fans(): Array<{ def: FanDef; choked: boolean }> {
+    return this.blowers.map((fan) => ({ def: fan.def, choked: fan.choked }));
   }
 
   /** Bales on their way in: where each will be, and how far along (0 thrown, 1 there). */
@@ -2806,6 +3026,9 @@ export class Game {
     this.punch();
     this.bite();
     this.prowl();
+    this.flick();
+    this.gnaw();
+    this.blow();
     this.rain();
     if (this.phase !== "run") return;
 
@@ -3466,6 +3689,55 @@ export class Game {
       this.phase = "broken";
       this.cracks = SHELL + 1;
       this.events.push({ type: "broken", x: p.x, y: p.y });
+    }
+  }
+
+  /** The switch: he has only to pass in front of it. */
+  private flick(): void {
+    if (this.phase !== "run" || this.darkAt >= 0) return;
+    const p = this.eggBody.translation();
+    for (const def of this.level.switches) {
+      const out = (p.x - def.x) * def.side;
+      if (out < 0 || out > def.reach || Math.abs(p.y - def.y) > def.tall) continue;
+      this.darkAt = this.time;
+      this.events.push({ type: "dark", x: def.x, y: def.y });
+      return;
+    }
+  }
+
+  /** Mice, in the dark: every bale there is, they have in `GNAW` seconds, wherever it is and whatever is on it. */
+  private gnaw(): void {
+    if (!this.dark) return;
+    for (let index = this.live.length - 1; index >= 0; index -= 1) {
+      const bale = this.live[index]!;
+      if (this.time - Math.max(bale.born, this.darkAt) < GNAW) continue;
+      const at = bale.body.translation();
+      this.events.push({ type: "gnawed", id: bale.id, fan: this.blowers.some((fan) => this.mouthed(fan.def, at)), x: at.x, y: at.y });
+      this.scrap(bale);
+    }
+  }
+
+  /** Whether something at this place is in the mouth of this fan. */
+  private mouthed(def: FanDef, at: { x: number; y: number }): boolean {
+    const out = (at.x - def.x) * def.side;
+    return out > -0.2 && out < BALE_W + 0.2 && Math.abs(at.y - def.y) < 0.75;
+  }
+
+  /** A fan blows across the room, and he goes with it while he is in its wind. A bale in its mouth stops it. */
+  private blow(): void {
+    const p = this.eggBody.translation();
+    for (const fan of this.blowers) {
+      const def = fan.def;
+      const choked = this.live.some((bale) => this.mouthed(def, bale.body.translation()));
+      if (choked !== fan.choked) {
+        fan.choked = choked;
+        this.events.push({ type: "fan", on: !choked, x: def.x, y: def.y });
+      }
+      if (choked || this.phase !== "run") continue;
+      const out = (p.x - def.x) * def.side;
+      if (out < 0 || out > def.reach || Math.abs(p.y - def.y) > def.tall) continue;
+      const v = this.eggBody.linvel();
+      this.eggBody.setLinvel({ x: v.x + def.side * FAN_BLOW * STEP, y: v.y, z: 0 }, true);
     }
   }
 

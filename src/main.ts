@@ -105,6 +105,9 @@ let stolen = false;
 /** In the yard: where a pot came down on him (-1 if none has), and where one has gone through a bale. */
 let crowned = -1;
 let potted: number[] = [];
+/** In the granary: the mice had a bale he had not yet got to; and the fan put him behind the floor. */
+let nibbled = false;
+let winnowed = false;
 /** He is being shown coming down from the roost above, and cannot be let go until he has landed. */
 let arriving = false;
 
@@ -123,6 +126,7 @@ const OPENING: Record<string, [string, string]> = {
 
 /** What is said while he sits ready, in a room where there is something to watch for before he goes. */
 const BRIEF: Record<string, [string, string]> = {
+  granary: ["Learn the room: he knocks the light out.", " In the dark, mice eat a bale in five seconds"],
   yard: ["Pots fall in three places, every four seconds.", " Let him go just after one hits the straw below him"],
 };
 
@@ -144,6 +148,7 @@ const FEATURE: Record<string, string> = {
   bakehouse: "Embers and a kettle",
   pastry: "Jellies and a pie",
   pantry: "Boxing gloves and a hen",
+  granary: "A light switch, mice and a fan",
   yard: "A falling sky",
 };
 
@@ -162,7 +167,7 @@ function drawReady(): void {
   const brief = $("brief");
   const said = waiting ? BRIEF[game!.level.key] : undefined;
   const mine = waiting && game!.level.mines.length > 0 && (told.get("mine") ?? 0) < 2;
-  const warn = mine || (said !== undefined && (told.get("brief") ?? 0) < 4);
+  const warn = mine || (said !== undefined && (told.get(`brief:${game!.level.key}`) ?? 0) < 4);
   if (warn && brief.hidden) {
     const red = document.createElement("b");
     red.textContent = said ? said[0] : "The red plate with the pennant is a mine.";
@@ -249,6 +254,8 @@ function fresh(index = room, arrive: { x: number; y: number; turn: number } | nu
   stolen = false;
   crowned = -1;
   potted = [];
+  nibbled = false;
+  winnowed = false;
   accumulator = 0;
   $("toast").replaceChildren();
   drawHud(game);
@@ -257,7 +264,7 @@ function fresh(index = room, arrive: { x: number; y: number; turn: number } | nu
 function begin(): void {
   if (!game || game.phase !== "ready" || stage.arriving) return;
   if (!$("brief").hidden) {
-    const key = BRIEF[game.level.key] ? "brief" : "mine";
+    const key = BRIEF[game.level.key] ? `brief:${game.level.key}` : "mine";
     told.set(key, (told.get(key) ?? 0) + 1);
   }
   runs += 1;
@@ -503,6 +510,32 @@ function narrate(event: GameEvent, current: Game): void {
       stale = !!cat && current.bales.some((bale) => bale.x > cat.x0 && bale.x < cat.x1 && bale.y > cat.y0 && bale.y < cat.y1 && !current.level.pits.some((pit) => Math.abs(pit.x - bale.x) < pit.w / 2 + 0.3));
       break;
     }
+    case "dark":
+      sound.lightsOut();
+      // Unless that bale went while the light was on.
+      if (!current.level.sockets[0] || ![...current.bales, ...current.incoming].some((bale) => Math.abs(bale.x - current.level.sockets[0]!.x) < 0.6)) {
+        hint("dark", "Lights out! A bale in the first gap, from memory");
+      }
+      break;
+    case "gnawed": {
+      sound.squeak();
+      // Was it one he still wanted? The gap in the loft, the fan's mouth, the gap in the floor.
+      const egg = current.egg;
+      const [loft, mouth, floor] = current.level.sockets;
+      const fan = current.level.fans[0];
+      const near = (socket: typeof loft): boolean => socket?.seat !== undefined && Math.abs(event.x - socket.x) < 0.6 && Math.abs(event.y - socket.seat.y) < 0.6;
+      const above = fan !== undefined && egg.y > fan.y + fan.tall;
+      const wanted = (near(loft) && above && egg.x > loft!.x + 0.3) || (near(mouth) && above) || (near(floor) && (above || egg.x < floor!.x + 0.3));
+      if (wanted && current.phase === "run") {
+        nibbled = true;
+        toast("The mice had that one too soon", "bad");
+      }
+      break;
+    }
+    case "fan":
+      sound.fan(event.on);
+      if (!event.on && current.phase === "run") toast("That has stopped the fan");
+      break;
     case "snap":
       snapped = event.by;
       sound.snap();
@@ -540,6 +573,7 @@ function narrate(event: GameEvent, current: Game): void {
       break;
     case "fried":
       friedHung = current.level.pits.some((pit) => pit.hung && Math.abs(pit.x - event.x) < 0.1 && Math.abs(pit.pan - event.y) < 0.1);
+      winnowed = current.level.fans.length > 0 && event.x < current.level.left + 1.4;
       sound.fry();
       break;
     case "caught":
@@ -608,6 +642,14 @@ function coach(current: Game): void {
     const bridged = gap !== undefined && current.bales.some((bale) => Math.abs(bale.x - gap.x) < 0.6 && Math.abs(bale.y - gap.y) < 0.9);
     if (bridged && egg.y > current.level.top - 4.5) hint("drop", "Next, a long drop at the left wall. Get a bale under it");
     if (!flung && egg.x < -2.2 && egg.y < current.level.top - 5.5) hint("timed", "This plank will not wait: a bale on its gold end while he is on the red");
+  }
+  // In the granary, each bale is wanted just before he gets to its place, and not sooner.
+  if (current.level.key === "granary" && current.dark) {
+    const [loft, mouth, floor] = current.level.sockets;
+    const fan = current.level.fans[0];
+    const laid = (socket: typeof loft): boolean => socket?.seat !== undefined && [...current.bales, ...current.incoming].some((bale) => Math.abs(bale.x - socket.x) < 0.5 && Math.abs(bale.y - socket.seat!.y) < 0.5);
+    if (fan && loft && egg.y > fan.y + fan.tall && egg.x < loft.x - 0.9 && !laid(mouth)) hint("mouth", "Now the fan: a bale in its mouth, under the lamp, before he drops");
+    if (fan && egg.y < fan.y - 2 && egg.x < -1 && !laid(floor)) hint("floor", "Now the gap in the floor, ahead of him");
   }
   // In the yard, each bale goes after its own pot: as soon as the next one there cannot come before he is past.
   if (current.level.key === "yard") {
@@ -681,6 +723,16 @@ function verdict(current: Game): { eyebrow: string; title: string; line: string 
       }
       return { eyebrow: "A great fall", title: "Humpty Dumpty", line: overAt < 4 ? "A long drop, and nothing under him. Tap the floor where he will come down, and do it early: the bale takes a moment." : "That was harder than a shell can take. Straw and sacks are soft; wood, stone and iron are not." };
     case "fried":
+      if (current.level.fans.length > 0) {
+        if (winnowed) {
+          return nibbled
+            ? { eyebrow: "The Queen's breakfast", title: "Sunny side up", line: "The mice had the bale out of the fan's mouth before he dropped past it. They eat one in five seconds: throw it when he is nearly at the end of the loft." }
+            : { eyebrow: "The Queen's breakfast", title: "Sunny side up", line: "The fan blew him to the wall and down behind the floor. A bale in its mouth stops the wind: its lamp shows in the dark, and goes red when it is stopped." };
+        }
+        return nibbled
+          ? { eyebrow: "The Queen's breakfast", title: "Sunny side up", line: "The mice had that bale before he got to it. They eat one in five seconds, wherever it is: throw each when he is nearly there, not before." }
+          : { eyebrow: "The Queen's breakfast", title: "Sunny side up", line: "Into a gap in the dark. There is one in the loft and one in the floor: learn where they are before he is let go, and tap there from memory." };
+      }
       if (stolen) {
         return { eyebrow: "The Queen's breakfast", title: "Sunny side up", line: "The cat took the bale out of the hole: she has the first one that lands on her floor once she is awake. Stop the hole before the see-saw goes off, and throw her another." };
       }
@@ -1001,6 +1053,11 @@ function drawRoom(g: Element, level: LevelDef, index: number): void {
   for (const sky of level.skies) {
     mark(g, "line", { ...line, x1: sky.x, y1: level.top - 0.4, x2: sky.x, y2: level.top - 4.2, stroke: "#33333a", "stroke-width": 1.4, "stroke-dasharray": "3 3" });
     mark(g, "rect", { x: sky.x - 0.45, y: level.top - 5.4, width: 0.9, height: 1.2, fill: "#b5651d" });
+  }
+  for (const each of level.switches) mark(g, "rect", { x: each.side < 0 ? each.x - 0.5 : each.x, y: each.y - 0.5, width: 0.5, height: 1, fill: "#e9ac22", stroke: "#1d1512", "stroke-width": 1, "vector-effect": "non-scaling-stroke" });
+  for (const fan of level.fans) {
+    mark(g, "ellipse", { cx: fan.x + fan.side * 0.2, cy: fan.y, rx: 0.45, ry: 0.95, fill: "#33333a" });
+    mark(g, "line", { ...line, x1: fan.x + fan.side * 0.9, y1: fan.y, x2: fan.x + fan.side * 3.4, y2: fan.y, stroke: "#33333a", "stroke-width": 1.4, "stroke-dasharray": "3 3" });
   }
   // A mine: its pennant.
   for (const mine of level.mines) {

@@ -288,6 +288,25 @@ export class Sound {
   purr(): void {
     for (let index = 0; index < 9; index += 1) this.tone("sawtooth", 46, 40, 0.07, 0.3, 0.25 + index * 0.09);
   }
+  /** The switch, and the lamp going out. */
+  lightsOut(): void {
+    this.tone("square", 1100, 700, 0.03, 0.3);
+    this.tone("sine", 220, 60, 0.5, 0.3, 0.03);
+  }
+  /** Mice, done with a bale. */
+  squeak(): void {
+    for (const [at, from] of [[0, 2400], [0.07, 2900], [0.16, 2600]] as const) this.tone("sine", from, from * 1.35, 0.05, 0.14, at);
+  }
+  /** A fan: choking on straw, or free of it and running up again. */
+  fan(on: boolean): void {
+    if (on) {
+      this.tone("sawtooth", 60, 170, 0.5, 0.14);
+      this.hiss("bandpass", 500, 1500, 0.5, 0.2);
+    } else {
+      this.hiss("bandpass", 1800, 300, 0.35, 0.5);
+      this.tone("sawtooth", 170, 40, 0.45, 0.2);
+    }
+  }
   /** A hen that is not a hen. */
   tin(): void {
     for (const at of [0, 0.12, 0.24]) this.tone("square", 940, 900, 0.05, 0.11, at);

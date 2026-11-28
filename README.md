@@ -7,9 +7,9 @@ shelves, down drops, on to see-saws, past holes that lead to her frying pan. All
 do is have a straw bale thrown in: **tap, and a bale lands there a moment later.** Straw is
 soft. Nothing else in a kitchen is, bar water.
 
-This is a third try at the game, and so far it is eleven rooms, one under another: **The
+This is a third try at the game, and so far it is twelve rooms, one under another: **The
 Larder**, **The Scullery**, **The Mill**, **The Buttery**, **The Cistern**, **The Servery**,
-**The Cellar**, **The Bakehouse**, **The Pastry**, **The Pantry** and **The Yard**. They were built to find out whether throwing
+**The Cellar**, **The Bakehouse**, **The Pastry**, **The Pantry**, **The Granary** and **The Yard**. They were built to find out whether throwing
 bales is fun, how one room hands him on to the next, and whether each room can bring a new
 contraption without a new control. The house is one tall building and he falls down through it, but each room is a
 short game of its own: at the bottom of a room a hen keeps a **roost**, and once he is on it he
@@ -136,6 +136,15 @@ drops past while it winds. On the floor below a hen sits in a nest, and she is p
 it is an egg trap, and the bar comes over on whatever is in it. A bale will do for that too,
 and then the bar is his bridge to the roost.
 
+The Granary is the dark room. There is a light switch on the wall under the hatch, and he
+knocks it as he drops past: after that all that shows is him, a pool of light round him, the
+lamp on the fan, and a bale while it is in the air. So the room is learnt before he is let
+go, and bales are thrown from memory. And mice come out in the dark: their eyes gather round
+a bale as soon as it is down, and in five seconds they have had it, so no bale can be thrown
+long before it is wanted. There is a gap in the loft, over a pan; then the end of the loft,
+where a winnowing fan on the far wall blows him across the room and down behind the floor,
+unless a bale is standing in its mouth as he drops; then a gap in the floor.
+
 The Yard is the last room, and it is out of doors: the Queen is throwing the kitchen after
 him. In three places a pot comes down every four seconds, and they keep time before he is
 let go as well as after, so *when* he is let go matters. One place is where he comes down
@@ -170,6 +179,7 @@ npx tsx scripts/kitchen.ts       # one run, event by event; throws as time:x,y
                                  #   npx tsx scripts/kitchen.ts room=bakehouse 0.5:-0.6,28 7.5:-0.2,23 10.3:0.9,20.5
                                  #   npx tsx scripts/kitchen.ts room=pastry 1:-0.9,20.6 9:3.1,24
                                  #   npx tsx scripts/kitchen.ts room=pantry 1:0.3,15.3 5.5:-2.4,21.05
+                                 #   npx tsx scripts/kitchen.ts room=granary 1.2:1,27.1 4.5:3,24.8 8.6:0.6,20.6
                                  #   npx tsx scripts/kitchen.ts room=yard wait=2.58 1.3:-0.4,24.2 3.1:-2.2,25.6
                                  #   (wait= runs the yard's sky for that long before he is let go)
 npm run build

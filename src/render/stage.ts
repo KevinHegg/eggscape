@@ -102,6 +102,16 @@ type Side = Exclude<Port, "top">;
 /** The drop from a roost to the hatch below it: a wriggle, the fall, and a moment to land. */
 const ARRIVE = { wait: 0.4, fall: 0.95, land: 0.25 };
 
+/** The paints that go on glowing when the light is out. */
+const NIGHT = new Set(["hay-lit", "eye", "mote", "lamp-go", "lamp-stop", "aim"]);
+/** Where the mice sit round a bale: in its own frame. */
+const MICE: ReadonlyArray<readonly [number, number]> = [
+  [-0.5, 0.42],
+  [0.42, 0.02],
+  [0.52, 0.44],
+  [-0.36, -0.04],
+];
+
 interface Puff {
   entity: pc.Entity;
   life: number;
@@ -207,6 +217,19 @@ export class Stage {
   private pool: pc.Entity[] = [];
   private shake = 0;
   private clock = 0;
+  /** The key light, and the little light that goes about with him when the room is dark. */
+  private readonly sun: pc.Entity;
+  private readonly lantern: pc.Entity;
+  /** How dark it is, 0 to 1; what that was last time the lights were set; and whether the aim is hidden for it. */
+  private gloom = 0;
+  private gloomSet = -1;
+  private blind = false;
+  /** What each glowing paint glows with when the lights are on. */
+  private readonly glows = new Map<string, pc.Color>();
+  private toggles: Array<{ lever: pc.Entity; side: number; k: number }> = [];
+  private blowers: Array<{ blades: pc.Entity; lamps: [pc.Entity, pc.Entity]; ribbons: pc.Entity[]; motes: pc.Entity[]; x: number; y: number; side: number; reach: number; tall: number; turn: number; k: number }> = [];
+  /** The mice at each bale: pairs of eyes. */
+  private readonly eyes = new Map<number, pc.Entity[]>();
   private lookY = 22;
   private snap = true;
 
@@ -245,6 +268,11 @@ export class Stage {
       normalOffsetBias: 0.06,
     });
     this.app.root.addChild(key);
+    this.sun = key;
+    this.lantern = new pc.Entity("lantern");
+    this.lantern.addComponent("light", { type: "omni", color: new pc.Color(1, 0.86, 0.62), intensity: 0, range: 1.7, castShadows: false });
+    this.lantern.enabled = false;
+    this.app.root.addChild(this.lantern);
 
     this.scene = new pc.Entity("scene");
     this.app.root.addChild(this.scene);
@@ -269,7 +297,10 @@ export class Stage {
     material.gloss = options.gloss ?? 0.15;
     material.metalness = 0;
     material.useMetalness = true;
-    if (options.glow) material.emissive = new pc.Color(color.r * options.glow, color.g * options.glow, color.b * options.glow);
+    if (options.glow) {
+      material.emissive = new pc.Color(color.r * options.glow, color.g * options.glow, color.b * options.glow);
+      this.glows.set(name, material.emissive.clone());
+    }
     if (options.opacity !== undefined) {
       material.opacity = options.opacity;
       material.blendType = pc.BLEND_NORMAL;
@@ -329,6 +360,13 @@ export class Stage {
       water: this.paint("water", INK.water, { gloss: 0.9, glow: 0.45, opacity: 0.88 }),
       pool: this.paint("pool", INK.water, { gloss: 0.9, glow: 0.12, opacity: 0.36 }),
       spray: this.paint("spray", new pc.Color(0.8, 0.9, 1), { glow: 0.5 }),
+      bulb: this.paint("bulb", new pc.Color(1, 0.93, 0.7), { glow: 1.3 }),
+      // These are seen in the dark.
+      hayLit: this.paint("hay-lit", INK.hay, { glow: 0.9 }),
+      eye: this.paint("eye", new pc.Color(0.75, 1, 0.35), { glow: 1.4 }),
+      mote: this.paint("mote", new pc.Color(0.8, 0.9, 1), { glow: 0.55 }),
+      lampGo: this.paint("lamp-go", new pc.Color(0.3, 0.95, 0.4), { glow: 1.3 }),
+      lampStop: this.paint("lamp-stop", new pc.Color(1, 0.3, 0.12), { glow: 1.3 }),
     };
   }
 
@@ -487,6 +525,12 @@ export class Stage {
     this.fists = [];
     this.snares = [];
     this.mousers = [];
+    this.toggles = [];
+    this.blowers = [];
+    this.eyes.clear();
+    this.gloom = 0;
+    this.blind = false;
+    this.dim(0);
     this.pots.clear();
     this.holdAsk = null;
     if (!arrive) {
@@ -513,6 +557,8 @@ export class Stage {
       this.buildGloves(level, here);
       this.buildTraps(level, here);
       this.buildCats(level, here);
+      this.buildSwitches(level, here);
+      this.buildFans(level, here);
       this.buildCages(level);
       this.buildPans(level);
       this.buildNest(level, here);
@@ -1441,6 +1487,89 @@ export class Stage {
   }
 
   /** One of the Queen's things, on its way down: a saucepan, a flat-iron, a rolling pin, or the kitchen sink. */
+  /**
+   * A light switch: a brass plate on the wall with a lever on it, up until he knocks it; and the
+   * lamp it works, hung from the ceiling. In a room with one there are mice, and their holes are
+   * in the back wall over every shelf.
+   */
+  private buildSwitches(level: LevelDef, here: boolean): void {
+    const m = this.m;
+    for (const def of level.switches) {
+      const out = def.side;
+      this.shape("box", this.scene, [def.x + out * 0.05, def.y, 0.25], [0.1, 0.8, 0.6], m.gold, [0, 0, 0], true);
+      this.shape("box", this.scene, [def.x + out * 0.11, def.y, 0.25], [0.04, 0.5, 0.2], m.ink, [0, 0, 0], true);
+      const lever = this.group("lever", this.scene, [def.x + out * 0.12, def.y, 0.25]);
+      this.shape("box", lever, [out * 0.24, 0, 0], [0.48, 0.1, 0.12], m.iron);
+      this.shape("sphere", lever, [out * 0.5, 0, 0], [0.24, 0.24, 0.24], m.vermilion);
+      lever.setLocalEulerAngles(0, 0, out * 38);
+      if (here) this.toggles.push({ lever, side: out, k: 0 });
+      // The lamp.
+      const lamp = this.group("lamp", this.scene, [0.4, level.top - 0.2, 0.3]);
+      this.shape("box", lamp, [0, -0.5, 0], [0.04, 1, 0.04], m.ink, [0, 0, 0], true);
+      this.shape("cone", lamp, [0, -1.05, 0], [0.9, 0.34, 0.9], m.verdigris, [0, 0, 0], true);
+      this.shape("sphere", lamp, [0, -1.3, 0], [0.34, 0.4, 0.34], m.bulb);
+    }
+    if (level.switches.length === 0) return;
+    for (const block of level.blocks) {
+      if ((block.look !== "bed" && block.look !== "wood") || block.w < 1.5) continue;
+      const x = block.x - (Math.sin(block.turn) * block.h) / 2 + block.w * 0.22;
+      const y = block.y + (Math.cos(block.turn) * block.h) / 2 + Math.sin(block.turn) * block.w * 0.22;
+      this.shape("cylinder", this.scene, [x, y + 0.08, BACK + 0.04], [0.5, 0.03, 0.62], m.ink, [90, 0, 0], true);
+    }
+  }
+
+  /**
+   * A winnowing fan on a wall: a drum with a cage on the front of it, blades that are seen
+   * through the cage, ribbons that stand out in its wind, and a lamp on top which is green while
+   * it blows and red while a bale is choking it.
+   */
+  private buildFans(level: LevelDef, here: boolean): void {
+    const m = this.m;
+    for (const def of level.fans) {
+      const side = def.side;
+      const root = this.group("fan", this.scene, [def.x, def.y, 0]);
+      this.shape("box", root, [-side * 0.12, 0, 0], [0.16, 1.7, 1.7], m.oakDark, [0, 0, 0], true);
+      this.shape("cylinder", root, [side * 0.12, 0, 0], [1.46, 0.5, 1.46], m.iron, [0, 0, 90], true);
+      this.shape("cylinder", root, [side * 0.4, 0, 0], [1.56, 0.08, 1.56], m.gold, [0, 0, 90], true);
+      const blades = this.group("blades", root, [side * 0.46, 0, 0]);
+      for (let index = 0; index < 3; index += 1) this.shape("box", blades, [0, 0, 0], [0.05, 1.3, 0.3], m.vellum, [index * 60, 0, 0]);
+      this.shape("sphere", blades, [side * 0.03, 0, 0], [0.2, 0.3, 0.3], m.gold);
+      const lamps: [pc.Entity, pc.Entity] = [
+        this.shape("sphere", root, [side * 0.1, 0.98, 0.5], [0.36, 0.36, 0.36], m.lampGo),
+        this.shape("sphere", root, [side * 0.1, 0.98, 0.5], [0.36, 0.36, 0.36], m.lampStop),
+      ];
+      this.shape("cylinder", root, [side * 0.1, 0.8, 0.5], [0.3, 0.1, 0.3], m.iron, [0, 0, 0], true);
+      const ribbons = [m.vermilion, m.lapis, m.gold].map((paint, index) => {
+        const ribbon = this.group("ribbon", root, [side * 0.46, 0.45 - index * 0.45, 0.6 - index * 0.25]);
+        this.shape("box", ribbon, [side * 0.55, 0, 0], [1.1, 0.03, 0.12], paint);
+        return ribbon;
+      });
+      const motes: pc.Entity[] = [];
+      for (let index = 0; index < (here ? 12 : 0); index += 1) motes.push(this.shape("box", this.scene, [def.x, def.y, 0.6], [0.34, 0.03, 0.03], m.mote));
+      if (here) this.blowers.push({ blades, lamps, ribbons, motes, x: def.x, y: def.y, side, reach: def.reach, tall: def.tall, turn: 0, k: 1 });
+    }
+  }
+
+  /** Put the lights out, or on: 0 is day, 1 is as dark as it gets. What glows in the dark goes on glowing. */
+  private dim(gloom: number): void {
+    if (gloom === this.gloomSet) return;
+    this.gloomSet = gloom;
+    const lit = 1 - gloom;
+    const faint = 0.003 + 0.997 * lit;
+    this.app.scene.ambientLight = new pc.Color(0.6 * faint, 0.56 * faint, (0.5 + 0.5 * gloom) * faint);
+    if (this.sun.light) this.sun.light.intensity = 1.45 * lit;
+    if (this.camera.camera) this.camera.camera.clearColor = new pc.Color(0.2 * faint + 0.004, 0.15 * faint + 0.004, 0.12 * faint + 0.008);
+    for (const [name, glow] of this.glows) {
+      if (NIGHT.has(name)) continue;
+      const material = this.materials.get(name);
+      if (!material) continue;
+      material.emissive = new pc.Color(glow.r * lit, glow.g * lit, glow.b * lit);
+      material.update();
+    }
+    this.lantern.enabled = gloom > 0.02;
+    if (this.lantern.light) this.lantern.light.intensity = 2.2 * gloom;
+  }
+
   private buildPot(kind: number): pc.Entity {
     const m = this.m;
     const pot = this.group("pot", this.scene);
@@ -1675,7 +1804,7 @@ export class Stage {
   /** Show where a bale would go, or nothing. */
   aim(at: { x: number; y: number; turn: number } | null): void {
     if (!this.ghost) return;
-    this.ghost.enabled = at !== null;
+    this.ghost.enabled = at !== null && !this.blind;
     if (!at) return;
     this.ghost.setLocalPosition(at.x, at.y, 0);
     this.ghost.setLocalEulerAngles(0, 0, at.turn * RAD);
@@ -1747,6 +1876,41 @@ export class Stage {
       this.cracks.forEach((crack, index) => (crack.enabled = index < game.cracks * 2));
     }
 
+    // The light goes out at a click, and comes back a little slower.
+    const dark = game.dark;
+    this.blind = dark;
+    const want = dark ? 1 : 0;
+    this.gloom += (want - this.gloom) * Math.min(1, dt * (dark ? 16 : 5));
+    if (Math.abs(want - this.gloom) < 0.01) this.gloom = want;
+    this.dim(this.gloom);
+    this.lantern.setPosition(egg.x, egg.y + 0.15, 0.95);
+    if (dark && this.ghost) this.ghost.enabled = false;
+    this.toggles.forEach((toggle) => {
+      toggle.k += ((game.darkFor >= 0 ? 1 : 0) - toggle.k) * Math.min(1, dt * 30);
+      toggle.lever.setLocalEulerAngles(0, 0, toggle.side * 38 * (1 - 2 * toggle.k));
+    });
+    game.fans.forEach((state, index) => {
+      const fan = this.blowers[index];
+      if (!fan) return;
+      fan.k += ((state.choked ? 0 : 1) - fan.k) * Math.min(1, dt * 6);
+      fan.turn += dt * 900 * fan.k;
+      fan.blades.setLocalEulerAngles(fan.turn % 360, 0, 0);
+      fan.lamps[0].enabled = !state.choked;
+      fan.lamps[1].enabled = state.choked;
+      const beat = 1 + Math.sin(this.clock * 7) * 0.06;
+      fan.lamps[state.choked ? 1 : 0].setLocalScale(0.36 * beat, 0.36 * beat, 0.36 * beat);
+      fan.ribbons.forEach((ribbon, each) => {
+        const flap = Math.sin(this.clock * 17 + each * 2.1) * 9 * fan.k;
+        ribbon.setLocalEulerAngles(0, 0, -fan.side * (1 - fan.k) * 82 + flap);
+      });
+      fan.motes.forEach((mote, each) => {
+        const along = (this.clock * (3.2 + (each % 4) * 0.5) + each * 1.37) % fan.reach;
+        const up = (((each * 7) % 12) / 11 - 0.5) * 2 * (fan.tall - 0.25);
+        mote.enabled = !state.choked && along < fan.reach - 0.3;
+        mote.setLocalPosition(fan.x + fan.side * (0.5 + along), fan.y + up + Math.sin(this.clock * 3 + each) * 0.08, 0.2 + ((each * 5) % 7) * 0.12);
+      });
+    });
+
     const live = new Set<number>();
     for (const bale of game.bales) {
       live.add(bale.id);
@@ -1757,6 +1921,25 @@ export class Stage {
       }
       entity.setLocalPosition(bale.x, bale.y, 0);
       entity.setLocalEulerAngles(0, 0, bale.turn * RAD);
+      // The mice: one pair of eyes as soon as it is down, then more, and all of them at it at the end.
+      const pairs = bale.gnawed > 0 || dark ? Math.min(MICE.length, 1 + Math.floor(bale.gnawed * MICE.length)) : 0;
+      let mice = this.eyes.get(bale.id);
+      if (pairs > 0 && !mice) {
+        const made = entity;
+        mice = MICE.map(([x, y]) => {
+          const pair = this.group("eyes", made, [x, y, 0.96]);
+          for (const side of [-1, 1]) this.shape("sphere", pair, [side * 0.1, 0, 0], [0.13, 0.13, 0.06], this.m.eye);
+          pair.enabled = false;
+          return pair;
+        });
+        this.eyes.set(bale.id, mice);
+      }
+      mice?.forEach((pair, each) => {
+        pair.enabled = each < pairs;
+        const blink = Math.sin(this.clock * 1.9 + each * 2.3 + bale.id) > 0.95 ? 0.1 : 1;
+        const hurry = bale.gnawed > 0.8 ? 1 + Math.sin(this.clock * 34 + each) * 0.3 : 1;
+        pair.setLocalScale(hurry, blink * hurry, 1);
+      });
       if (bale.burnt > 0) {
         let char = this.chars.get(bale.id);
         if (!char) {
@@ -1775,6 +1958,7 @@ export class Stage {
       entity.destroy();
       this.bales.delete(id);
       this.chars.delete(id);
+      this.eyes.delete(id);
     }
 
     // Bales on their way in come from the audience's side of the missing wall.
@@ -1783,7 +1967,7 @@ export class Stage {
       coming.add(bale.id);
       let flying = this.flying.get(bale.id);
       if (!flying) {
-        flying = { bale: this.baleShape(this.scene), ring: this.hoop(this.scene, [bale.x, bale.y, 1], this.m.aim) };
+        flying = { bale: this.baleShape(this.scene, dark ? this.m.hayLit : undefined), ring: this.hoop(this.scene, [bale.x, bale.y, 1], this.m.aim) };
         this.flying.set(bale.id, flying);
       }
       const k = bale.k;
@@ -1803,12 +1987,14 @@ export class Stage {
     game.seesaws.forEach((saw, index) => this.planks[index]?.setLocalEulerAngles(0, 0, saw.turn * RAD));
     for (const socket of this.sockets) {
       const filled = game.bales.some((bale) => Math.hypot(bale.x - socket.x, bale.y - socket.y) < 0.5);
-      socket.entity.enabled = !filled && !game.over;
+      socket.entity.enabled = !filled && !game.over && !dark;
       const pulse = 1 + Math.sin(this.clock * 4) * 0.03;
       socket.entity.setLocalScale(pulse, pulse, 1);
     }
 
     this.flames.forEach((flame, index) => {
+      // The gas is on the same switch as the light.
+      flame.enabled = this.gloom < 0.5;
       const lick = 0.3 + Math.abs(Math.sin(this.clock * 9 + index * 2)) * 0.2;
       flame.setLocalScale(0.2, lick, 0.1);
     });
@@ -2416,6 +2602,18 @@ export class Stage {
       case "fetch":
         this.burst(event.x, event.y + 0.2, m.hay, 16, 0.4, 4.5);
         this.shake = Math.max(this.shake, 0.3);
+        break;
+      case "dark":
+        this.shake = Math.max(this.shake, 0.25);
+        break;
+      case "gnawed":
+        this.burst(event.x, event.y, m.hayLit, 7, 0.16, 2.2);
+        break;
+      case "fan":
+        if (!event.on) {
+          this.burst(event.x - 0.6, event.y, game.dark ? m.hayLit : m.hay, 12, 0.22, 4);
+          this.shake = Math.max(this.shake, 0.2);
+        }
         break;
       case "pounce":
         this.burst(event.x, event.y + 0.3, m.dust, 10, 0.3, 4);

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { before, test } from "node:test";
-import { BAKEHOUSE, BOIL, BURN, BUTTERY, CAGE, CAT_LEAP, CAT_NAP, CAT_STIR, CELLAR, CISTERN, DOOR_LAPS, DOOR_TURN, Game, IDLE, LARDER, LEVELS, LIFT_SPEED, MILLROOM, PANTRY, PASTRY, POT_FALL, RACE, RISE, SCULLERY, SEAT_IDLE, SERVERY, SKY_EVERY, STEP, STOREY, TRAP_BEAT, WHEEL_TURN, WIND, YARD, loadPhysics, type GameEvent, type Input, type LevelDef } from "../src/sim/kitchen";
-import { GOOD_DROP, LETS, PLANS, bakehousePlan, butteryPlan, cellarPlan, cisternPlan, larderPlan, millPlan, pantryPlan, pastryPlan, pilot, sculleryPlan, serveryPlan, yardPlan, type Move } from "../src/sim/pilot";
+import { BAKEHOUSE, BOIL, BURN, BUTTERY, CAGE, CAT_LEAP, CAT_NAP, CAT_STIR, CELLAR, CISTERN, DOOR_LAPS, DOOR_TURN, GNAW, GRANARY, Game, IDLE, LARDER, LEVELS, LIFT_SPEED, MILLROOM, PANTRY, PASTRY, POT_FALL, RACE, RISE, SCULLERY, SEAT_IDLE, SERVERY, SKY_EVERY, STEP, STOREY, TRAP_BEAT, WHEEL_TURN, WIND, YARD, loadPhysics, type GameEvent, type Input, type LevelDef } from "../src/sim/kitchen";
+import { GOOD_DROP, LETS, PLANS, bakehousePlan, butteryPlan, cellarPlan, cisternPlan, granaryPlan, larderPlan, millPlan, pantryPlan, pastryPlan, pilot, sculleryPlan, serveryPlan, yardPlan, type Move } from "../src/sim/pilot";
 
 before(async () => {
   await loadPhysics();
@@ -1167,7 +1167,7 @@ test("pantry: there is no way down to the roost but along the floor", () => {
   assert.ok(pit.x - pit.w / 2 <= trap.x1 + 0.2, "the griddle reaches the trap");
   assert.ok(pit.x + pit.w / 2 >= PANTRY.nest.x1, "and the wall");
   // Knocked out of the air by a bale on his way to the griddle, he is on the griddle still.
-  const down = STOREY * 9;
+  const down = LARDER.top - PANTRY.top;
   const { game } = pantry(throws([[7.92, 0.29, 21.49 - down], [8.04, -1.23, 16.24 - down]]));
   assert.notEqual(game.phase, "home");
 });
@@ -1272,8 +1272,133 @@ test("yard: both bales thrown as he is let go get him home at no moment at all",
   }
 });
 
-test("the house is eleven rooms, each under the last, and only the bottom one is home", () => {
-  assert.equal(LEVELS.length, 11);
+/** A run of the granary with the time of each thing that happened in it. */
+function granary(hands: (game: Game) => Input, limit = 40): { game: Game; events: Array<GameEvent & { t: number }>; darkest: number } {
+  const game = new Game(GRANARY);
+  const events: Array<GameEvent & { t: number }> = [];
+  let darkest = 0;
+  game.start();
+  while (!game.over && game.time < limit) {
+    game.step(hands(game));
+    if (game.dark) darkest += STEP;
+    for (const event of game.drain()) events.push({ ...event, t: game.time });
+  }
+  return { game, events, darkest };
+}
+
+test("granary: he knocks the switch as he drops, and the room is dark until he is on the roost", () => {
+  const { game, events, darkest } = granary(pilot(granaryPlan()));
+  assert.equal(game.phase, "home");
+  assert.equal(game.stars, 3);
+  assert.equal(game.cracks, 0);
+  assert.equal(game.balesLeft, GRANARY.bales - 3);
+  assert.equal(count(events, "dark"), 1);
+  const out = when(events, "dark");
+  assert.ok(out > 0.5 && out < 1.5, `the light goes out at ${out.toFixed(2)}s`);
+  assert.ok(Math.abs(darkest - (game.time - out)) < 0.05, "and stays out for the rest of the run");
+  assert.equal(game.dark, false, "and is on again when he is home");
+});
+
+test("granary: the light is on until he is let go, and nothing in the room moves before that", () => {
+  const game = new Game(GRANARY);
+  for (let step = 0; step < 300; step += 1) game.wait();
+  assert.equal(game.dark, false);
+  assert.equal(game.darkFor, -1);
+  assert.deepEqual(game.drain(), []);
+  game.dispose();
+});
+
+test("granary: each of its three places has him without its bale", () => {
+  const [loft, , floor] = GRANARY.sockets;
+  const gap = granary(pilot(granaryPlan({ gap: false })));
+  assert.equal(gap.game.phase, "fried");
+  assert.ok(Math.abs(gap.events.find((event) => event.type === "fried")!.x - loft!.x) < 0.1, "the gap in the loft");
+  const fan = granary(pilot(granaryPlan({ fan: false })));
+  assert.equal(fan.game.phase, "fried");
+  assert.ok(fan.events.find((event) => event.type === "fried")!.x < GRANARY.left + 1.4, "behind the floor, at the left wall");
+  const hole = granary(pilot(granaryPlan({ hole: false })));
+  assert.equal(hole.game.phase, "fried");
+  assert.ok(Math.abs(hole.events.find((event) => event.type === "fried")!.x - floor!.x) < 0.1, "the gap in the floor");
+});
+
+test("granary: mice have a bale five seconds after it lands in the dark, and one thrown in the light five seconds after the light goes", () => {
+  // The first is the one in the gap in the loft, which he is over before it goes.
+  const loft = GRANARY.sockets[0]!;
+  const moves: Move[] = [
+    { when: (game) => game.time > 0.05, x: loft.x, y: loft.seat!.y },
+    { when: (game) => game.time > 2, x: 3, y: GRANARY.nest.y0 + 0.4 },
+  ];
+  const { events } = granary(pilot(moves), 9);
+  const out = when(events, "dark");
+  const landed = events.filter((event) => event.type === "bale").map((event) => event.t);
+  const eaten = events.filter((event) => event.type === "gnawed").map((event) => event.t);
+  assert.equal(eaten.length, 2);
+  assert.ok(landed[0]! < out, "the first was down before the light went");
+  assert.ok(Math.abs(eaten[0]! - out - GNAW) < 0.05, `it went ${(eaten[0]! - out).toFixed(2)}s after`);
+  assert.ok(Math.abs(eaten[1]! - landed[1]! - GNAW) < 0.05, `the second went ${(eaten[1]! - landed[1]!).toFixed(2)}s after it landed`);
+});
+
+test("granary: a bale in the fan's mouth stops it, until the mice have had the bale", () => {
+  const [loft, mouth] = GRANARY.sockets;
+  let choked = 0;
+  const hands = pilot([
+    { when: (game) => game.time > 0.05, x: loft!.x, y: loft!.seat!.y },
+    { when: (game) => game.time > 1.5, x: mouth!.x, y: mouth!.seat!.y },
+  ]);
+  const { game, events } = granary((game) => {
+    if (game.fans[0]!.choked) choked += STEP;
+    return hands(game);
+  }, 8);
+  const fan = events.filter((event) => event.type === "fan") as Array<Extract<GameEvent, { type: "fan" }> & { t: number }>;
+  assert.deepEqual(fan.map((event) => event.on), [false, true]);
+  assert.ok(Math.abs(fan[1]!.t - fan[0]!.t - GNAW) < 0.05);
+  assert.ok(Math.abs(choked - GNAW) < 0.1);
+  // The one in the gap goes first, and then the one in the fan.
+  const gone = events.filter((event) => event.type === "gnawed") as Array<Extract<GameEvent, { type: "gnawed" }>>;
+  assert.deepEqual(gone.map((event) => event.fan), [false, true]);
+  game.dispose();
+});
+
+test("granary: every bale thrown at once, whenever that is, and he is in a pan", () => {
+  for (let at = 0; at <= 12; at += 0.25) {
+    const { game } = granary(pilot(granaryPlan({ gap: at, fan: at, hole: at })));
+    assert.notEqual(game.phase, "home", `all three at ${at}s`);
+    game.dispose();
+  }
+});
+
+test("granary: each bale has more than four seconds to be thrown in, and none of them is at the start", () => {
+  const good = (options: Parameters<typeof granaryPlan>[0]): boolean => {
+    const { game } = granary(pilot(granaryPlan(options)));
+    const home = game.phase === "home";
+    game.dispose();
+    return home;
+  };
+  const span = (name: "gap" | "fan" | "hole", from: number, to: number): [number, number] => {
+    const times: number[] = [];
+    for (let at = from; at <= to; at += 0.25) if (good({ [name]: at })) times.push(at);
+    return [times[0] ?? -1, times[times.length - 1] ?? -1];
+  };
+  // The first can go as he is let go, while the light is still on; the others cannot.
+  const gap = span("gap", 0, 6);
+  assert.ok(gap[0] === 0 && gap[1] >= 3, `the gap in the loft: ${gap}`);
+  const fan = span("fan", 0, 10);
+  assert.ok(fan[0] >= 2 && fan[1] - fan[0] >= 4, `the fan: ${fan}`);
+  const hole = span("hole", 0, 13);
+  assert.ok(hole[0] >= 5 && hole[1] - hole[0] >= 4, `the gap in the floor: ${hole}`);
+});
+
+test("granary: thrown too soon, the fan's bale is gone before he drops past it, and the fan has him", () => {
+  const { game, events } = granary(pilot(granaryPlan({ fan: 1.5 })));
+  assert.equal(game.phase, "fried");
+  const eaten = events.find((event) => event.type === "gnawed" && event.fan);
+  const fried = events.find((event) => event.type === "fried")!;
+  assert.ok(eaten && eaten.t < fried.t);
+  assert.ok(fried.x < GRANARY.left + 1.4);
+});
+
+test("the house is twelve rooms, each under the last, and only the bottom one is home", () => {
+  assert.equal(LEVELS.length, 12);
   LEVELS.forEach((level, index) => {
     assert.equal(level.top, LARDER.top - STOREY * index, level.name);
     assert.equal(level.ends, index === LEVELS.length - 1 ? "nest" : "roost", level.name);

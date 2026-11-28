@@ -1,4 +1,4 @@
-import { BUTTERY, CISTERN, LARDER, PANTRY, PASTRY, SCULLERY, STOREY, YARD, type Game, type Input, type LevelDef } from "./kitchen";
+import { BUTTERY, CISTERN, GRANARY, LARDER, PANTRY, PASTRY, SCULLERY, STOREY, YARD, type Game, type Input, type LevelDef } from "./kitchen";
 
 /** What a player does on a screen, as a list of things to wait for and where to put the bale. */
 export interface Move {
@@ -205,11 +205,28 @@ export function pantryPlan(options: { trap?: number | false; feed?: boolean | nu
   ];
 }
 
+/**
+ * The eleventh screen played properly: a bale in the gap in the loft as the light goes out, one
+ * in the mouth of the fan once he is over that gap, and one in the gap in the floor once he has
+ * dropped past the fan. As numbers, they are times to throw at, whatever he is doing.
+ */
+export function granaryPlan(options: { gap?: boolean | number; fan?: boolean | number; hole?: boolean | number } = {}): Move[] {
+  const { gap = true, fan = true, hole = true } = options;
+  const [loft, mouth, floor] = GRANARY.sockets;
+  const blower = GRANARY.fans[0]!;
+  const at = (when: true | number, cue: Move["when"]): Move["when"] => (when === true ? cue : (game) => game.time > when);
+  return [
+    ...(gap === false ? [] : [{ when: at(gap, (game) => game.dark), x: loft!.x, y: loft!.seat!.y }]),
+    ...(fan === false ? [] : [{ when: at(fan, (game) => game.dark && game.egg.x < loft!.x - 0.9), x: mouth!.x, y: mouth!.seat!.y }]),
+    ...(hole === false ? [] : [{ when: at(hole, (game) => game.egg.y < blower.y - 2), x: floor!.x, y: floor!.seat!.y }]),
+  ];
+}
+
 /** Whether a pot has come down in this place in the yard since he was let go, and at least this long after. */
 const since = (game: Game, place: number, after = 0): boolean => (game.skies[place]?.last ?? -1) > game.sky - game.time + after;
 
 /**
- * The eleventh screen played properly: a bale in the gap once a pot has gone through it, and
+ * The twelfth screen played properly: a bale in the gap once a pot has gone through it, and
  * one on the pegs over the feather bed once a pot has come down on that. As numbers, they are
  * times to throw at, whatever the sky is doing.
  */
@@ -243,6 +260,7 @@ export const PLANS: Record<string, () => Move[]> = {
   bakehouse: () => bakehousePlan(),
   pastry: () => pastryPlan(),
   pantry: () => pantryPlan(),
+  granary: () => granaryPlan(),
   yard: () => yardPlan(),
 };
 

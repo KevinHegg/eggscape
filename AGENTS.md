@@ -1,13 +1,13 @@
 # The Great Eggscape: working rules
 
 A mobile-first physics game. The Egg King falls through the Queen's kitchen by himself, and the
-player's only move is to tap a place and have a straw bale thrown there. Prototype stage: eleven
+player's only move is to tap a place and have a straw bale thrown there. Prototype stage: twelve
 rooms, The Larder, The Scullery, The Mill, The Buttery, The Cistern, The Servery, The Cellar,
-The Bakehouse, The Pastry, The Pantry and The Yard, built to find out whether that one verb is fun,
+The Bakehouse, The Pastry, The Pantry, The Granary and The Yard, built to find out whether that one verb is fun,
 how one room hands him on to the next, and whether a room can bring a new contraption without
 a new control. The user's verdict on the Larder alone: "This is good."; on the first two
-rooms: "These are playing well."; on the first nine: "These all play well." The Pantry and
-the Yard have not been played by the user yet.
+rooms: "These are playing well."; on the first nine: "These all play well." The Pantry, the
+Granary and the Yard have not been played by the user yet.
 
 Two earlier games are frozen and published beside this one. Do not merge them back or change
 them in passing; they are kept as they were on purpose.
@@ -203,6 +203,30 @@ them in passing; they are kept as they were on purpose.
   - The griddle reaches from the wall to the trap, so the roost is reached along the floor
     and no other way. Before that, a bale that knocked him out of the second glove's throw
     dropped him beside the pan and straight into the roost. Random play found it.
+- The Granary is the dark room, and it was the user's idea: "egg rolls across a light switch
+  on an outer wall. The room goes dark. Bales must be placed to avoid traps and pitfalls
+  ahead of time. Bales can be tossed and placed but are only visible until they enter the
+  darkness... I can also imagine using fans somehow."
+  - The switch (`SwitchDef`) is a sensor on the wall: `game.dark` is true from when he passes
+    it until the run ends. Darkness is drawing only (`Stage.dim`): the lights and every glow
+    go down except the paints named in `NIGHT`, a small light goes about with him, a bale
+    in the air glows, and the aim ghost, the socket outlines and the pans' flames are hidden.
+    Nothing in the rules reads the dark except the mice.
+  - Mice (`gnaw`) are the dark's own rule: every bale is gone `GNAW` seconds after it lands
+    (or after the light goes, if it was thrown before). That is what stops all the bales
+    being tapped the moment the light goes out, from fresh memory; without it the room is no
+    harder than a lit one. Their eyes at a bale show where it landed and how long it has.
+  - The fan (`FanDef`) pushes him at `FAN_BLOW` while he is in its band, which is only as he
+    drops off the end of the loft: that puts him behind the floor and in a pan. A bale in
+    its mouth stops it until the mice have the bale. Its lamp shows in the dark, so that tap
+    has a mark to aim at; the two gaps have none.
+  - Each bale has about four and a half seconds to be thrown in (tests sweep them), and all
+    three thrown together fail at every moment. The first can go while the light is on.
+  - Considered and not built: two fans taking turns to blow him down one of two routes. Its
+    weakness was that letting him go at the right moment picks the route, and then both
+    bales can be tapped at once.
+  - The lower floor is where it is so that its gap shows above the ready view's message on a
+    short phone screen (390 by 664): he has to be able to learn the room before he goes.
 - The Yard's sky (`SkyDef`) lets a pot go in each place every `SKY_EVERY` seconds, and they
   fall at `POT_FALL`. `game.sky` is its clock and `game.wait()` runs it while he is on the
   hatch, so the moment he is let go is part of the play (`LETS` in the pilot is the plan's).
@@ -285,7 +309,7 @@ them in passing; they are kept as they were on purpose.
 
 - Development: `npm run dev` (port 5180); `?auto` lets the scripted player play
 - Tests: `npm test`; full acceptance: `npm run check`
-- Trace a run event by event: `npx tsx scripts/kitchen.ts [room=scullery|mill|buttery|cistern|servery|cellar|bakehouse|pastry|pantry|yard] [wait=seconds] [time:x,y ...]`
+- Trace a run event by event: `npx tsx scripts/kitchen.ts [room=scullery|mill|buttery|cistern|servery|cellar|bakehouse|pastry|pantry|granary|yard] [wait=seconds] [time:x,y ...]`
   (heights as if the room stood where the Larder does; `wait=` runs the yard's sky before he is let go)
 - In a browser console, `__egg.step(seconds, { x, y })` drives the game where frames do not
   tick (a hidden tab), and the sky while he is on the hatch; set `__egg.stage.app.timeScale = 0` first, `__egg.restart()` to begin,
