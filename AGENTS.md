@@ -1,12 +1,13 @@
 # The Great Eggscape: working rules
 
 A mobile-first physics game. The Egg King falls through the Queen's kitchen by himself, and the
-player's only move is to tap a place and have a straw bale thrown there. Prototype stage: nine
+player's only move is to tap a place and have a straw bale thrown there. Prototype stage: eleven
 rooms, The Larder, The Scullery, The Mill, The Buttery, The Cistern, The Servery, The Cellar,
-The Bakehouse and The Pastry, built to find out whether that one verb is fun,
+The Bakehouse, The Pastry, The Pantry and The Yard, built to find out whether that one verb is fun,
 how one room hands him on to the next, and whether a room can bring a new contraption without
 a new control. The user's verdict on the Larder alone: "This is good."; on the first two
-rooms: "These are playing well."
+rooms: "These are playing well."; on the first nine: "These all play well." The Pantry and
+the Yard have not been played by the user yet.
 
 Two earlier games are frozen and published beside this one. Do not merge them back or change
 them in passing; they are kept as they were on purpose.
@@ -177,6 +178,30 @@ them in passing; they are kept as they were on purpose.
     it, hands him to the blackbirds: `FLOCK` seconds along a spline (`along`) with gravity
     off, over the last jelly, under the one above and down into the nest. An open pie with
     nobody carried is a cage.
+- The Pantry's gloves (`GloveDef`) punch by rule: whatever is in front of one (`near`..`far`
+  out from the wall, at its height) when it is wound is thrown from `from` with `toss`
+  (`launch`), and it is `WIND` seconds winding back. A loose bale in front of it takes the
+  punch and is gone.
+  - Each glove is under the END of a shelf, not along one: he crawls off the end on a feather
+    bed, drops in front of the glove and is punched under the shelf. A fed bale is punched in
+    the air, so none can be parked there; and one thrown as he is let go is wound back from
+    before he arrives.
+  - The egg trap (`TrapDef`) is a soft nest let into the floor. He is `TRAP_BEAT` seconds in
+    it and the bar comes over: broken. A bale in it springs it at once, is gone, and the bar
+    is a hard lid he rolls across.
+  - The griddle reaches from the wall to the trap, so the roost is reached along the floor
+    and no other way. Before that, a bale that knocked him out of the second glove's throw
+    dropped him beside the pan and straight into the roost. Random play found it.
+- The Yard's sky (`SkyDef`) lets a pot go in each place every `SKY_EVERY` seconds, and they
+  fall at `POT_FALL`. `game.sky` is its clock and `game.wait()` runs it while he is on the
+  hatch, so the moment he is let go is part of the play (`LETS` in the pilot is the plan's).
+  A pot bursts the first bale it meets and is gone; it ends him if it meets him; nothing
+  else stops it.
+  - Timing is by sight and has long windows: about a second to let him go in every four,
+    seconds for the bridge and seconds for the roof. Both bales thrown as he is let go get
+    him home at no moment (a test sweeps every tenth of a second).
+  - The long shelf runs back to the wall under the top one. Before that, a bale landing on
+    him turned him round and he dropped off the open end straight into the nest.
 - Blocks with the look `bare` collide and are not drawn: the machine they belong to draws them.
 - New rooms have no mines, on purpose: the user said a thing repeated loses its surprise.
 - The map (`drawMap` in `src/main.ts`) is drawn from the `LevelDef`s, so a new room is on it
@@ -205,7 +230,9 @@ them in passing; they are kept as they were on purpose.
   wants a socket too, or a bale put a little to one side ends up propped on the seat.
 - Getting nowhere is measured by how far he has moved, not by speed, so rocking on the spot
   counts as stopped. Being carried round in a door does not.
-- A failed go restarts the room at once, and a whole room is about a quarter of a minute.
+- Every go, do-overs included, begins on the hatch with the room in view and waits for
+  **Let him go**: the user asked for this, because it is where the throws are planned. A
+  whole room is about a quarter of a minute.
 - Puzzles should have more than one way through, at different prices (the user asked for
   this of the last game, and it still holds).
 - Portrait and one thumb come first. The whole room should fit on a phone without scrolling
@@ -247,10 +274,10 @@ them in passing; they are kept as they were on purpose.
 
 - Development: `npm run dev` (port 5180); `?auto` lets the scripted player play
 - Tests: `npm test`; full acceptance: `npm run check`
-- Trace a run event by event: `npx tsx scripts/kitchen.ts [room=scullery|mill|buttery|cistern|servery|cellar|bakehouse|pastry] [time:x,y ...]`
-  (heights as if the room stood where the Larder does)
+- Trace a run event by event: `npx tsx scripts/kitchen.ts [room=scullery|mill|buttery|cistern|servery|cellar|bakehouse|pastry|pantry|yard] [wait=seconds] [time:x,y ...]`
+  (heights as if the room stood where the Larder does; `wait=` runs the yard's sky before he is let go)
 - In a browser console, `__egg.step(seconds, { x, y })` drives the game where frames do not
-  tick (a hidden tab); set `__egg.stage.app.timeScale = 0` first, `__egg.restart()` to begin,
+  tick (a hidden tab), and the sky while he is on the hatch; set `__egg.stage.app.timeScale = 0` first, `__egg.restart()` to begin,
   `__egg.enter(1)` to sit him in the second room, `__egg.descend()` to leave a roost. Here
   `y` is the house's own height: each room is a `STOREY` (18) lower than the one above.
 - Sound is `src/audio.ts`: synthesised, no files, presentation only.

@@ -108,6 +108,14 @@ export const BOIL = 2;
 export const FLOCK = 2.6;
 /** How fast he comes off a jelly that a bale has stopped. */
 const JELLY_CRAWL = 0.8;
+/** How long a boxing glove is winding itself back after it has hit something. */
+export const WIND = 4;
+/** How long he sits in an egg trap before it goes: long enough to think he is home. */
+export const TRAP_BEAT = 0.7;
+/** The Queen's pots: how fast they come down, how big they are, and how often one comes in each place. */
+export const POT_FALL = 5;
+export const POT_R = 0.36;
+export const SKY_EVERY = 4;
 export const LIFT_SPEED = 3;
 export const LIFT_TILT = 0.1;
 /** How fast something has to be going to do damage: a barrel to straw and to him. */
@@ -378,6 +386,49 @@ export interface PieDef {
   way: Array<{ x: number; y: number }>;
 }
 
+/**
+ * A boxing glove on a spring, in a box on a wall, under the end of a shelf. It punches whatever
+ * comes down in front of it, him or a bale, and always the same way; and then it is `WIND`
+ * seconds winding itself back, and hits nothing.
+ */
+export interface GloveDef {
+  /** The face of its box, the height of the middle of the glove, and which way it punches (1 is to the right). */
+  x: number;
+  y: number;
+  side: 1 | -1;
+  /** How far out from the face it hits: from here to there. */
+  near: number;
+  far: number;
+  /** Where he is thrown from, and how. */
+  from: { x: number; y: number };
+  toss: { x: number; y: number };
+}
+
+/**
+ * An egg trap: a nest with a painted hen in it, and a bar on a spring behind her. Whatever comes
+ * to rest in the nest, the bar comes over on it. Once it has, the bar lies across the nest from
+ * one rim to the other, and is a bridge.
+ */
+export interface TrapDef {
+  /** Inside the nest: between its walls, and its floor. */
+  x0: number;
+  x1: number;
+  floor: number;
+  /** The tops of its two rims, which the bar lies across. */
+  y0: number;
+  y1: number;
+}
+
+/**
+ * A place where the Queen's kitchen comes down out of the sky: one thing every `every` seconds,
+ * the first let go at `first`. They keep time whether he has been let go or not.
+ */
+export interface SkyDef {
+  x: number;
+  every: number;
+  first: number;
+}
+
 /** A mine: the middle of its plate, which lies in the face of a shelf; how that shelf leans; and how wide the plate is. */
 export interface MineDef {
   x: number;
@@ -428,6 +479,9 @@ export interface LevelDef {
   kettles: KettleDef[];
   jellies: JellyDef[];
   pies: PieDef[];
+  gloves: GloveDef[];
+  traps: TrapDef[];
+  skies: SkyDef[];
   pits: PitDef[];
   /** Places there is no way out of: the hook has him out of one in `CAGE` seconds. */
   cages: Array<{ x0: number; x1: number; y0: number; y1: number }>;
@@ -533,6 +587,9 @@ export const LARDER: LevelDef = {
   kettles: [],
   jellies: [],
   pies: [],
+  gloves: [],
+  traps: [],
+  skies: [],
   pits: [{ x: PIT.x, y: lowAt(PIT.x) - WELL_DEEP, w: PIT.w, pan: FLOOR + 0.7, hung: false }],
   sockets: [
     { x: PIT.x, y0: lowAt(PIT.x) - 1.2, y1: lowAt(PIT.x) + 1.4, reach: 1, seat: { y: lowAt(PIT.x) - WELL_DEEP / 2 + 0.08, turn: LOW_TURN } },
@@ -591,6 +648,9 @@ function lowered(level: LevelDef, by: number): LevelDef {
       pan: { ...pie.pan, y: pie.pan.y - by },
       way: pie.way.map((point) => ({ x: point.x, y: point.y - by })),
     })),
+    gloves: level.gloves.map((glove) => ({ ...glove, y: glove.y - by, from: { x: glove.from.x, y: glove.from.y - by } })),
+    traps: level.traps.map((trap) => ({ ...trap, floor: trap.floor - by, y0: trap.y0 - by, y1: trap.y1 - by })),
+    skies: level.skies,
     barrels: level.barrels.map((barrel) => ({
       ...barrel,
       y: barrel.y - by,
@@ -744,6 +804,9 @@ const SCULLERY_HERE: LevelDef = {
   kettles: [],
   jellies: [],
   pies: [],
+  gloves: [],
+  traps: [],
+  skies: [],
   pits: [
     { x: GAP.x, y: rackAt(GAP.x) - GAP_DEEP, w: GAP.w, pan: rackAt(GAP.x) - GAP_DEEP - GAP.hang, hung: true },
     { x: DRAIN.x, y: DRAIN_Y - BALE_H, w: DRAIN.w, pan: FLOOR + 0.7, hung: false },
@@ -863,6 +926,9 @@ const MILL_HERE: LevelDef = {
   kettles: [],
   jellies: [],
   pies: [],
+  gloves: [],
+  traps: [],
+  skies: [],
   pits: [
     // Anything that comes out of the bottom of the wheel is in the tray.
     { x: (TRAY.x0 + TRAY.x1 - 0.2) / 2, y: MILL.y - MILL.r - 0.05, w: TRAY.x1 - 0.2 - TRAY.x0, pan: TRAY.y + 0.05, hung: true },
@@ -980,6 +1046,9 @@ const BUTTERY_HERE: LevelDef = {
   kettles: [],
   jellies: [],
   pies: [],
+  gloves: [],
+  traps: [],
+  skies: [],
   pits: [{ x: TURN.x, y: TURN.y - DRUM + 0.05, w: 2.1, pan: TURN.y - DRUM - 0.8, hung: true }],
   cages: [],
   sockets: [
@@ -1087,6 +1156,9 @@ const CISTERN_HERE: LevelDef = {
   kettles: [],
   jellies: [],
   pies: [],
+  gloves: [],
+  traps: [],
+  skies: [],
   pits: [{ x: -3.1, y: VAT.lip - GUTTER.drop, w: 1.8, pan: 16.85, hung: true }],
   cages: [],
   sockets: [
@@ -1194,6 +1266,9 @@ const SERVERY_HERE: LevelDef = {
   kettles: [],
   jellies: [],
   pies: [],
+  gloves: [],
+  traps: [],
+  skies: [],
   pits: [],
   cages: [],
   sockets: [],
@@ -1295,6 +1370,9 @@ const CELLAR_HERE: LevelDef = {
   kettles: [],
   jellies: [],
   pies: [],
+  gloves: [],
+  traps: [],
+  skies: [],
   pits: [{ x: VAULT.x, y: skidAt(SKID.end), w: VAULT.w, pan: VAULT.pan, hung: true }],
   cages: [],
   sockets: [
@@ -1394,6 +1472,9 @@ const BAKEHOUSE_HERE: LevelDef = {
   kettles: [{ x: KETTLE.x, y: KETTLE.y, w: KETTLE.w, hearth: 1, toss: { x: 2.13, y: 6.5 } }],
   jellies: [],
   pies: [],
+  gloves: [],
+  traps: [],
+  skies: [],
   pits: [],
   cages: [],
   sockets: [
@@ -1433,13 +1514,13 @@ function lob(from: { x: number; y: number }, to: { x: number; y: number }, time:
  * over a pie and into the Queen's pan. A bale sinks into a jelly and stops it. Stop the first
  * or the second and he only rolls off it on to the next; stop the last and he rolls off it on
  * to the crust of the pie. A bale on the gold pan opens the pie, and the four and twenty
- * blackbirds that come out of it carry him back over the jelly to the Empress Hen. Open it
+ * blackbirds that come out of it carry him back over the jelly to the roost. Open it
  * before he is on it and they go without him. Two bales, and three to do it with.
  */
 const PASTRY_HERE: LevelDef = {
   key: "pastry",
   name: "The Pastry",
-  ends: "nest",
+  ends: "roost",
   hatch: true,
   left: -4,
   right: 4,
@@ -1468,7 +1549,7 @@ const PASTRY_HERE: LevelDef = {
     box(PIE.x + 0.45, FLOOR, RANGE.pit - RANGE.w / 2, RANGE.top, "stone"),
     box(RANGE.pit + RANGE.w / 2, FLOOR, 4, RANGE.top, "stone"),
 
-    // The Empress Hen's nest, bottom left, and the post that is its other side.
+    // The roost, bottom left, and the post that is its other side.
     box(-4, FLOOR, -2.05, FLOOR + 0.5, "nest", true),
     box(-2.05, FLOOR, -1.75, 16.9, "stone"),
     box(-4, FLOOR, -3.9, FLOOR + 4.6, "nest", true),
@@ -1511,6 +1592,9 @@ const PASTRY_HERE: LevelDef = {
       ],
     },
   ],
+  gloves: [],
+  traps: [],
+  skies: [],
   pits: [{ x: RANGE.pit, y: RANGE.top, w: RANGE.w, pan: RANGE.pan, hung: false }],
   cages: [],
   sockets: [
@@ -1528,7 +1612,239 @@ const PASTRY_HERE: LevelDef = {
 
 export const PASTRY: LevelDef = lowered(PASTRY_HERE, STOREY * 8);
 
-export const LEVELS: LevelDef[] = [LARDER, SCULLERY, MILLROOM, BUTTERY, CISTERN, SERVERY, CELLAR, BAKEHOUSE, PASTRY];
+/** The pantry's top shelf, which falls to the right and stops short of the wall: the first glove is under the end of it. */
+const pantryAt = (x: number): number => 29.6 - 0.36 * (x + 4);
+const PANTRY_END = 2;
+/** The ledge the first glove throws him to, which falls to the left and stops short of the other wall: the second glove is under the end of that. */
+const LEDGE = { x0: -2, x1: 1.2, y: 23.4 };
+const ledgeAt = (x: number): number => LEDGE.y - 0.36 * (LEDGE.x1 - x);
+/** A glove's box on its wall: how far out its face is; and how far below the end of its shelf the glove is. */
+const FIST = { deep: 0.7, under: 1.65 };
+const RIGHT_FIST = { x: 4 - FIST.deep, y: pantryAt(PANTRY_END) + 0.45 - FIST.under };
+const LEFT_FIST = { x: -4 + FIST.deep, y: ledgeAt(LEDGE.x0) + 0.45 - FIST.under };
+/**
+ * The griddle the second glove puts him on, hung on the right wall; it is also what is under the
+ * first glove. It reaches from the wall to the trap, so there is no way down to the roost but
+ * along the floor: knocked out of the air, he is on the griddle or in the trap.
+ */
+const SKILLET = { x: 2.6, w: 2.6, pan: 19 };
+/** The floor under the ledge, which falls to the right: a bed, the egg trap let into it, and the roost beyond. */
+const pantryFloorAt = (x: number): number => 17.4 - 0.36 * (x + 4);
+const DECOY = { x0: -0.6, x1: 1.2, floor: 14.8 };
+const ROOST_X = 2;
+
+/**
+ * The tenth screen, written as if it stood where the first does. Two boxing gloves on springs,
+ * each under the end of a shelf: whatever comes down in front of one is punched, and then the
+ * glove is four seconds winding itself back. The first puts him on a ledge across the room,
+ * which is where he has to go. The second would put him in the Queen's pan: a bale let fall in
+ * front of it takes the punch for him, and he drops past it while it winds. Below is a nest
+ * with a hen in it, and the hen is painted wood: it is an egg trap, and the bar comes over on
+ * whatever sits in it. A bale will do for that as well, and then the bar is his bridge to the
+ * roost. Two bales, and three to do it with.
+ */
+const PANTRY_HERE: LevelDef = {
+  key: "pantry",
+  name: "The Pantry",
+  ends: "roost",
+  hatch: true,
+  left: -4,
+  right: 4,
+  top: 31,
+  bottom: 13,
+  start: { x: -3.5, y: 30.2 },
+  shove: 3,
+  bales: 3,
+  spare: 1,
+  blocks: [
+    box(-4.8, 12.6, -4, 31.4, "wall"),
+    box(4, 12.6, 4.8, 31.4, "wall"),
+    box(-4, 13.4, 4, FLOOR, "stone"),
+
+    // The shelf under the hatch, and the first glove's box on the wall beyond the end of it.
+    slab(-4, 29.6, PANTRY_END, pantryAt(PANTRY_END), 0.3, "wood"),
+    box(RIGHT_FIST.x, RIGHT_FIST.y - 0.6, 4, RIGHT_FIST.y + 0.6, "bare", true),
+
+    // The ledge: a bed where he comes down, and board to the end of it; and the second glove's box.
+    slab(-0.4, ledgeAt(-0.4), LEDGE.x1, LEDGE.y, 0.3, "bed", true),
+    slab(LEDGE.x0, ledgeAt(LEDGE.x0), -0.4, ledgeAt(-0.4), 0.3, "wood"),
+    box(-4, LEFT_FIST.y - 0.6, LEFT_FIST.x, LEFT_FIST.y + 0.6, "bare", true),
+
+    // The floor: a bed under the second glove, the trap's nest let into it, and the board beyond.
+    slab(-4, 17.4, DECOY.x0, pantryFloorAt(DECOY.x0), 0.3, "bed", true),
+    box(DECOY.x0 - 0.15, FLOOR, DECOY.x0, pantryFloorAt(DECOY.x0) - 0.05, "nest", true),
+    box(DECOY.x0 - 0.15, FLOOR, DECOY.x1 + 0.15, DECOY.floor, "nest", true),
+    box(DECOY.x1, DECOY.floor, DECOY.x1 + 0.15, pantryFloorAt(DECOY.x1), "nest", true),
+    slab(DECOY.x1, pantryFloorAt(DECOY.x1), ROOST_X, pantryFloorAt(ROOST_X), 0.3, "wood"),
+    box(ROOST_X - 0.3, FLOOR, ROOST_X, pantryFloorAt(ROOST_X) - 0.25, "stone"),
+
+    // The roost, bottom right.
+    box(ROOST_X, FLOOR, 4, FLOOR + 0.5, "nest", true),
+    box(3.9, FLOOR, 4, FLOOR + 3.4, "nest", true),
+  ],
+  seesaws: [],
+  wheels: [],
+  doors: [],
+  flaps: [],
+  tanks: [],
+  lifts: [],
+  barrels: [],
+  // He comes to the end of each shelf at a crawl, and drops off it in front of a glove; and into the trap the same way.
+  mats: [
+    { x0: 0.8, y0: pantryAt(0.8), x1: PANTRY_END, y1: pantryAt(PANTRY_END), crawl: 0.8 },
+    { x0: -0.8, y0: ledgeAt(-0.8), x1: LEDGE.x0, y1: ledgeAt(LEDGE.x0), crawl: 0.8 },
+    { x0: -1.8, y0: pantryFloorAt(-1.8), x1: DECOY.x0, y1: pantryFloorAt(DECOY.x0), crawl: 0.8 },
+  ],
+  mines: [],
+  hearths: [],
+  kettles: [],
+  jellies: [],
+  pies: [],
+  gloves: [
+    {
+      x: RIGHT_FIST.x,
+      y: RIGHT_FIST.y,
+      side: -1,
+      near: 0.2,
+      far: 1.5,
+      from: { x: RIGHT_FIST.x - 0.7, y: RIGHT_FIST.y },
+      toss: lob({ x: RIGHT_FIST.x - 0.7, y: RIGHT_FIST.y }, { x: 0.3, y: ledgeAt(0.3) + 0.55 }, 1),
+    },
+    {
+      x: LEFT_FIST.x,
+      y: LEFT_FIST.y,
+      side: 1,
+      near: 0.2,
+      far: 1.5,
+      from: { x: LEFT_FIST.x + 0.7, y: LEFT_FIST.y },
+      toss: lob({ x: LEFT_FIST.x + 0.7, y: LEFT_FIST.y }, { x: SKILLET.x, y: SKILLET.pan + 0.4 }, 0.9),
+    },
+  ],
+  traps: [{ x0: DECOY.x0, x1: DECOY.x1, floor: DECOY.floor, y0: pantryFloorAt(DECOY.x0), y1: pantryFloorAt(DECOY.x1) }],
+  skies: [],
+  pits: [{ x: SKILLET.x, y: SKILLET.pan + 1.6, w: SKILLET.w, pan: SKILLET.pan, hung: true }],
+  cages: [],
+  sockets: [
+    // A tap at a glove is a bale let fall in front of it.
+    { x: RIGHT_FIST.x - 0.9, y0: RIGHT_FIST.y - 0.9, y1: RIGHT_FIST.y + 1, reach: 1.1, seat: { y: RIGHT_FIST.y, turn: 0 } },
+    { x: LEFT_FIST.x + 0.9, y0: LEFT_FIST.y - 0.9, y1: LEFT_FIST.y + 1, reach: 1.1, seat: { y: LEFT_FIST.y, turn: 0 } },
+    { x: (DECOY.x0 + DECOY.x1) / 2, y0: DECOY.floor - 0.3, y1: pantryFloorAt(DECOY.x0) + 1.2, reach: 1.1, seat: { y: DECOY.floor + BALE_H / 2 + 0.03, turn: 0 } },
+  ],
+  nest: { x0: ROOST_X, x1: 3.9, y0: FLOOR + 0.4, y1: FLOOR + 1.9 },
+};
+
+export const PANTRY: LevelDef = lowered(PANTRY_HERE, STOREY * 9);
+
+/** The yard's top shelf: a feather bed under the hatch and no more, which falls to the left. */
+const yardAt = (x: number): number => 29.6 - 0.36 * (4 - x);
+const YARD_END = 2.4;
+/** The long shelf under it, which falls to the left as well: a bed, the gap, and a feather bed to the end. */
+const LONG = { x0: -2.9, x1: 2.6, y: 25.5 };
+const longAt = (x: number): number => LONG.y - 0.36 * (LONG.x1 - x);
+const LONG_TURN = Math.atan(0.36);
+/** The gap in it, over a hanging pan: as the scullery's is. */
+const BREACH = { x: -0.4, w: 1.1, well: BALE_W * Math.cos(LONG_TURN) + 0.12, hang: 1.1 };
+const BREACH_DEEP = BALE_H / Math.cos(LONG_TURN);
+const BREACH_WELL = { x0: BREACH.x - BREACH.well / 2, x1: BREACH.x + BREACH.well / 2 };
+/** The rack over the feather bed: two pegs a bale lies across, as a roof. */
+const ROOF = { x: -2.2, up: 1.5, peg: 0.72 };
+/** The bottom shelf, which falls to the right, to the Empress Hen's nest. */
+const lastAt = (x: number): number => 19.4 - 0.36 * (x + 4);
+/** Where the sky falls: on the top shelf, down the gap, and on the feather bed. */
+const SKY = { top: 1.1, gap: BREACH.x, bed: ROOF.x };
+
+/**
+ * The eleventh screen, written as if it stood where the first does. He is out of the kitchen,
+ * and the Queen is throwing it after him: in three places a pot comes down every four seconds,
+ * and they keep time before he is let go as well as after. One place is on the shelf in front
+ * of him: he is let go when it suits. One is the gap in the long shelf: a pot goes through a
+ * bale as it would through him, so the bale that bridges the gap is thrown after a pot, not
+ * before. The last is over a feather bed he is a long time crossing: a bale laid across the
+ * two pegs above it is a roof, for one pot. Two bales, and four to do it with.
+ */
+const YARD_HERE: LevelDef = {
+  key: "yard",
+  name: "The Yard",
+  ends: "nest",
+  hatch: true,
+  left: -4,
+  right: 4,
+  top: 31,
+  bottom: 13,
+  start: { x: 3.5, y: 30.2 },
+  shove: -3,
+  bales: 4,
+  spare: 1,
+  blocks: [
+    box(-4.8, 12.6, -4, 31.4, "wall"),
+    box(4, 12.6, 4.8, 31.4, "wall"),
+    box(-4, 13.4, 4, FLOOR, "stone"),
+
+    // The shelf under the hatch.
+    slab(YARD_END, yardAt(YARD_END), 4, 29.6, 0.3, "bed", true),
+
+    // The long shelf: a bed where he comes down, the gap with a ledge each side a bale deep, and the rest of it.
+    // It runs back to the wall under the top shelf, so nothing knocked the wrong way has a drop to the nest.
+    slab(BREACH_WELL.x1, longAt(BREACH_WELL.x1), 4, longAt(4), 0.4, "bed", true),
+    slab(BREACH_WELL.x0 - 0.12, longAt(BREACH_WELL.x0 - 0.12) - BREACH_DEEP, BREACH.x - BREACH.w / 2, longAt(BREACH.x - BREACH.w / 2) - BREACH_DEEP, 0.4, "bed", true),
+    slab(BREACH.x + BREACH.w / 2, longAt(BREACH.x + BREACH.w / 2) - BREACH_DEEP, BREACH_WELL.x1 + 0.12, longAt(BREACH_WELL.x1 + 0.12) - BREACH_DEEP, 0.4, "wood"),
+    slab(BREACH_WELL.x0 - 0.2, longAt(BREACH_WELL.x0 - 0.2), BREACH_WELL.x0 - 0.04, longAt(BREACH_WELL.x0 - 0.04), 0.4, "bed", true),
+    slab(LONG.x0, longAt(LONG.x0), BREACH_WELL.x0 - 0.2, longAt(BREACH_WELL.x0 - 0.2), 0.4, "wood"),
+    box(BREACH.x - BREACH.w / 2 - 0.2, longAt(BREACH.x) - BREACH_DEEP - BREACH.hang - 0.1, BREACH.x - BREACH.w / 2, longAt(BREACH.x) - BREACH_DEEP - 0.7, "iron"),
+    box(BREACH.x + BREACH.w / 2, longAt(BREACH.x) - BREACH_DEEP - BREACH.hang - 0.1, BREACH.x + BREACH.w / 2 + 0.2, longAt(BREACH.x) - BREACH_DEEP - 0.5, "iron"),
+
+    // The two pegs of the rack: the machine draws them.
+    ...[-1, 1].map((side) => {
+      const x = ROOF.x + side * ROOF.peg;
+      return slab(x - 0.1, longAt(x - 0.1) + ROOF.up, x + 0.1, longAt(x + 0.1) + ROOF.up, 0.14, "iron");
+    }),
+
+    // The bottom shelf: a bed under the end of the long one, and straw up the wall beside it.
+    box(-4, 19.4, -3.8, 24, "nest", true),
+    slab(-4, 19.4, -1.6, lastAt(-1.6), 0.4, "bed", true),
+    slab(-1.6, lastAt(-1.6), 1.7, lastAt(1.7), 0.4, "wood"),
+
+    // The Empress Hen's nest, bottom right.
+    box(1.95, FLOOR, 4, FLOOR + 0.5, "nest", true),
+    box(1.65, FLOOR, 1.95, FLOOR + 1, "nest", true),
+    box(3.9, FLOOR, 4, FLOOR + 4.6, "nest", true),
+  ],
+  seesaws: [],
+  wheels: [],
+  doors: [],
+  flaps: [],
+  tanks: [],
+  lifts: [],
+  barrels: [],
+  mats: [
+    { x0: YARD_END, y0: yardAt(YARD_END), x1: 4, y1: 29.6, crawl: 0.8 },
+    { x0: LONG.x0, y0: longAt(LONG.x0), x1: -1.5, y1: longAt(-1.5), crawl: 0.4 },
+  ],
+  mines: [],
+  hearths: [],
+  kettles: [],
+  jellies: [],
+  pies: [],
+  gloves: [],
+  traps: [],
+  skies: [
+    // One, two, three: where he comes down, then the gap, then the feather bed. Each bale goes after its own pot.
+    { x: SKY.top, every: SKY_EVERY, first: 1 },
+    { x: SKY.gap, every: SKY_EVERY, first: 2.15 },
+    { x: SKY.bed, every: SKY_EVERY, first: 0.15 },
+  ],
+  pits: [{ x: BREACH.x, y: longAt(BREACH.x) - BREACH_DEEP, w: BREACH.w, pan: longAt(BREACH.x) - BREACH_DEEP - BREACH.hang, hung: true }],
+  cages: [],
+  sockets: [
+    { x: BREACH.x, y0: longAt(BREACH.x) - 1.2, y1: longAt(BREACH.x) + 1.3, reach: 1, seat: { y: longAt(BREACH.x) - BREACH_DEEP / 2 + 0.08, turn: LONG_TURN } },
+    { x: ROOF.x, y0: longAt(ROOF.x) - 0.6, y1: longAt(ROOF.x) + ROOF.up + 2.4, reach: 1.1, seat: { y: longAt(ROOF.x) + ROOF.up + BALE_H / 2 + 0.05, turn: LONG_TURN } },
+  ],
+  nest: { x0: 1.95, x1: 3.9, y0: FLOOR + 0.4, y1: FLOOR + 1.9 },
+};
+
+export const YARD: LevelDef = lowered(YARD_HERE, STOREY * 10);
+
+export const LEVELS: LevelDef[] = [LARDER, SCULLERY, MILLROOM, BUTTERY, CISTERN, SERVERY, CELLAR, BAKEHOUSE, PASTRY, PANTRY, YARD];
 
 export type Phase = "ready" | "run" | "home" | "fried" | "broken" | "caught";
 
@@ -1571,6 +1887,11 @@ export type GameEvent =
   | { type: "set"; id: number; x: number; y: number }
   | { type: "birds"; took: boolean; x: number; y: number }
   | { type: "drop"; x: number; y: number }
+  | { type: "punch"; what: "egg" | "bale"; glove: number; x: number; y: number }
+  | { type: "wound"; glove: number; x: number; y: number }
+  | { type: "lure"; x: number; y: number }
+  | { type: "snap"; by: "egg" | "bale"; x: number; y: number }
+  | { type: "pot"; hit: "floor" | "bale" | "egg" | "pan"; column: number; kind: number; x: number; y: number }
   | { type: "caged"; x: number; y: number }
   | { type: "warn" }
   | { type: "caught" }
@@ -1740,6 +2061,18 @@ export class Game {
   private readonly pasties: Array<{ def: PieDef; crust: RAPIER.Collider | null; pan: RAPIER.Collider; openAt: number }> = [];
   /** The blackbirds have him: where from, and since when. */
   private flight: { def: PieDef; from: { x: number; y: number }; at: number } | null = null;
+  /** Each boxing glove: when it will be wound again, when it last hit anything, and whether it has said it is wound. */
+  private readonly fists: Array<{ def: GloveDef; readyAt: number; hitAt: number; told: boolean }> = [];
+  /** Each egg trap: when it went and for what, and how long he has been sitting in it. */
+  private readonly decoys: Array<{ def: TrapDef; sprungAt: number; by: "egg" | "bale" | null; inside: number }> = [];
+  /** The sky's own clock, which runs before he is let go as well as after. */
+  sky = 0;
+  /** How many things each place in the sky has let go, and when the last of them came down on something. */
+  private readonly dropped: number[] = [];
+  private readonly downAt: number[] = [];
+  private readonly falling: Array<{ id: number; column: number; kind: number; x: number; y: number }> = [];
+  private nextPot = 1;
+  private readonly ground: RAPIER.RigidBody;
   private readonly casks: Array<{
     def: BarrelDef;
     body: RAPIER.RigidBody;
@@ -1781,6 +2114,7 @@ export class Game {
     this.world.timestep = STEP;
 
     const ground = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    this.ground = ground;
     for (const block of level.blocks) {
       const collider = this.world.createCollider(
         RAPIER.ColliderDesc.cuboid(block.w / 2, block.h / 2, 1)
@@ -2041,6 +2375,12 @@ export class Game {
       );
       this.pasties.push({ def, crust, pan, openAt: -1 });
     }
+    for (const def of level.gloves) this.fists.push({ def, readyAt: 0, hitAt: -1, told: true });
+    for (const def of level.traps) this.decoys.push({ def, sprungAt: -1, by: null, inside: 0 });
+    for (let column = 0; column < level.skies.length; column += 1) {
+      this.dropped.push(0);
+      this.downAt.push(-1);
+    }
     for (const def of level.barrels) {
       // It stands until its chock is knocked out. It is heavy, and it is not soft.
       const body = this.world.createRigidBody(
@@ -2093,6 +2433,9 @@ export class Game {
     this.eggCollider = this.world.createCollider(hull.setDensity(1).setFriction(0.8).setRestitution(0.05).setCollisionGroups(0x0005ffff), this.eggBody);
     this.eggBody.setGravityScale(0, false);
     this.last = { x: 0, y: 0 };
+    // The sky is falling before he is let go, and what falls has to find the shelves: one step,
+    // in which nothing moves, tells the world where everything is.
+    if (level.skies.length > 0) this.world.step();
   }
 
   dispose(): void {
@@ -2220,6 +2563,30 @@ export class Game {
   }
 
   /** The blackbirds have him. */
+  /** Each boxing glove: how far it is wound (1 is ready), and how long since it last hit anything (-1 if it never has). */
+  get gloves(): Array<{ def: GloveDef; wound: number; hit: number }> {
+    return this.fists.map((fist) => ({
+      def: fist.def,
+      wound: fist.hitAt < 0 ? 1 : Math.min(1, Math.max(0, 1 - (fist.readyAt - this.time) / WIND)),
+      hit: fist.hitAt < 0 ? -1 : this.time - fist.hitAt,
+    }));
+  }
+
+  /** Each egg trap: how long since it went (-1 if it has not), and for what. */
+  get traps(): Array<{ def: TrapDef; sprung: number; by: "egg" | "bale" | null }> {
+    return this.decoys.map((trap) => ({ def: trap.def, sprung: trap.sprungAt < 0 ? -1 : this.time - trap.sprungAt, by: trap.by }));
+  }
+
+  /** Each place in the sky: when, by the sky's clock, its last one came down on something (-1 before any has), and when it lets go the next. */
+  get skies(): Array<{ def: SkyDef; last: number; next: number }> {
+    return this.level.skies.map((def, column) => ({ def, last: this.downAt[column]!, next: def.first + this.dropped[column]! * def.every }));
+  }
+
+  /** What is in the air. */
+  get pots(): Array<{ id: number; column: number; kind: number; x: number; y: number }> {
+    return this.falling.map((pot) => ({ ...pot }));
+  }
+
   get flying(): boolean {
     return this.flight !== null;
   }
@@ -2257,6 +2624,12 @@ export class Game {
     const events = this.events;
     this.events = [];
     return events;
+  }
+
+  /** A step of time before he is let go: nothing moves but the sky. */
+  wait(): void {
+    if (this.phase !== "ready") return;
+    this.rain();
   }
 
   /** Let him go. */
@@ -2356,6 +2729,9 @@ export class Game {
     this.burn();
     this.wobble();
     this.flock();
+    this.punch();
+    this.bite();
+    this.rain();
     if (this.phase !== "run") return;
 
     this.feel();
@@ -2891,6 +3267,120 @@ export class Game {
     this.flight = null;
     this.eggBody.setGravityScale(1, true);
     this.events.push({ type: "drop", x, y });
+  }
+
+  /** A boxing glove hits whatever comes down in front of it, and is then a while winding back. */
+  private punch(): void {
+    const p = this.eggBody.translation();
+    this.fists.forEach((fist, index) => {
+      const def = fist.def;
+      if (this.time < fist.readyAt) return;
+      if (!fist.told) {
+        fist.told = true;
+        this.events.push({ type: "wound", glove: index, x: def.x, y: def.y });
+      }
+      const front = (at: { x: number; y: number }, slack: number): boolean => {
+        const out = (at.x - def.x) * def.side;
+        return out > def.near - slack && out < def.far + slack && Math.abs(at.y - def.y) < 0.4 + slack;
+      };
+      if (this.phase === "run" && !this.flight && front(p, 0)) {
+        fist.readyAt = this.time + WIND;
+        fist.hitAt = this.time;
+        fist.told = false;
+        this.events.push({ type: "punch", what: "egg", glove: index, x: def.from.x, y: def.from.y });
+        this.launch(def.from, def.toss);
+        return;
+      }
+      const bale = this.live.find((each) => !each.held && front(each.body.translation(), 0.2));
+      if (!bale) return;
+      const at = bale.body.translation();
+      fist.readyAt = this.time + WIND;
+      fist.hitAt = this.time;
+      fist.told = false;
+      this.events.push({ type: "punch", what: "bale", glove: index, x: at.x, y: at.y });
+      this.scrap(bale);
+    });
+  }
+
+  /** An egg trap goes for whatever comes to rest in its nest: and then its bar is a lid on it. */
+  private bite(): void {
+    const p = this.eggBody.translation();
+    for (const trap of this.decoys) {
+      if (trap.sprungAt >= 0) continue;
+      const def = trap.def;
+      const within = (at: { x: number; y: number }): boolean => at.x > def.x0 && at.x < def.x1 && at.y > def.floor && at.y < Math.min(def.y0, def.y1) + 0.25;
+      const egg = this.phase === "run" && within(p);
+      if (egg && trap.inside === 0) this.events.push({ type: "lure", x: p.x, y: p.y });
+      trap.inside = egg ? trap.inside + STEP : 0;
+      const bale = this.live.find((each) => !each.held && within(each.body.translation()));
+      if (!bale && trap.inside < TRAP_BEAT) continue;
+      trap.sprungAt = this.time;
+      trap.by = egg ? "egg" : "bale";
+      const lid = slab(def.x0 - 0.02, def.y0, def.x1 + 0.02, def.y1, 0.14, "iron");
+      this.world.createCollider(RAPIER.ColliderDesc.cuboid(lid.w / 2, lid.h / 2, 1).setTranslation(lid.x, lid.y, 0).setRotation(quat(lid.turn)).setFriction(0.8).setRestitution(0), this.ground);
+      this.events.push({ type: "snap", by: trap.by, x: (def.x0 + def.x1) / 2, y: def.floor });
+      if (bale) this.scrap(bale);
+      if (!egg) continue;
+      this.phase = "broken";
+      this.cracks = SHELL + 1;
+      this.events.push({ type: "broken", x: p.x, y: p.y });
+    }
+  }
+
+  /**
+   * The sky falls, in its own places and in its own time. A pot that comes down on a bale is the
+   * end of both; one that comes down on him is the end of him.
+   */
+  private rain(): void {
+    const level = this.level;
+    if (level.skies.length === 0) return;
+    this.sky += STEP;
+    level.skies.forEach((def, column) => {
+      while (this.sky >= def.first + this.dropped[column]! * def.every) {
+        const count = this.dropped[column]!;
+        this.dropped[column] = count + 1;
+        this.falling.push({ id: this.nextPot, column, kind: (count + column * 2) % 4, x: def.x, y: level.top + 0.6 });
+        this.nextPot += 1;
+      }
+    });
+    const p = this.eggBody.translation();
+    const ball = new RAPIER.Ball(POT_R * 0.8);
+    for (let index = this.falling.length - 1; index >= 0; index -= 1) {
+      const pot = this.falling[index]!;
+      pot.y -= POT_FALL * STEP;
+      let hit: "floor" | "bale" | "egg" | "pan" | null = null;
+      const struck = this.world.intersectionWithShape(
+        { x: pot.x, y: pot.y, z: 0 },
+        quat(0),
+        ball,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        (collider) => collider.handle !== this.eggCollider.handle && !this.weights.has(collider.handle) && !this.rails.has(collider.handle),
+      );
+      const bale = struck ? this.live.find((each) => each.collider.handle === struck.handle) : undefined;
+      if (bale) {
+        hit = "bale";
+        this.scrap(bale);
+      } else if (struck) {
+        hit = "floor";
+      } else if (this.phase === "run" && !this.flight && Math.hypot(pot.x - p.x, (pot.y - p.y) * 0.85) < POT_R + EGG.wide) {
+        hit = "egg";
+      } else if (level.pits.some((pit) => Math.abs(pot.x - pit.x) < pit.w / 2 + 0.2 && pot.y < pit.pan + 0.25 && pot.y > pit.pan - 0.6)) {
+        hit = "pan";
+      } else if (pot.y < level.bottom) {
+        hit = "floor";
+      }
+      if (!hit) continue;
+      this.falling.splice(index, 1);
+      this.downAt[pot.column] = this.sky;
+      this.events.push({ type: "pot", hit, column: pot.column, kind: pot.kind, x: pot.x, y: pot.y });
+      if (hit !== "egg") continue;
+      this.phase = "broken";
+      this.cracks = SHELL + 1;
+      this.events.push({ type: "broken", x: p.x, y: p.y });
+    }
   }
 
   /** A bale that is no more: burst, or thrown off a brake. */

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { before, test } from "node:test";
-import { BAKEHOUSE, BOIL, BURN, BUTTERY, CAGE, CELLAR, CISTERN, DOOR_LAPS, DOOR_TURN, Game, IDLE, LARDER, LEVELS, LIFT_SPEED, MILLROOM, PASTRY, RACE, RISE, SCULLERY, SEAT_IDLE, SERVERY, STEP, STOREY, WHEEL_TURN, loadPhysics, type GameEvent, type Input, type LevelDef } from "../src/sim/kitchen";
-import { GOOD_DROP, PLANS, bakehousePlan, butteryPlan, cellarPlan, cisternPlan, larderPlan, millPlan, pastryPlan, pilot, sculleryPlan, serveryPlan, type Move } from "../src/sim/pilot";
+import { BAKEHOUSE, BOIL, BURN, BUTTERY, CAGE, CELLAR, CISTERN, DOOR_LAPS, DOOR_TURN, Game, IDLE, LARDER, LEVELS, LIFT_SPEED, MILLROOM, PANTRY, PASTRY, POT_FALL, RACE, RISE, SCULLERY, SEAT_IDLE, SERVERY, SKY_EVERY, STEP, STOREY, TRAP_BEAT, WHEEL_TURN, WIND, YARD, loadPhysics, type GameEvent, type Input, type LevelDef } from "../src/sim/kitchen";
+import { GOOD_DROP, LETS, PLANS, bakehousePlan, butteryPlan, cellarPlan, cisternPlan, larderPlan, millPlan, pantryPlan, pastryPlan, pilot, sculleryPlan, serveryPlan, yardPlan, type Move } from "../src/sim/pilot";
 
 before(async () => {
   await loadPhysics();
@@ -10,6 +10,10 @@ before(async () => {
 function run(hands: (game: Game) => Input, limit = 40, level: LevelDef = LARDER): { game: Game; events: GameEvent[] } {
   const game = new Game(level);
   const events: GameEvent[] = [];
+  // Where the moment he is let go matters, he is let go at the plan's.
+  const moment = LETS[level.key];
+  for (let step = 0; moment && !moment(game) && step < 1200; step += 1) game.wait();
+  game.drain();
   game.start();
   while (!game.over && game.time < limit) {
     game.step(hands(game));
@@ -994,8 +998,197 @@ test("pastry: a jelly that keeps getting him back has had enough the third time"
   assert.ok(events.some((event) => event.type === "set" && event.id === -1));
 });
 
-test("the house is nine rooms, each under the last, and only the bottom one is home", () => {
-  assert.equal(LEVELS.length, 9);
+const pantry = (hands: (game: Game) => Input, limit = 40) => run(hands, limit, PANTRY);
+const punches = (events: GameEvent[]): string[] => events.flatMap((event) => (event.type === "punch" ? [`${event.what} ${event.glove}`] : []));
+
+test("pantry: a bale in the trap and one in front of the second glove get him to the roost whole, with one to spare", () => {
+  const { game, events } = pantry(pilot(pantryPlan()));
+  assert.equal(game.phase, "home");
+  assert.equal(game.cracks, 0);
+  assert.equal(game.balesLeft, PANTRY.bales - 2);
+  assert.equal(game.stars, 3);
+  assert.deepEqual(punches(events), ["egg 0", "bale 1"]);
+  assert.deepEqual(events.flatMap((event) => (event.type === "snap" ? [event.by] : [])), ["bale"]);
+});
+
+test("pantry: left alone, the first glove puts him on the ledge and the second puts him on the griddle", () => {
+  const { game, events } = pantry(() => ({}));
+  assert.deepEqual(punches(events), ["egg 0", "egg 1"]);
+  assert.equal(game.phase, "fried");
+});
+
+test("pantry: a glove that has thrown its punch is four seconds winding itself back", () => {
+  const game = new Game(PANTRY);
+  game.start();
+  let punched = -1;
+  let wound = -1;
+  while (!game.over && wound < 0 && game.time < 20) {
+    game.step({});
+    for (const event of game.drain()) {
+      if (event.type === "punch" && event.glove === 0) punched = game.time;
+      if (event.type === "wound" && event.glove === 0) wound = game.time;
+    }
+    if (punched >= 0 && wound < 0) assert.ok(game.gloves[0]!.wound < 1, "and is not ready meanwhile");
+  }
+  assert.ok(punched > 0, "it punched him");
+  assert.ok(Math.abs(wound - punched - WIND) < 0.05, `wound back ${(wound - punched).toFixed(2)}s after`);
+  game.dispose();
+});
+
+test("pantry: a bale thrown at the second glove as he is let go is no use: it has wound itself back by the time he is there", () => {
+  for (const feed of [0, 1, 2]) {
+    const { game, events } = pantry(pilot(pantryPlan({ feed })));
+    assert.deepEqual(punches(events), ["bale 1", "egg 0", "egg 1"], `thrown at ${feed}s`);
+    assert.equal(game.phase, "fried", `thrown at ${feed}s`);
+  }
+});
+
+test("pantry: there are seconds to feed the second glove in, and not just one moment", () => {
+  for (const feed of [4.4, 5.5, 6.5, 7.5]) {
+    const { game } = pantry(pilot(pantryPlan({ feed })));
+    assert.equal(game.phase, "home", `thrown at ${feed}s`);
+    assert.equal(game.cracks, 0, `thrown at ${feed}s`);
+  }
+});
+
+test("pantry: feed the first glove and he drops past it on to the griddle", () => {
+  const { game, events } = pantry(pilot(pantryPlan({ feed: 3.6, which: 0 })));
+  assert.deepEqual(punches(events), ["bale 0"]);
+  assert.equal(game.phase, "fried");
+});
+
+test("pantry: the hen in the nest on the floor is painted wood, and the bar comes over on him", () => {
+  const { game, events } = pantry(pilot(pantryPlan({ trap: false })));
+  const lured = events.findIndex((event) => event.type === "lure");
+  const snapped = events.findIndex((event) => event.type === "snap");
+  assert.ok(lured >= 0 && snapped > lured, "he is in it a moment before it goes");
+  assert.deepEqual(events.flatMap((event) => (event.type === "snap" ? [event.by] : [])), ["egg"]);
+  assert.equal(game.phase, "broken");
+  assert.ok(TRAP_BEAT > 0.3 && TRAP_BEAT < 1.5);
+});
+
+test("pantry: a bale sets the trap off, is not there afterwards, and the bar is a bridge", () => {
+  const { game, events } = pantry(pilot(pantryPlan({ feed: false })), 4);
+  assert.deepEqual(events.flatMap((event) => (event.type === "snap" ? [event.by] : [])), ["bale"]);
+  assert.equal(game.bales.length, 0);
+  assert.equal(game.traps[0]!.by, "bale");
+  assert.ok(game.traps[0]!.sprung >= 0);
+  game.dispose();
+});
+
+test("pantry: there is no way down to the roost but along the floor", () => {
+  const pit = PANTRY.pits[0]!;
+  const trap = PANTRY.traps[0]!;
+  assert.ok(pit.x - pit.w / 2 <= trap.x1 + 0.2, "the griddle reaches the trap");
+  assert.ok(pit.x + pit.w / 2 >= PANTRY.nest.x1, "and the wall");
+  // Knocked out of the air by a bale on his way to the griddle, he is on the griddle still.
+  const down = STOREY * 9;
+  const { game } = pantry(throws([[7.92, 0.29, 21.49 - down], [8.04, -1.23, 16.24 - down]]));
+  assert.notEqual(game.phase, "home");
+});
+
+/** The yard, with the sky run for so long before he is let go; or, by default, until the plan's moment. */
+function yard(hands: (game: Game) => Input, wait: number | "plan" = "plan", limit = 40): { game: Game; events: GameEvent[]; waited: number } {
+  const game = new Game(YARD);
+  let waited = 0;
+  while (wait === "plan" ? !LETS.yard!(game) && waited < 20 : waited < wait - STEP / 2) {
+    game.wait();
+    waited += STEP;
+  }
+  game.drain();
+  const events: GameEvent[] = [];
+  game.start();
+  while (!game.over && game.time < limit) {
+    game.step(hands(game));
+    events.push(...game.drain());
+  }
+  return { game, events, waited };
+}
+const pots = (events: GameEvent[], column: number): string[] => events.flatMap((event) => (event.type === "pot" && event.column === column ? [event.hit] : []));
+/** When, by the sky's clock, a pot comes down on the shelf in front of him. */
+const POT_LANDS = 2.23;
+
+test("yard: let go after a pot, a bale in the gap after its pot and one on the pegs get him home whole", () => {
+  const { game, events, waited } = yard(pilot(yardPlan()));
+  assert.ok(waited > 1 && waited < 8, `waited ${waited.toFixed(2)}s`);
+  assert.equal(game.phase, "home");
+  assert.equal(game.cracks, 0);
+  assert.equal(game.balesLeft, YARD.bales - 2);
+  assert.equal(game.stars, 3);
+  assert.ok(pots(events, 2).includes("bale"), "the roof took one for him");
+  assert.ok(!events.some((event) => event.type === "pot" && event.hit === "egg"));
+});
+
+test("yard: the sky keeps time before he is let go, a pot in each place every four seconds", () => {
+  const game = new Game(YARD);
+  const landed: number[][] = [[], [], []];
+  for (let step = 0; step < Math.round(13 / STEP); step += 1) {
+    game.wait();
+    for (const event of game.drain()) if (event.type === "pot") landed[event.column]!.push(game.sky);
+  }
+  assert.equal(game.phase, "ready");
+  assert.equal(game.time, 0);
+  assert.ok(Math.abs(game.sky - 13) < 0.02);
+  landed.forEach((times, column) => {
+    assert.ok(times.length >= 3, `place ${column} had ${times.length}`);
+    for (let index = 1; index < times.length; index += 1) assert.ok(Math.abs(times[index]! - times[index - 1]! - SKY_EVERY) < 0.02, `place ${column}`);
+  });
+  assert.ok(Math.abs(landed[0]![0]! - POT_LANDS) < 0.05, `the first is down at ${landed[0]![0]!.toFixed(2)}s`);
+  assert.ok(POT_FALL > 3 && POT_FALL < 8, "and they can be seen coming");
+  game.dispose();
+});
+
+test("yard: in a room with no sky, waiting is nothing", () => {
+  const game = new Game(LARDER);
+  for (let step = 0; step < 120; step += 1) game.wait();
+  assert.equal(game.sky, 0);
+  assert.equal(game.drain().length, 0);
+  game.dispose();
+});
+
+test("yard: with nothing thrown he is in the pan under the gap", () => {
+  const { game } = yard(() => ({}));
+  assert.equal(game.phase, "fried");
+});
+
+test("yard: a bale in the gap before its pot is gone by the time he is there", () => {
+  const { game, events } = yard(pilot(yardPlan({ bridge: 0 })));
+  assert.equal(pots(events, 1)[0], "bale");
+  assert.equal(game.phase, "fried");
+});
+
+test("yard: with no roof over the feather bed a pot finds him on it", () => {
+  const { game, events } = yard(pilot(yardPlan({ roof: false })));
+  assert.ok(pots(events, 2).includes("egg"));
+  assert.equal(game.phase, "broken");
+});
+
+test("yard: let go at the wrong moment, he meets the pot on the first shelf", () => {
+  const { game, events } = yard(pilot(yardPlan()), POT_LANDS + 1.3);
+  assert.ok(pots(events, 0).includes("egg"));
+  assert.equal(game.phase, "broken");
+});
+
+test("yard: there is a second to let him go in, and every four seconds another", () => {
+  for (const after of [0.1, 0.4, 0.7, 0.9, 4.4, 8.4]) {
+    const { game } = yard(pilot(yardPlan()), POT_LANDS + after);
+    assert.equal(game.phase, "home", `let go ${after}s after the pot`);
+    assert.equal(game.cracks, 0, `let go ${after}s after the pot`);
+  }
+});
+
+test("yard: both bales thrown as he is let go get him home at no moment at all", () => {
+  for (let wait = 4; wait < 8; wait += 0.1) {
+    for (const second of [0, 0.3]) {
+      const { game } = yard(pilot(yardPlan({ bridge: 0, roof: second })), wait, 30);
+      assert.notEqual(game.phase, "home", `let go at ${wait.toFixed(1)}s, the second bale at ${second}s`);
+      game.dispose();
+    }
+  }
+});
+
+test("the house is eleven rooms, each under the last, and only the bottom one is home", () => {
+  assert.equal(LEVELS.length, 11);
   LEVELS.forEach((level, index) => {
     assert.equal(level.top, LARDER.top - STOREY * index, level.name);
     assert.equal(level.ends, index === LEVELS.length - 1 ? "nest" : "roost", level.name);

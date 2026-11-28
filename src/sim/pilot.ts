@@ -1,4 +1,4 @@
-import { BUTTERY, CISTERN, PASTRY, SCULLERY, STOREY, type Game, type Input, type LevelDef } from "./kitchen";
+import { BUTTERY, CISTERN, PANTRY, PASTRY, SCULLERY, STOREY, YARD, type Game, type Input, type LevelDef } from "./kitchen";
 
 /** What a player does on a screen, as a list of things to wait for and where to put the bale. */
 export interface Move {
@@ -185,6 +185,48 @@ export function pastryPlan(options: { set?: number | false; which?: number; open
   ];
 }
 
+/**
+ * The tenth screen played properly: a bale in the egg trap, and one let fall in front of the
+ * second glove once the first has hit him. `which` is the glove that is fed, counting from the
+ * top; `feed` as a number is a time to throw at, whatever he is doing.
+ */
+export function pantryPlan(options: { trap?: number | false; feed?: boolean | number; which?: number } = {}): Move[] {
+  const { trap = 1, feed = true, which = 1 } = options;
+  const glove = PANTRY.gloves[which]!;
+  const snare = PANTRY.traps[0]!;
+  const punched = (game: Game): boolean => (game.gloves[0]?.hit ?? -1) >= 0;
+  return [
+    ...(trap === false ? [] : [{ when: (game: Game) => game.time > trap, x: (snare.x0 + snare.x1) / 2, y: snare.floor + 0.5 }]),
+    ...(feed === false ? [] : [{ when: feed === true ? punched : (game: Game) => game.time > feed, x: glove.x + glove.side * 0.9, y: glove.y }]),
+  ];
+}
+
+/** Whether a pot has come down in this place in the yard since he was let go, and at least this long after. */
+const since = (game: Game, place: number, after = 0): boolean => (game.skies[place]?.last ?? -1) > game.sky - game.time + after;
+
+/**
+ * The eleventh screen played properly: a bale in the gap once a pot has gone through it, and
+ * one on the pegs over the feather bed once a pot has come down on that. As numbers, they are
+ * times to throw at, whatever the sky is doing.
+ */
+export function yardPlan(options: { bridge?: boolean | number; roof?: boolean | number } = {}): Move[] {
+  const { bridge = true, roof = true } = options;
+  const gap = YARD.sockets[0]!;
+  const pegs = YARD.sockets[1]!;
+  return [
+    ...(bridge === false ? [] : [{ when: bridge === true ? (game: Game) => since(game, 1) : (game: Game) => game.time > bridge, x: gap.x, y: gap.seat!.y }]),
+    ...(roof === false ? [] : [{ when: roof === true ? (game: Game) => since(game, 2, 1) : (game: Game) => game.time > roof, x: pegs.x, y: pegs.seat!.y }]),
+  ];
+}
+
+/** When to let him go, in a room where that matters: in the yard, just after a pot has come down in front of him. */
+export const LETS: Record<string, (game: Game) => boolean> = {
+  yard: (game) => {
+    const last = game.skies[0]?.last ?? -1;
+    return last >= 0 && game.sky - last > 0.3 && game.sky - last < 0.5;
+  },
+};
+
 /** Each room played properly, by its key. */
 export const PLANS: Record<string, () => Move[]> = {
   larder: () => larderPlan(),
@@ -196,6 +238,8 @@ export const PLANS: Record<string, () => Move[]> = {
   cellar: () => cellarPlan(),
   bakehouse: () => bakehousePlan(),
   pastry: () => pastryPlan(),
+  pantry: () => pantryPlan(),
+  yard: () => yardPlan(),
 };
 
 /** A driver for tests and `?auto`: makes each move, in order, as soon as its moment comes. */

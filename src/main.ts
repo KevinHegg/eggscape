@@ -2,7 +2,7 @@ import "./style.css";
 import { Sound } from "./audio";
 import { Stage } from "./render/stage";
 import { BOIL, Game, IDLE, LEVELS, STEP, loadPhysics, type GameEvent, type Input, type LevelDef } from "./sim/kitchen";
-import { PLANS, pilot, seated } from "./sim/pilot";
+import { LETS, PLANS, pilot, seated } from "./sim/pilot";
 
 const STORAGE_KEY = "eggscape:kitchen:v2";
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -94,6 +94,13 @@ let ashes: number[] = [];
 let blown: "threw" | "empty" | null = null;
 /** In the pastry: the blackbirds are out, and whether they took him. */
 let flown: "took" | "empty" | null = null;
+/** In the pantry: which gloves have hit him, whether the first hit a bale instead, and what the egg trap went for. */
+let punches: number[] = [];
+let fedFirst = false;
+let snapped: "egg" | "bale" | null = null;
+/** In the yard: where a pot came down on him (-1 if none has), and where one has gone through a bale. */
+let crowned = -1;
+let potted: number[] = [];
 /** He is being shown coming down from the roost above, and cannot be let go until he has landed. */
 let arriving = false;
 
@@ -110,6 +117,17 @@ const OPENING: Record<string, [string, string]> = {
   pastry: ["jelly", "Each jelly throws him to the next, and the last throws him in the pan. A bale in a jelly stops it"],
 };
 
+/** What is said while he sits ready, in a room where there is something to watch for before he goes. */
+const BRIEF: Record<string, [string, string]> = {
+  yard: ["Pots fall in three places, every four seconds.", " Let him go just after one hits the straw below him"],
+};
+
+/**
+ * The yard, by the clock: how long after he is let go he is over the gap, and on to the feather
+ * bed; and how long a pot takes to get down to the gap, and to the pegs.
+ */
+const YARD_TIMES = { across: 3.7, bed: 3.3, toGap: 1.37, toPegs: 1.07 };
+
 /** What each room has in it, for the map. */
 const FEATURE: Record<string, string> = {
   larder: "A see-saw",
@@ -121,6 +139,8 @@ const FEATURE: Record<string, string> = {
   cellar: "A barrel",
   bakehouse: "Embers and a kettle",
   pastry: "Jellies and a pie",
+  pantry: "Boxing gloves and a hen",
+  yard: "A falling sky",
 };
 
 function show(id: "title" | "result" | "run"): void {
@@ -136,11 +156,13 @@ function drawReady(): void {
   $("ready").hidden = !waiting;
   // A room with a mine in it says so while there is time to look: twice in a sitting, and then no more.
   const brief = $("brief");
-  const warn = waiting && game!.level.mines.length > 0 && (told.get("mine") ?? 0) < 2;
+  const said = waiting ? BRIEF[game!.level.key] : undefined;
+  const mine = waiting && game!.level.mines.length > 0 && (told.get("mine") ?? 0) < 2;
+  const warn = mine || (said !== undefined && (told.get("brief") ?? 0) < 4);
   if (warn && brief.hidden) {
     const red = document.createElement("b");
-    red.textContent = "The red plate with the pennant is a mine.";
-    brief.replaceChildren(red, " A bale dropped on it sets it off: do that before he gets near it");
+    red.textContent = said ? said[0] : "The red plate with the pennant is a mine.";
+    brief.replaceChildren(red, said ? said[1] : " A bale dropped on it sets it off: do that before he gets near it");
   }
   brief.hidden = !warn;
   if (game) {
@@ -215,6 +237,11 @@ function fresh(index = room, arrive: { x: number; y: number; turn: number } | nu
   ashes = [];
   blown = null;
   flown = null;
+  punches = [];
+  fedFirst = false;
+  snapped = null;
+  crowned = -1;
+  potted = [];
   accumulator = 0;
   $("toast").replaceChildren();
   drawHud(game);
@@ -222,7 +249,10 @@ function fresh(index = room, arrive: { x: number; y: number; turn: number } | nu
 
 function begin(): void {
   if (!game || game.phase !== "ready" || stage.arriving) return;
-  if (!$("brief").hidden) told.set("mine", (told.get("mine") ?? 0) + 1);
+  if (!$("brief").hidden) {
+    const key = BRIEF[game.level.key] ? "brief" : "mine";
+    told.set(key, (told.get(key) ?? 0) + 1);
+  }
   runs += 1;
   game.start();
   show("run");
@@ -230,10 +260,10 @@ function begin(): void {
   if (opening) hint(opening[0], opening[1]);
 }
 
-/** The same room again, at once: from the shelf, or from the roost above it. */
+/** The same room again, from the shelf or from the roost above it: he sits ready, and the room can be looked over first. */
 function restart(): void {
   fresh(room);
-  begin();
+  show("run");
 }
 
 /** Off the roost and down into the next room, where he sits on the hatch until he is let go. */
@@ -250,7 +280,7 @@ function descend(): void {
 function fromTop(): void {
   won.length = 0;
   fresh(0);
-  begin();
+  show("run");
 }
 
 function narrate(event: GameEvent, current: Game): void {
@@ -424,6 +454,54 @@ function narrate(event: GameEvent, current: Game): void {
       sound.shutter();
       toast("Caged!", "bad");
       break;
+    case "punch":
+      sound.pow();
+      if (event.what === "egg") {
+        punches.push(event.glove);
+        toast("Pow!");
+        // The first one is his way across. The next one is not.
+        if (event.glove === 0 && current.level.gloves.length > 1) hint("feed", "Now a bale in front of the other glove takes the punch. It winds back for four seconds");
+      } else {
+        if (event.glove === 0) fedFirst = true;
+        sound.straw();
+        toast(event.glove === 0 ? "That was the glove he needed" : "It took the punch", event.glove === 0 ? "bad" : "");
+        for (const line of Array.from($("toast").querySelectorAll("p.hint"))) line.remove();
+      }
+      break;
+    case "wound":
+      sound.click();
+      break;
+    case "lure":
+      sound.tin();
+      break;
+    case "snap":
+      snapped = event.by;
+      sound.snap();
+      if (event.by === "bale") {
+        sound.straw();
+        toast("Snap! And the bar is a bridge");
+      }
+      break;
+    case "pot":
+      if (current.phase === "ready") {
+        // Before he is let go they are only keeping time.
+        sound.crash(false, event.hit === "pan");
+        break;
+      }
+      if (event.hit === "egg") {
+        crowned = event.column;
+        sound.crash(true);
+      } else if (event.hit === "bale") {
+        potted.push(event.column);
+        sound.crash(true);
+        sound.straw();
+        // The roof is there to be hit. The bridge is not.
+        const roofed = event.column === 2 && Math.abs(current.egg.x - event.x) < 1;
+        if (current.phase === "run") toast(roofed ? "The roof took it!" : event.column === 1 ? "There goes the bridge" : "Straw took it", roofed || event.column !== 1 ? "" : "bad");
+      } else {
+        sound.crash(false, event.hit === "pan");
+      }
+      break;
     case "warn":
       toast("The hook!", "bad");
       sound.ratchet();
@@ -502,6 +580,19 @@ function coach(current: Game): void {
     if (bridged && egg.y > current.level.top - 4.5) hint("drop", "Next, a long drop at the left wall. Get a bale under it");
     if (!flung && egg.x < -2.2 && egg.y < current.level.top - 5.5) hint("timed", "This plank will not wait: a bale on its gold end while he is on the red");
   }
+  // In the yard, each bale goes after its own pot: as soon as the next one there cannot come before he is past.
+  if (current.level.key === "yard") {
+    const [, gap, bed] = current.skies;
+    const laid = (socket: number): boolean => {
+      const place = current.level.sockets[socket];
+      return place?.seat !== undefined && current.bales.some((bale) => Math.abs(bale.x - place.x) < 0.5 && Math.abs(bale.y - place.seat!.y) < 0.5);
+    };
+    const falling = (column: number): boolean => current.pots.some((pot) => pot.column === column);
+    if (gap && current.time < 2.2 && !laid(0) && !falling(1) && gap.next - current.sky + YARD_TIMES.toGap > YARD_TIMES.across - current.time) hint("bridge", "Now: a bale in the gap. The next pot there will come too late to burst it");
+    if (bed && current.time > 1.2 && current.time < 6 && !laid(1) && !falling(2) && bed.next - current.sky + YARD_TIMES.toPegs > YARD_TIMES.bed - current.time && (laid(0) || egg.x < -1)) {
+      hint("roof", "Now: a bale across the two pegs is a roof over the feather bed");
+    }
+  }
   // In the mill, the time the wheel has him is the time to get ready for what comes after it.
   const wheel = current.wheels[0];
   if (wheel && wheel.wet && Math.hypot(egg.x - wheel.x, egg.y - wheel.y) < wheel.def.r && egg.x > wheel.x - 0.6) {
@@ -520,10 +611,25 @@ function verdict(current: Game): { eyebrow: string; title: string; line: string 
         if (current.cracks > 0) return { eyebrow: "Safe on the roost", title: current.level.name, line: `Cracked, but the hen will sit on him until he is mended. Whatever happens in ${below}, he starts again from here.` };
         return { eyebrow: "Safe on the roost", title: current.level.name, line: `Whole, though it took most of the straw. Whatever happens in ${below}, he starts again from here.` };
       }
-      if (current.stars === 3) return { eyebrow: "Home", title: "Not a mark on him", line: "Set down in the nest by four and twenty blackbirds, whole, and with straw to spare. The Empress Hen has counted him twice." };
+      if (current.stars === 3) return { eyebrow: "Home", title: "Not a mark on him", line: "Out of the kitchen with the whole of it thrown after him, and not a mark on him. The Empress Hen has counted him twice." };
       if (current.cracks > 0) return { eyebrow: "Home", title: "Home, and cracked", line: flung && lastKnock > 0 ? "He met something harder than straw on the way. A gentler throw, or a bale where he hit." : "He is home, with a crack to show his mother." };
       return { eyebrow: "Home", title: "Home", line: `Whole, but it took all the straw in the room. Keep ${spare === 1 ? "one bale" : `${spare} bales`} back for the third star.` };
     case "broken":
+      if (snapped === "egg") {
+        return { eyebrow: "A great fall", title: "Taken in", line: "That hen is painted wood, and her nest is an egg trap. A bale in it sets the trap off instead: then its bar lies across the nest, and is his bridge to the real roost." };
+      }
+      if (crowned >= 0) {
+        return {
+          eyebrow: "A great fall",
+          title: "Crowned",
+          line:
+            crowned === 0
+              ? "A pot came down on him as he came off the top shelf. One falls there every four seconds: let him go just after it has landed."
+              : crowned === 1
+                ? "A pot came down the gap as he was crossing it. Let him go just after one has landed in front of him, and the gap's own pot is out of the way in time."
+                : "A pot came down on him on the feather bed, where he is slow. A bale laid across the two pegs over it is a roof: lay it after a pot has come down there, and it takes the next.",
+        };
+      }
       if (mined) {
         return { eyebrow: "A great fall", title: "Scrambled", line: "He rolled on to the mine, and it went off under him. A bale dropped on the red plate sets it off first: any time will do, so long as he is not near it." };
       }
@@ -537,6 +643,19 @@ function verdict(current: Game): { eyebrow: string; title: string; line: string 
       }
       return { eyebrow: "A great fall", title: "Humpty Dumpty", line: overAt < 4 ? "A long drop, and nothing under him. Tap the floor where he will come down, and do it early: the bale takes a moment." : "That was harder than a shell can take. Straw and sacks are soft; wood, stone and iron are not." };
     case "fried":
+      if (current.level.gloves.length > 0) {
+        if (punches.includes(1)) {
+          return { eyebrow: "The Queen's breakfast", title: "Sunny side up", line: "The second glove put him in the pan. It punches whatever drops in front of it, and a bale will do: after that it is four seconds winding itself back, and he drops past." };
+        }
+        return fedFirst
+          ? { eyebrow: "The Queen's breakfast", title: "Sunny side up", line: "The first glove was the one he needed, and it was still winding back from the bale when he came to it. It is the second glove that wants feeding." }
+          : { eyebrow: "The Queen's breakfast", title: "Sunny side up", line: "Into the pan. The first glove is his way across the room: leave that one alone." };
+      }
+      if (current.level.skies.length > 0) {
+        return potted.includes(1)
+          ? { eyebrow: "The Queen's breakfast", title: "Sunny side up", line: "A pot went through his bridge before he got to it. Throw that bale just after a pot has gone down the gap: then the next comes too late." }
+          : { eyebrow: "The Queen's breakfast", title: "Sunny side up", line: "The gap in the long shelf wants a bale in it. Throw it after a pot has gone down the gap, not before: a pot goes through straw." };
+      }
       if (toasted) {
         const egg = current.egg;
         return ashes.some((x) => Math.abs(x - egg.x) < 1.2)
@@ -631,6 +750,9 @@ function verdict(current: Game): { eyebrow: string; title: string; line: string 
             ? { eyebrow: "The Queen's hook", title: "Hooked", line: "He came down in a dry cistern with nothing under him. A bale in the bottom of it, before he drops in." }
             : { eyebrow: "The Queen's hook", title: "Hooked", line: "He sat on his bale in a dry cistern until the hook came down. A bale on the gold pan lets the water in, and the bale is a raft." };
         }
+      }
+      if (current.level.gloves.length > 0 && fedFirst && punches.length === 0) {
+        return { eyebrow: "The Queen's hook", title: "Hooked", line: "The first glove is his way across the room, and it was winding back from the bale. Leave that one alone: it is the second that wants feeding." };
       }
       return seated(current) && current.level.seesaws.some((saw) => !saw.pass)
         ? { eyebrow: "The Queen's hook", title: "Hooked", line: flung ? "The plank tipped, but not hard enough to throw him. Let the bale fall from higher." : "He sat in the see-saw until the hook came down for him. Drop a bale on the gold end of the plank." }
@@ -822,6 +944,19 @@ function drawRoom(g: Element, level: LevelDef, index: number): void {
     mark(g, "rect", { x: pie.x - pie.w / 2 - 0.15, y: pie.y - pie.deep, width: pie.w + 0.3, height: pie.deep, fill: "#24439a" });
     mark(g, "ellipse", { cx: pie.x, cy: pie.y, rx: pie.w / 2, ry: 0.4, fill: "#c98a3a" });
   }
+  // Boxing gloves, the egg trap, and where the sky falls.
+  for (const glove of level.gloves) {
+    mark(g, "rect", { x: Math.min(glove.x, glove.x - glove.side * 0.7), y: glove.y - 0.6, width: 0.7, height: 1.2, fill: "#4a2f14" });
+    mark(g, "ellipse", { cx: glove.x + glove.side * 0.55, cy: glove.y, rx: 0.55, ry: 0.75, fill: "#cf3420" });
+  }
+  for (const trap of level.traps) {
+    mark(g, "line", { ...line, x1: trap.x0, y1: trap.y0, x2: trap.x0 - 0.5, y2: trap.y0 + 1.8, stroke: "#33333a", "stroke-width": 2 });
+    mark(g, "ellipse", { cx: (trap.x0 + trap.x1) / 2, cy: trap.floor + 0.9, rx: 0.6, ry: 1, fill: "#e9c04a", stroke: "#1d1512", "stroke-width": 1, "vector-effect": "non-scaling-stroke" });
+  }
+  for (const sky of level.skies) {
+    mark(g, "line", { ...line, x1: sky.x, y1: level.top - 0.4, x2: sky.x, y2: level.top - 4.2, stroke: "#33333a", "stroke-width": 1.4, "stroke-dasharray": "3 3" });
+    mark(g, "rect", { x: sky.x - 0.45, y: level.top - 5.4, width: 0.9, height: 1.2, fill: "#b5651d" });
+  }
   // A mine: its pennant.
   for (const mine of level.mines) {
     mark(g, "path", { d: `M${mine.x} ${mine.y} V${mine.y + 2.6} L${mine.x + 1.1} ${mine.y + 2} L${mine.x} ${mine.y + 1.4}`, fill: "#cf3420", stroke: "#1d1512", "stroke-width": 1, "vector-effect": "non-scaling-stroke" });
@@ -898,7 +1033,7 @@ $("go").addEventListener("click", () => {
   sound.unlock();
   won.length = 0;
   if (room !== 0) fresh(0);
-  begin();
+  show("run");
 });
 $("resume").addEventListener("click", () => {
   sound.unlock();
@@ -935,6 +1070,7 @@ stage.app.on("update", (dt: number) => {
   const steps = Math.floor(accumulator / STEP);
   accumulator -= steps * STEP;
   if (current.phase !== "ready") advance(current, steps);
+  else idle(current, steps);
   coach(current);
   drawHud(current);
   stage.sync(current, dt);
@@ -952,7 +1088,21 @@ function landed(): void {
   arriving = false;
   sound.bale();
   drawReady();
-  if (auto) begin();
+}
+
+/** While he sits ready the sky keeps time; and the scripted player lets him go when its moment comes. */
+function idle(current: Game, steps: number): void {
+  for (let index = 0; index < steps; index += 1) {
+    current.wait();
+    for (const event of current.drain()) {
+      stage.handle(event, current);
+      if ($("title").hidden && $("map").hidden) narrate(event, current);
+    }
+    if (auto && !arriving && !stage.arriving && $("result").hidden && (LETS[current.level.key]?.(current) ?? true)) {
+      begin();
+      return;
+    }
+  }
 }
 
 await loadPhysics();
@@ -969,7 +1119,6 @@ if (asked >= 1 && asked <= LEVELS.length) {
 } else {
   show("title");
 }
-if (auto) begin();
 
 /** For driving the game where frames do not tick (a hidden tab): `__egg.step(seconds, { x, y })`. */
 (window as unknown as { __egg: unknown }).__egg = {
@@ -992,6 +1141,7 @@ if (auto) begin();
     if (!game) return null;
     if (bale) pending = bale;
     if (game.phase !== "ready") advance(game, Math.round(seconds / STEP));
+    else idle(game, Math.round(seconds / STEP));
     coach(game);
     drawHud(game);
     stage.sync(game, seconds);

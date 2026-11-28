@@ -7,9 +7,9 @@ shelves, down drops, on to see-saws, past holes that lead to her frying pan. All
 do is have a straw bale thrown in: **tap, and a bale lands there a moment later.** Straw is
 soft. Nothing else in a kitchen is, bar water.
 
-This is a third try at the game, and so far it is nine rooms, one under another: **The
+This is a third try at the game, and so far it is eleven rooms, one under another: **The
 Larder**, **The Scullery**, **The Mill**, **The Buttery**, **The Cistern**, **The Servery**,
-**The Cellar**, **The Bakehouse** and **The Pastry**. They were built to find out whether throwing
+**The Cellar**, **The Bakehouse**, **The Pastry**, **The Pantry** and **The Yard**. They were built to find out whether throwing
 bales is fun, how one room hands him on to the next, and whether each room can bring a new
 contraption without a new control. The house is one tall building and he falls down through it, but each room is a
 short game of its own: at the bottom of a room a hen keeps a **roost**, and once he is on it he
@@ -34,12 +34,13 @@ properly, or `?room=8` to open it at the eighth room.
   arrive, so tap where he is going to be, not where he is.
 - **Press and slide** to see where the bale will go before you let go.
 - A few bales a room: from three to six, counted at the bottom left while he is on his way down.
-  Nothing is drawn over the top of the room. **R** starts the room again at once, and so
+  Nothing is drawn over the top of the room. **R** starts the room again, and so
   does the card at the end of a go; **♪** on a card (or **M**) mutes the sound.
 - The button beside it is **the map**: the whole house in section, every room with its stars
   and what it has in it, and where he is. A room he has been got to can be started from there.
-- At the top of a new room he sits on a hatch until you let him go, so there is time to look
-  the room over first.
+- At the top of a room he sits on a hatch until you let him go, so there is time to look
+  the room over first. That is so after every go, and not only the first: a do-over waits
+  for **Let him go** as well.
 
 One bale does three jobs:
 
@@ -111,13 +112,29 @@ goes, and he with it, across to the hob. That has a tray of embers in it too, an
 the room from it for longer than a bale burns: so that one is thrown while he is in the air,
 not before.
 
-The Pastry is the last room. Three jellies stand one below another, and each throws whatever
+In the Pastry three jellies stand one below another, and each throws whatever
 comes down on it to the next; the last throws him clean over a pie and into the Queen's pan.
 A bale sinks into a jelly and stops it. Stop the first or the second and he only rolls off it
 on to the next, which costs a bale and nothing else; stop the last and he rolls off it on to
 the crust of the pie. A bale on the gold pan opens the pie, and the four and twenty blackbirds
-that come out of it carry him back across the room to the Empress Hen. Open it before he is
+that come out of it carry him back across the room to the roost. Open it before he is
 sitting on it and they go without him.
+
+The Pantry has two boxing gloves on springs, each on a wall under the end of a shelf.
+Whatever drops in front of one is punched, and then the glove is four seconds winding itself
+back. The first puts him on a ledge across the room, which is where he has to go. The second
+would put him on the Queen's griddle: a bale let fall in front of it takes the punch, and he
+drops past while it winds. On the floor below a hen sits in a nest, and she is painted wood:
+it is an egg trap, and the bar comes over on whatever is in it. A bale will do for that too,
+and then the bar is his bridge to the roost.
+
+The Yard is the last room, and it is out of doors: the Queen is throwing the kitchen after
+him. In three places a pot comes down every four seconds, and they keep time before he is
+let go as well as after, so *when* he is let go matters. One place is where he comes down
+off the first shelf. One is a gap over a pan: a pot goes through a bale as it would through
+him, so the bale that bridges the gap is thrown after a pot and not before. The last is over
+a feather bed he is a long time crossing: a bale laid across the two pegs above it is a roof,
+for one pot.
 
 - **Only a knock hurts him.** His shell cracks when his velocity changes sharply against
   something hard. Two cracks he can carry; the third, or one great fall, is the end of him.
@@ -144,6 +161,9 @@ npx tsx scripts/kitchen.ts       # one run, event by event; throws as time:x,y
                                  #   npx tsx scripts/kitchen.ts room=cellar 6:3.15,28.6 11:-2.75,18
                                  #   npx tsx scripts/kitchen.ts room=bakehouse 0.5:-0.6,28 7.5:-0.2,23 10.3:0.9,20.5
                                  #   npx tsx scripts/kitchen.ts room=pastry 1:-0.9,20.6 9:3.1,24
+                                 #   npx tsx scripts/kitchen.ts room=pantry 1:0.3,15.3 5.5:-2.4,21.05
+                                 #   npx tsx scripts/kitchen.ts room=yard wait=2.58 1.3:-0.4,24.2 3.1:-2.2,25.6
+                                 #   (wait= runs the yard's sky for that long before he is let go)
 npm run build
 npm run check                    # typecheck, tests and build
 ```

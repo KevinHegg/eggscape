@@ -38,6 +38,30 @@ const SHOW_W = 9.3;
 const SHOW_H = 19.5;
 const FOV = 24;
 const RAD = 180 / Math.PI;
+/** The top of the first room: the others are written as if they stood there. */
+const LARDER_TOP = 31;
+
+/** The blocks of a room that lie under a place, from above: the top face of the first one, there. */
+function under(level: LevelDef, x: number): { y: number; turn: number } | null {
+  let best: { y: number; turn: number } | null = null;
+  for (const block of level.blocks) {
+    if (block.look === "wall" || Math.abs(x - block.x) > (block.w / 2) * Math.cos(block.turn)) continue;
+    const y = block.y + (x - block.x) * Math.tan(block.turn) + block.h / 2 / Math.cos(block.turn);
+    if (!best || y > best.y) best = { y, turn: block.turn };
+  }
+  return best;
+}
+
+/** Where something let fall here comes down: the height of it, unless that is a pan. */
+function landing(level: LevelDef, x: number): number | null {
+  const floor = under(level, x);
+  if (!floor || level.pits.some((pit) => Math.abs(x - pit.x) < pit.w / 2 && pit.pan > floor.y)) return null;
+  return floor.y;
+}
+
+function slope(level: LevelDef, x: number): number {
+  return under(level, x)?.turn ?? 0;
+}
 /** The brake's shoe and rod stand this far back; and every shelf in the house falls this much in one across. */
 const SHOE_Z = -0.62;
 const SHELF_FALL = 0.36;
@@ -158,6 +182,12 @@ export class Stage {
   /** The blackbirds: where they are gathered, and since when they have been on their own. */
   private birds: Array<{ root: pc.Entity; wings: pc.Entity[]; seed: number }> = [];
   private flock = { x: 0, y: 0, loose: -1 };
+  /** The boxing gloves: each one's fist, the bars of its lazy-tongs, its key and its lamp. */
+  private fists: Array<{ fist: pc.Entity; bars: pc.Entity[]; key: pc.Entity; lamp: pc.Entity; side: number; was: number }> = [];
+  /** The egg traps: the bar, the painted hen, and the straw that is under the bar once a bale has set it off. */
+  private snares: Array<{ bar: pc.Entity; hen: pc.Entity; straw: pc.Entity }> = [];
+  /** What is falling out of the sky, by its number. */
+  private pots = new Map<number, pc.Entity>();
   private kegs: Array<{ def: BarrelDef; keg: pc.Entity; chock: pc.Entity; pan: pc.Entity; lever: pc.Entity; crates: pc.Entity; lid: pc.Entity; kick: number; k: number }> = [];
   private flames: pc.Entity[] = [];
   private fried: pc.Entity | null = null;
@@ -280,6 +310,12 @@ export class Stage {
       vellum: this.paint("vellum", INK.vellum),
       ember: this.paint("ember", new pc.Color(0.7, 0.2, 0.08), { glow: 0.7 }),
       char: this.paint("char", new pc.Color(0.09, 0.07, 0.06)),
+      glove: this.paint("glove", new pc.Color(0.8, 0.1, 0.09), { gloss: 0.7, glow: 0.12 }),
+      gloveDark: this.paint("glove-dark", new pc.Color(0.5, 0.06, 0.06), { gloss: 0.5 }),
+      woodHen: this.paint("wood-hen", new pc.Color(0.93, 0.74, 0.3), { gloss: 0.85, glow: 0.1 }),
+      sky: this.paint("sky", new pc.Color(0.6, 0.78, 0.92), { glow: 0.25 }),
+      cloud: this.paint("cloud", new pc.Color(0.98, 0.98, 0.96), { glow: 0.35 }),
+      grass: this.paint("grass", new pc.Color(0.42, 0.6, 0.28)),
       crust: this.paint("crust", new pc.Color(0.8, 0.56, 0.26), { gloss: 0.35 }),
       crustDark: this.paint("crust-dark", new pc.Color(0.55, 0.33, 0.14), { gloss: 0.3 }),
       china: this.paint("china", new pc.Color(0.9, 0.9, 0.86), { gloss: 0.8 }),
@@ -444,6 +480,9 @@ export class Stage {
     this.pasties = [];
     this.birds = [];
     this.flock = { x: 0, y: 0, loose: -1 };
+    this.fists = [];
+    this.snares = [];
+    this.pots.clear();
     this.holdAsk = null;
     if (!arrive) {
       this.snap = true;
@@ -466,6 +505,8 @@ export class Stage {
       this.buildKettles(level, here);
       this.buildJellies(level, here);
       this.buildPies(level, here);
+      this.buildGloves(level, here);
+      this.buildTraps(level, here);
       this.buildCages(level);
       this.buildPans(level);
       this.buildNest(level, here);
@@ -480,6 +521,7 @@ export class Stage {
     for (const socket of game.level.sockets) {
       if (!socket.seat) continue;
       if (game.level.jellies.some((jelly) => Math.hypot(jelly.x - socket.x, jelly.y - socket.seat!.y) < 0.8)) continue;
+      if (game.level.gloves.some((glove) => Math.abs(glove.y - socket.seat!.y) < 0.1 && Math.abs(glove.x - socket.x) < 1.2)) continue;
       const entity = this.baleShape(this.scene, m.socket);
       entity.setLocalPosition(socket.x, socket.seat.y, 0);
       entity.setLocalEulerAngles(0, 0, socket.seat.turn * RAD);
@@ -494,6 +536,42 @@ export class Stage {
     const midY = (level.top + level.bottom) / 2;
     const wide = level.right - level.left;
     const tall = level.top - level.bottom;
+    if (level.skies.length > 0) {
+      // Out of doors: sky, a few clouds, a garden wall with grass at the foot of it, and no ceiling
+      // but a porch over the hatch. What comes down comes from the kitchen above.
+      this.shape("box", this.scene, [midX, midY, BACK - 0.2], [wide + 2, tall + 2, 0.4], m.sky, [0, 0, 0], true);
+      for (const [x, y, size] of [[-2.2, 27.6, 1.5], [1.2, 23.2, 1.1], [-0.6, 19.4, 1.3]] as const) {
+        const at = y - (LARDER_TOP - level.top);
+        this.shape("sphere", this.scene, [x, at, BACK + 0.02], [size * 1.6, size * 0.5, 0.08], m.cloud, [0, 0, 0], true);
+        this.shape("sphere", this.scene, [x + size * 0.5, at + size * 0.2, BACK + 0.03], [size, size * 0.5, 0.08], m.cloud, [0, 0, 0], true);
+        this.shape("sphere", this.scene, [x - size * 0.5, at + size * 0.12, BACK + 0.03], [size * 0.8, size * 0.4, 0.08], m.cloud, [0, 0, 0], true);
+      }
+      this.shape("box", this.scene, [midX, level.bottom + 2.9, BACK + 0.02], [wide, 3.6, 0.06], m.stone, [0, 0, 0], true);
+      this.shape("box", this.scene, [midX, level.bottom + 4.75, BACK + 0.04], [wide, 0.16, 0.12], m.stoneDark, [0, 0, 0], true);
+      for (let row = 0; row < 4; row += 1) {
+        for (let x = level.left + 0.5 + (row % 2) * 0.5; x < level.right; x += 1) this.shape("box", this.scene, [x, level.bottom + 1.5 + row * 0.8, BACK + 0.06], [0.04, 0.7, 0.02], m.stoneDark, [0, 0, 0], true);
+      }
+      this.shape("box", this.scene, [midX, level.bottom + 1.25, BACK + 0.1], [wide, 0.3, 0.1], m.grass, [0, 0, 0], true);
+      this.shape("box", this.scene, [level.start.x, level.top + 0.2, 0], [2.2, 0.5, DEPTH + 0.6], m.oakDark, [0, 0, 0], true);
+      // The rack's pegs stand on iron posts at the back of their shelf.
+      for (const block of level.blocks) {
+        if (block.look !== "iron" || block.w > 0.3 || block.h > 0.2) continue;
+        this.shape("box", this.scene, [block.x, block.y - 0.8, BACK + 0.42], [0.09, 1.6, 0.09], m.iron, [0, 0, 0], true);
+        this.shape("sphere", this.scene, [block.x, block.y, 0.78], [0.2, 0.2, 0.12], m.gold, [0, 0, 0], true);
+      }
+      // A pile of what has come down already, in each place it comes down.
+      for (const sky of level.skies) {
+        const y = landing(level, sky.x);
+        if (y === null) continue;
+        const lean = slope(level, sky.x);
+        const heap = this.group("heap", this.scene, [sky.x, y, 0], [0, 0, lean * RAD]);
+        this.shape("box", heap, [-0.22, 0.03, 0.72], [0.22, 0.05, 0.16], m.china, [0, 25, 0], true);
+        this.shape("box", heap, [0.18, 0.03, 0.8], [0.16, 0.05, 0.12], m.iron, [0, -30, 0], true);
+        this.shape("box", heap, [0.02, 0.03, -0.8], [0.2, 0.05, 0.14], m.china, [0, 50, 0], true);
+        this.shape("cylinder", heap, [0, 0.015, 0], [0.9, 0.02, 0.9], m.stoneDark, [0, 0, 0], true);
+      }
+      return;
+    }
     this.shape("box", this.scene, [midX, midY, BACK - 0.2], [wide + 2, tall + 2, 0.4], m.plaster, [0, 0, 0], true);
     // Timbers across the back wall, and a dado of warmer plaster low down.
     for (let y = level.bottom + 4.2; y < level.top; y += 4.4) this.shape("box", this.scene, [midX, y, BACK + 0.06], [wide, 0.28, 0.12], m.oakDark, [0, 0, 0], true);
@@ -1186,6 +1264,103 @@ export class Stage {
     }
   }
 
+  /**
+   * A boxing glove on lazy-tongs, in a cabinet on the wall: a red lamp on top that is alight
+   * when it is wound, and a key in the side that turns while it winds.
+   */
+  private buildGloves(level: LevelDef, here: boolean): void {
+    const m = this.m;
+    for (const def of level.gloves) {
+      const side = def.side;
+      const wall = def.x - side * 0.35;
+      this.shape("box", this.scene, [wall, def.y, 0], [0.7, 1.2, 1.5], m.oakDark, [0, 0, 0], true);
+      this.shape("box", this.scene, [def.x - side * 0.02, def.y, 0], [0.08, 1.24, 1.54], m.gold, [0, 0, 0], true);
+      this.shape("box", this.scene, [def.x, def.y, 0], [0.06, 0.9, 1.2], m.ink, [0, 0, 0], true);
+      this.shape("box", this.scene, [wall, def.y + 0.63, 0], [0.76, 0.08, 1.56], m.oak, [0, 0, 0], true);
+      const lamp = this.shape("sphere", this.scene, [wall, def.y + 0.8, 0.45], [0.26, 0.26, 0.26], m.fire);
+      const key = this.group("key", this.scene, [wall, def.y - 0.1, 0.78]);
+      this.shape("cylinder", key, [0, 0, 0], [0.1, 0.16, 0.1], m.gold, [90, 0, 0]);
+      this.shape("box", key, [0, 0, 0.1], [0.46, 0.14, 0.05], m.gold);
+      for (const end of [-1, 1]) this.shape("cylinder", key, [end * 0.23, 0, 0.1], [0.2, 0.05, 0.2], m.gold, [90, 0, 0]);
+      // The arm: four crossed pairs of bars, which open out as it goes.
+      const arm = this.group("arm", this.scene, [def.x, def.y, 0]);
+      const bars: pc.Entity[] = [];
+      for (let link = 0; link < 8; link += 1) bars.push(this.shape("box", arm, [0, 0, link % 2 ? 0.12 : -0.12], [0.5, 0.06, 0.06], m.iron));
+      const fist = this.group("fist", arm);
+      this.shape("cylinder", fist, [-side * 0.3, 0, 0], [0.5, 0.2, 0.5], m.canvas, [0, 0, 90]);
+      this.shape("sphere", fist, [0, 0, 0], [0.74, 0.7, 0.72], m.glove);
+      this.shape("sphere", fist, [side * 0.12, 0.2, 0.3], [0.36, 0.3, 0.3], m.glove);
+      this.shape("box", fist, [side * 0.2, -0.02, 0], [0.04, 0.46, 0.5], m.gloveDark, [0, 0, 0]);
+      if (here) this.fists.push({ fist, bars, key, lamp, side, was: 1 });
+    }
+  }
+
+  /**
+   * An egg trap: a hen of painted wood on a stick, with a key in her back, sitting in a nest; and
+   * behind her a bar on a spring, standing ready to come over.
+   */
+  private buildTraps(level: LevelDef, here: boolean): void {
+    const m = this.m;
+    for (const def of level.traps) {
+      const lean = Math.atan2(def.y1 - def.y0, def.x1 - def.x0);
+      const long = Math.hypot(def.x1 - def.x0, def.y1 - def.y0);
+      const mid = (def.x0 + def.x1) / 2;
+      // The hen: flat, bright, and too still.
+      const hen = this.group("decoy", this.scene, [mid + 0.25, def.floor, BACK + 0.62]);
+      this.shape("box", hen, [0, 0.2, 0], [0.07, 0.4, 0.07], m.oakDark);
+      this.shape("sphere", hen, [0, 0.72, 0], [1.3, 0.95, 0.5], m.woodHen);
+      this.shape("sphere", hen, [-0.62, 0.86, 0], [0.5, 0.62, 0.36], m.woodHen, [0, 0, 30]);
+      this.shape("sphere", hen, [0.52, 1.18, 0], [0.5, 0.52, 0.4], m.woodHen);
+      this.shape("cone", hen, [0.82, 1.14, 0], [0.16, 0.26, 0.16], m.gold, [0, 0, -90]);
+      this.shape("sphere", hen, [0.56, 1.5, 0], [0.3, 0.2, 0.1], m.vermilion);
+      this.shape("sphere", hen, [0.62, 1.24, 0.21], [0.13, 0.13, 0.04], m.vellum);
+      this.shape("sphere", hen, [0.64, 1.24, 0.23], [0.06, 0.06, 0.04], m.ink);
+      this.shape("sphere", hen, [-0.05, 0.7, 0.24], [0.7, 0.5, 0.08], m.oak);
+      const wind = this.group("wind", hen, [-0.2, 1.3, 0]);
+      this.shape("box", wind, [0, 0, 0], [0.06, 0.34, 0.06], m.gold);
+      this.shape("box", wind, [0, 0.2, 0], [0.34, 0.12, 0.05], m.gold);
+      // The bar is hinged on the high rim, with its spring; it lies along the lid's line once it has gone.
+      const hinge = this.group("hinge", this.scene, [def.x0, def.y0 + 0.06, 0], [0, 0, lean * RAD]);
+      for (const z of [-0.5, 0.5]) this.shape("cylinder", hinge, [0, 0, z], [0.22, 0.3, 0.22], m.gold, [90, 0, 0], true);
+      const bar = this.group("bar", hinge);
+      for (const z of [-0.66, 0.66]) this.shape("box", bar, [long / 2, 0, z], [long, 0.09, 0.09], m.iron);
+      this.shape("box", bar, [long, 0, 0], [0.1, 0.1, 1.4], m.iron);
+      this.shape("box", bar, [long * 0.5, 0, 0], [0.07, 0.07, 1.4], m.iron);
+      const straw = this.baleShape(this.scene);
+      straw.setLocalPosition(mid, (def.y0 + def.y1) / 2 - 0.2, 0);
+      straw.setLocalEulerAngles(0, 0, lean * RAD);
+      straw.setLocalScale(1.06, 0.5, 1);
+      straw.enabled = false;
+      if (here) this.snares.push({ bar, hen, straw });
+      else bar.setLocalEulerAngles(0, 0, 112);
+    }
+  }
+
+  /** One of the Queen's things, on its way down: a saucepan, a flat-iron, a rolling pin, or the kitchen sink. */
+  private buildPot(kind: number): pc.Entity {
+    const m = this.m;
+    const pot = this.group("pot", this.scene);
+    if (kind === 0) {
+      this.shape("cylinder", pot, [0, 0, 0], [0.7, 0.44, 0.7], m.copper);
+      this.shape("cylinder", pot, [0, 0.2, 0], [0.6, 0.06, 0.6], m.ink);
+      this.shape("box", pot, [0.62, 0.12, 0], [0.6, 0.08, 0.12], m.iron);
+    } else if (kind === 1) {
+      this.shape("box", pot, [0, -0.1, 0], [0.8, 0.26, 0.5], m.iron);
+      this.shape("cone", pot, [0.5, -0.1, 0], [0.5, 0.36, 0.26], m.iron, [0, 0, -90]);
+      this.shape("box", pot, [-0.05, 0.22, 0], [0.5, 0.08, 0.12], m.oak);
+      for (const end of [-0.26, 0.2]) this.shape("box", pot, [end, 0.1, 0], [0.07, 0.24, 0.1], m.iron);
+    } else if (kind === 2) {
+      this.shape("cylinder", pot, [0, 0, 0], [0.34, 0.8, 0.34], m.oak, [0, 0, 90]);
+      for (const end of [-1, 1]) this.shape("cylinder", pot, [end * 0.52, 0, 0], [0.14, 0.3, 0.14], m.oakDark, [0, 0, 90]);
+    } else {
+      this.shape("box", pot, [0, -0.06, 0], [1.05, 0.5, 0.8], m.china);
+      this.shape("box", pot, [0, 0.16, 0], [0.86, 0.1, 0.62], m.stoneDark);
+      this.shape("box", pot, [-0.36, 0.36, -0.2], [0.08, 0.3, 0.08], m.gold);
+      this.shape("box", pot, [-0.26, 0.5, -0.2], [0.26, 0.08, 0.08], m.gold);
+    }
+    return pot;
+  }
+
   /** A cage: iron bars across the front and the back of it, low enough to see him over. */
   private buildCages(level: LevelDef): void {
     const m = this.m;
@@ -1757,6 +1932,73 @@ export class Stage {
       }
     });
 
+    game.gloves.forEach((state, index) => {
+      const glove = this.fists[index];
+      if (!glove) return;
+      // Out with a bang, back in a moment; and then it sits well back while it winds, and comes
+      // forward again with a little bounce when it is wound.
+      const t = state.hit;
+      const ready = state.wound >= 1;
+      let out = 0.42 + Math.sin(this.clock * 31 + index) * 0.012;
+      if (t >= 0 && t < 0.07) out = 0.42 + (2.1 - 0.42) * (t / 0.07);
+      else if (t >= 0.07 && t < 0.3) out = 2.1 - Math.sin(((t - 0.07) / 0.23) * Math.PI) * 0.12;
+      else if (t >= 0.3 && t < 0.8) out = 2.1 - (2.1 - 0.12) * ((t - 0.3) / 0.5) ** 2;
+      else if (!ready) out = 0.12;
+      else if (glove.was < 1) glove.was = -this.clock;
+      if (ready && glove.was < 0) {
+        const since = this.clock + glove.was;
+        out = 0.42 + Math.exp(-7 * since) * Math.cos(since * 30) * 0.2 - Math.exp(-12 * since) * 0.3;
+        if (since > 1) glove.was = 1;
+      }
+      if (!ready) glove.was = 0;
+      glove.fist.setLocalPosition(glove.side * out, 0, 0);
+      const span = (out - 0.3) / 4;
+      const lean = Math.acos(Math.min(1, Math.max(0.05, span / 0.5))) * RAD;
+      glove.bars.forEach((bar, link) => {
+        const cell = Math.floor(link / 2);
+        bar.setLocalPosition(glove.side * (span * (cell + 0.5)), 0, link % 2 ? 0.12 : -0.12);
+        bar.setLocalEulerAngles(0, 0, link % 2 ? lean : -lean);
+        bar.enabled = out > 0.34;
+      });
+      glove.key.setLocalEulerAngles(0, 0, ready ? 0 : -state.wound * 1440);
+      glove.lamp.enabled = ready ? true : Math.floor(this.clock * 6) % 2 === 0 && state.wound > 0.8;
+      const glow = ready ? 0.26 + Math.sin(this.clock * 6) * 0.02 : 0.16;
+      glove.lamp.setLocalScale(glow, glow, glow);
+    });
+
+    game.traps.forEach((state, index) => {
+      const snare = this.snares[index];
+      if (!snare) return;
+      // Ready, it stands back past upright and trembles; gone, it is flat on the nest in no time.
+      const t = state.sprung;
+      const turn = t < 0 ? 112 + Math.sin(this.clock * 23) * 0.5 : Math.max(0, 112 * (1 - t / 0.07)) + (t > 0.07 && t < 0.4 ? Math.abs(Math.sin((t - 0.07) * 40)) * 5 * (1 - (t - 0.07) / 0.33) : 0);
+      snare.bar.setLocalEulerAngles(0, 0, turn);
+      snare.straw.enabled = t >= 0 && state.by === "bale";
+      // She nods, by clockwork, until the bar has her.
+      if (t < 0) snare.hen.setLocalEulerAngles(0, 0, Math.sin(this.clock * 2.4) > 0.9 ? -7 : 0);
+      else {
+        snare.hen.setLocalScale(1, 0.34, 1);
+        snare.hen.setLocalEulerAngles(0, 0, -6);
+      }
+    });
+
+    const up = new Set<number>();
+    for (const pot of game.pots) {
+      up.add(pot.id);
+      let entity = this.pots.get(pot.id);
+      if (!entity) {
+        entity = this.buildPot(pot.kind);
+        this.pots.set(pot.id, entity);
+      }
+      entity.setLocalPosition(pot.x, pot.y, 0.05);
+      entity.setLocalEulerAngles(0, 0, pot.kind === 3 ? Math.sin(this.clock * 3 + pot.id) * 14 : (this.clock * 150 + pot.id * 70) % 360);
+    }
+    for (const [id, entity] of this.pots) {
+      if (up.has(id)) continue;
+      entity.destroy();
+      this.pots.delete(id);
+    }
+
     game.mines.forEach((state, index) => {
       const charge = this.charges[index];
       if (!charge) return;
@@ -2014,6 +2256,34 @@ export class Stage {
       case "drop":
         this.burst(event.x, event.y + 0.6, m.ink, 8, 0.12, 3);
         break;
+      case "punch":
+        // Stars, and whatever he hit.
+        this.burst(event.x, event.y, m.gold, 9, 0.22, 6);
+        this.burst(event.x, event.y, m.vellum, 6, 0.3, 3.5);
+        if (event.what === "bale") {
+          this.burst(event.x, event.y, m.hay, 18, 0.42, 6.5);
+          this.burst(event.x, event.y, m.hayDark, 9, 0.3, 4.5);
+        }
+        this.shake = Math.max(this.shake, event.what === "egg" ? 0.55 : 0.4);
+        break;
+      case "snap":
+        this.burst(event.x, event.y + 0.9, m.dust, 10, 0.3, 3.5);
+        this.burst(event.x, event.y + 0.9, m.woodHen, 7, 0.16, 5);
+        this.burst(event.x, event.y + 0.9, m.gold, 4, 0.1, 6);
+        if (event.by === "bale") this.burst(event.x, event.y + 0.9, m.hay, 12, 0.34, 4.5);
+        this.shake = Math.max(this.shake, event.by === "egg" ? 0.9 : 0.5);
+        break;
+      case "pot": {
+        const paint = event.kind === 3 ? m.china : event.kind === 2 ? m.oak : event.kind === 1 ? m.iron : m.copper;
+        this.burst(event.x, event.y, paint, event.kind === 3 ? 12 : 7, 0.2, 5);
+        this.burst(event.x, event.y, m.dust, 5, 0.3, 2);
+        if (event.hit === "bale") {
+          this.burst(event.x, event.y, m.hay, 16, 0.42, 5.5);
+          this.burst(event.x, event.y, m.hayDark, 8, 0.3, 4);
+        }
+        if (game.phase !== "ready") this.shake = Math.max(this.shake, event.hit === "egg" ? 0.9 : event.hit === "bale" ? 0.35 : 0.14);
+        break;
+      }
       case "blast":
         this.burst(event.x, event.y + 0.3, m.fire, 18, 0.55, 6.5);
         this.burst(event.x, event.y + 0.3, m.ember, 12, 0.4, 4.5);

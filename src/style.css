@@ -412,7 +412,7 @@ button {
 }
 
 #map {
-  --row: clamp(38px, calc((100dvh - 210px) / 9), 76px);
+  --row: clamp(38px, calc((100dvh - 210px) / 11), 76px);
   padding-bottom: 14px;
 }
 

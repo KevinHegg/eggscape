@@ -259,6 +259,32 @@ export class Sound {
   }
 
   /** A jelly throwing something: down, and up, and a wobble after. */
+  /** A boxing glove going home. */
+  pow(): void {
+    this.tone("square", 190, 60, 0.12, 0.6);
+    this.tone("sine", 95, 40, 0.3, 0.9, 0.01);
+    this.hiss("bandpass", 1500, 300, 0.16, 0.8);
+    this.tone("sine", 900, 1900, 0.2, 0.18, 0.08);
+  }
+  /** An egg trap going off, and its spring ringing after. */
+  snap(): void {
+    this.hiss("highpass", 5200, 1200, 0.07, 1);
+    this.tone("square", 1500, 200, 0.06, 0.7);
+    this.tone("triangle", 322, 300, 0.7, 0.26, 0.05);
+    this.tone("triangle", 483, 450, 0.55, 0.16, 0.05);
+  }
+  /** A hen that is not a hen. */
+  tin(): void {
+    for (const at of [0, 0.12, 0.24]) this.tone("square", 940, 900, 0.05, 0.11, at);
+  }
+  /** Something of the Queen's coming down: on a shelf, in a pan, or (loud) on something that mattered. */
+  crash(loud: boolean, pan = false): void {
+    const volume = loud ? 0.8 : 0.22;
+    this.hiss("highpass", 4200, 1500, 0.22, volume);
+    this.tone("triangle", pan ? 760 : 520, pan ? 700 : 180, pan ? 0.5 : 0.12, volume * 0.6);
+    if (pan) this.tone("triangle", 1130, 1040, 0.4, volume * 0.35);
+    for (let index = 0; index < 3; index += 1) this.tone("square", 1800 + index * 600, 900, 0.03, volume * 0.25, 0.05 + index * 0.045);
+  }
   boing(): void {
     this.tone("sine", 240, 110, 0.07, 0.5);
     this.tone("sine", 130, 520, 0.24, 0.5, 0.06);
