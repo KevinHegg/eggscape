@@ -52,6 +52,14 @@ One bale does three jobs:
 3. **A stopper.** Dropped in a hole in the floor, or a gap in a shelf, it fills it, and he
    rolls over the top instead of down into the pan.
 
+The Larder has **the kitchen cat** as well, asleep at the far end of the floor with the hole
+in it. The see-saw going off wakes her, and she takes a couple of seconds to get up; after
+that she pounces on him, and that is the end of him. But a bale that lands on her floor once
+she is awake is better than an egg: she has that instead, carries it off and goes back to
+sleep on it. Straw that was lying there before she woke is nothing to her, so hers cannot be
+thrown in advance; and if the first bale to land is the one meant for the hole, she has that
+one, and he is in the pan.
+
 There are **mines** here and there: improvised egg explosion devices. A mine is a red plate
 let into a shelf or a floor, with a pennant over it, and it is not hidden. If he rolls on to
 it, it goes off under him and that is the end of him. A bale dropped on it sets it off first,
@@ -143,8 +151,8 @@ for one pot.
 - **The Queen's hook has him if he stops.** It comes down from the top of the house like the
   claw in a fairground machine, and you can see it coming: four seconds of going nowhere, or
   a second and a half in a cage. It waits longer while he sits in a see-saw's seat.
-- **Stars**, for each room: get him through; not a crack on him; bales to spare (two in the
-  Larder, one in each of the others).
+- **Stars**, for each room: get him through; not a crack on him; bales to spare (one in
+  each room).
 
 ## Development
 

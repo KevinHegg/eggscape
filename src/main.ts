@@ -98,6 +98,10 @@ let flown: "took" | "empty" | null = null;
 let punches: number[] = [];
 let fedFirst = false;
 let snapped: "egg" | "bale" | null = null;
+/** In the larder: whether the cat has had him, whether straw was lying on her floor when she did, and whether the bale she took was the one in the hole. */
+let clawed = false;
+let stale = false;
+let stolen = false;
 /** In the yard: where a pot came down on him (-1 if none has), and where one has gone through a bale. */
 let crowned = -1;
 let potted: number[] = [];
@@ -130,7 +134,7 @@ const YARD_TIMES = { across: 3.7, bed: 3.3, toGap: 1.37, toPegs: 1.07 };
 
 /** What each room has in it, for the map. */
 const FEATURE: Record<string, string> = {
-  larder: "A see-saw",
+  larder: "A see-saw and a cat",
   scullery: "A see-saw that will not wait",
   mill: "A water wheel",
   buttery: "A revolving door",
@@ -240,6 +244,9 @@ function fresh(index = room, arrive: { x: number; y: number; turn: number } | nu
   punches = [];
   fedFirst = false;
   snapped = null;
+  clawed = false;
+  stale = false;
+  stolen = false;
   crowned = -1;
   potted = [];
   accumulator = 0;
@@ -474,6 +481,28 @@ function narrate(event: GameEvent, current: Game): void {
     case "lure":
       sound.tin();
       break;
+    case "wake":
+      sound.mew();
+      for (const line of Array.from($("toast").querySelectorAll("p.hint"))) line.remove();
+      hint("cat", "That woke the cat! Throw her a bale of her own, quick");
+      break;
+    case "leap":
+      if (event.at === "egg") sound.yowl();
+      break;
+    case "fetch": {
+      stolen = current.level.pits.some((pit) => Math.abs(pit.x - event.x) < pit.w / 2 + 0.3 && event.y < pit.y + 0.7);
+      sound.straw();
+      sound.purr();
+      toast(stolen ? "She has the bale out of the hole!" : "She would rather have the straw", stolen ? "bad" : "");
+      for (const line of Array.from($("toast").querySelectorAll("p.hint"))) line.remove();
+      break;
+    }
+    case "pounce": {
+      clawed = true;
+      const cat = current.cats[0]?.def;
+      stale = !!cat && current.bales.some((bale) => bale.x > cat.x0 && bale.x < cat.x1 && bale.y > cat.y0 && bale.y < cat.y1 && !current.level.pits.some((pit) => Math.abs(pit.x - bale.x) < pit.w / 2 + 0.3));
+      break;
+    }
     case "snap":
       snapped = event.by;
       sound.snap();
@@ -615,6 +644,15 @@ function verdict(current: Game): { eyebrow: string; title: string; line: string 
       if (current.cracks > 0) return { eyebrow: "Home", title: "Home, and cracked", line: flung && lastKnock > 0 ? "He met something harder than straw on the way. A gentler throw, or a bale where he hit." : "He is home, with a crack to show his mother." };
       return { eyebrow: "Home", title: "Home", line: `Whole, but it took all the straw in the room. Keep ${spare === 1 ? "one bale" : `${spare} bales`} back for the third star.` };
     case "broken":
+      if (clawed) {
+        return {
+          eyebrow: "A great fall",
+          title: "The cat has him",
+          line: stale
+            ? "Straw that was lying there before she woke is nothing to the cat. Throw hers once the see-saw has gone off: she has the first bale that lands on her floor after that, and not him."
+            : "The see-saw wakes the cat, and she takes a couple of seconds to get up. A bale thrown down on her floor in that time and she has that, and not him.",
+        };
+      }
       if (snapped === "egg") {
         return { eyebrow: "A great fall", title: "Taken in", line: "That hen is painted wood, and her nest is an egg trap. A bale in it sets the trap off instead: then its bar lies across the nest, and is his bridge to the real roost." };
       }
@@ -643,6 +681,9 @@ function verdict(current: Game): { eyebrow: string; title: string; line: string 
       }
       return { eyebrow: "A great fall", title: "Humpty Dumpty", line: overAt < 4 ? "A long drop, and nothing under him. Tap the floor where he will come down, and do it early: the bale takes a moment." : "That was harder than a shell can take. Straw and sacks are soft; wood, stone and iron are not." };
     case "fried":
+      if (stolen) {
+        return { eyebrow: "The Queen's breakfast", title: "Sunny side up", line: "The cat took the bale out of the hole: she has the first one that lands on her floor once she is awake. Stop the hole before the see-saw goes off, and throw her another." };
+      }
       if (current.level.gloves.length > 0) {
         if (punches.includes(1)) {
           return { eyebrow: "The Queen's breakfast", title: "Sunny side up", line: "The second glove put him in the pan. It punches whatever drops in front of it, and a bale will do: after that it is four seconds winding itself back, and he drops past." };
@@ -952,6 +993,10 @@ function drawRoom(g: Element, level: LevelDef, index: number): void {
   for (const trap of level.traps) {
     mark(g, "line", { ...line, x1: trap.x0, y1: trap.y0, x2: trap.x0 - 0.5, y2: trap.y0 + 1.8, stroke: "#33333a", "stroke-width": 2 });
     mark(g, "ellipse", { cx: (trap.x0 + trap.x1) / 2, cy: trap.floor + 0.9, rx: 0.6, ry: 1, fill: "#e9c04a", stroke: "#1d1512", "stroke-width": 1, "vector-effect": "non-scaling-stroke" });
+  }
+  for (const cat of level.cats) {
+    mark(g, "ellipse", { cx: cat.x, cy: cat.y + 0.55, rx: 0.8, ry: 0.55, fill: "#26242b" });
+    mark(g, "path", { d: `M${cat.x - 0.75} ${cat.y + 0.8} l0.15 0.75 l0.3 -0.5 l0.3 0.5 l0.15 -0.75 z`, fill: "#26242b" });
   }
   for (const sky of level.skies) {
     mark(g, "line", { ...line, x1: sky.x, y1: level.top - 0.4, x2: sky.x, y2: level.top - 4.2, stroke: "#33333a", "stroke-width": 1.4, "stroke-dasharray": "3 3" });

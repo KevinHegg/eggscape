@@ -1,7 +1,7 @@
 import * as pc from "playcanvas";
 import {
   BALE_H,
-  BALE_W,
+  BALE_W, CAT_LEAP, CAT_STIR,
   DOOR_SLOT,
   DOOR_WALL,
   EGG,
@@ -38,6 +38,8 @@ const SHOW_W = 9.3;
 const SHOW_H = 19.5;
 const FOV = 24;
 const RAD = 180 / Math.PI;
+/** How far back on her floor the cat keeps, so that he goes by in front of her. */
+const CAT_Z = -0.66;
 /** The top of the first room: the others are written as if they stood there. */
 const LARDER_TOP = 31;
 
@@ -188,6 +190,7 @@ export class Stage {
   private snares: Array<{ bar: pc.Entity; hen: pc.Entity; straw: pc.Entity }> = [];
   /** What is falling out of the sky, by its number. */
   private pots = new Map<number, pc.Entity>();
+  private mousers: Array<{ root: pc.Entity; body: pc.Entity; head: pc.Entity; tail: pc.Entity; legs: pc.Entity[]; lids: pc.Entity[]; straw: pc.Entity; faces: number; was: number }> = [];
   private kegs: Array<{ def: BarrelDef; keg: pc.Entity; chock: pc.Entity; pan: pc.Entity; lever: pc.Entity; crates: pc.Entity; lid: pc.Entity; kick: number; k: number }> = [];
   private flames: pc.Entity[] = [];
   private fried: pc.Entity | null = null;
@@ -314,6 +317,7 @@ export class Stage {
       gloveDark: this.paint("glove-dark", new pc.Color(0.5, 0.06, 0.06), { gloss: 0.5 }),
       woodHen: this.paint("wood-hen", new pc.Color(0.93, 0.74, 0.3), { gloss: 0.85, glow: 0.1 }),
       sky: this.paint("sky", new pc.Color(0.6, 0.78, 0.92), { glow: 0.25 }),
+      cat: this.paint("cat", new pc.Color(0.2, 0.19, 0.22), { gloss: 0.35 }),
       cloud: this.paint("cloud", new pc.Color(0.98, 0.98, 0.96), { glow: 0.35 }),
       grass: this.paint("grass", new pc.Color(0.42, 0.6, 0.28)),
       crust: this.paint("crust", new pc.Color(0.8, 0.56, 0.26), { gloss: 0.35 }),
@@ -482,6 +486,7 @@ export class Stage {
     this.flock = { x: 0, y: 0, loose: -1 };
     this.fists = [];
     this.snares = [];
+    this.mousers = [];
     this.pots.clear();
     this.holdAsk = null;
     if (!arrive) {
@@ -507,6 +512,7 @@ export class Stage {
       this.buildPies(level, here);
       this.buildGloves(level, here);
       this.buildTraps(level, here);
+      this.buildCats(level, here);
       this.buildCages(level);
       this.buildPans(level);
       this.buildNest(level, here);
@@ -1336,6 +1342,104 @@ export class Stage {
     }
   }
 
+  /**
+   * The kitchen cat: black, with a white bib and gold eyes. She is made facing left, and her
+   * feet are where she is. Asleep until the room is the one he is in, and after.
+   */
+  private buildCats(level: LevelDef, here: boolean): void {
+    const m = this.m;
+    for (const def of level.cats) {
+      const root = this.group("cat", this.scene, [def.x, def.y, CAT_Z]);
+      root.setLocalScale(1.18, 1.18, 1.18);
+      const body = this.group("body", root);
+      this.shape("sphere", body, [0, 0.4, 0], [1.05, 0.5, 0.5], m.cat);
+      this.shape("sphere", body, [-0.36, 0.33, 0], [0.34, 0.36, 0.52], m.china);
+      const head = this.group("head", body, [-0.56, 0.62, 0]);
+      this.shape("sphere", head, [0, 0, 0], [0.48, 0.42, 0.46], m.cat);
+      this.shape("sphere", head, [-0.16, -0.08, 0], [0.22, 0.18, 0.3], m.china);
+      this.shape("sphere", head, [-0.27, -0.04, 0], [0.07, 0.06, 0.08], m.vermilion);
+      const lids: pc.Entity[] = [];
+      for (const z of [-0.14, 0.14]) {
+        this.shape("cone", head, [0.04, 0.26, z], [0.18, 0.24, 0.12], m.cat, [0, 0, 8]);
+        lids.push(this.shape("sphere", head, [-0.17, 0.06, z * 1.05], [0.1, 0.13, 0.12], m.gold));
+        this.shape("sphere", head, [-0.2, 0.06, z * 1.05], [0.05, 0.11, 0.1], m.ink);
+      }
+      const tail = this.group("tail", body, [0.48, 0.44, 0]);
+      this.shape("box", tail, [0, 0.3, 0], [0.09, 0.6, 0.09], m.cat);
+      this.shape("sphere", tail, [0, 0.62, 0], [0.13, 0.16, 0.13], m.china);
+      const legs: pc.Entity[] = [];
+      for (const x of [-0.32, 0.3]) {
+        for (const z of [-0.13, 0.13]) {
+          const leg = this.group("leg", body, [x, 0.3, z]);
+          this.shape("box", leg, [0, -0.15, 0], [0.11, 0.32, 0.11], m.cat);
+          this.shape("sphere", leg, [-0.02, -0.29, 0], [0.15, 0.08, 0.13], m.china);
+          legs.push(leg);
+        }
+      }
+      const straw = this.baleShape(root);
+      straw.setLocalScale(0.5, 0.5, 0.6);
+      straw.enabled = false;
+      const cat = { root, body, head, tail, legs, lids, straw, faces: -1, was: def.x };
+      this.poseCat(cat, "asleep", 0, 0);
+      if (here) this.mousers.push(cat);
+    }
+  }
+
+  /** How she holds herself: asleep in a loaf, getting up, sprung, or sitting. `t` is how long she has been at it. */
+  private poseCat(cat: (typeof this.mousers)[number], pose: "asleep" | "stir" | "crouch" | "leap" | "run" | "sit", t: number, part: number): void {
+    const clock = this.clock;
+    let low = 1;
+    let tip = 0;
+    let headUp = 0;
+    let tail = -100;
+    let eyes = 1;
+    let stride = 0;
+    if (pose === "asleep") {
+      low = 0.72 + Math.sin(clock * 1.6) * 0.02;
+      headUp = -0.22;
+      tail = -128;
+      eyes = 0.08;
+    } else if (pose === "stir") {
+      // One eye, then both; up; a long stretch with her tail in the air.
+      const up = Math.min(1, t / 0.5);
+      const stretch = Math.sin(Math.min(1, Math.max(0, (t - 0.6) / 1)) * Math.PI);
+      low = 0.72 + up * 0.28;
+      headUp = -0.22 * (1 - up) - stretch * 0.1;
+      tip = -stretch * 14;
+      tail = -128 + up * 150 + Math.sin(clock * 5) * 10;
+      eyes = t < 0.25 ? 0.5 : 1.25;
+    } else if (pose === "crouch") {
+      // Down in front, up behind, and the wiggle that comes before she goes.
+      low = 0.84;
+      tip = 13;
+      headUp = -0.06;
+      tail = 30 + Math.sin(clock * 26) * 18;
+      eyes = 1.4;
+      cat.body.setLocalPosition(Math.sin(clock * 30) * 0.025, 0, 0);
+    } else if (pose === "leap") {
+      tip = 24 - part * 52;
+      tail = -60;
+      eyes = 1.4;
+      stride = 62 - part * 40;
+    } else if (pose === "run") {
+      tail = 20 + Math.sin(clock * 9) * 8;
+      stride = Math.sin(clock * 22) * 38;
+    } else {
+      // Sat up, with her tail going.
+      tip = -22;
+      headUp = 0.05;
+      tail = -70 + Math.sin(clock * 3.2) * 16;
+    }
+    if (pose !== "crouch") cat.body.setLocalPosition(0, 0, 0);
+    cat.body.setLocalScale(pose === "leap" ? 1.16 : 1, low, 1);
+    cat.body.setLocalEulerAngles(0, 0, tip);
+    cat.head.setLocalPosition(-0.56, 0.62 + headUp, 0);
+    cat.head.setLocalEulerAngles(0, 0, -tip * 0.8);
+    cat.tail.setLocalEulerAngles(0, 0, tail);
+    for (const lid of cat.lids) lid.setLocalScale(0.1, 0.13 * eyes, 0.12);
+    cat.legs.forEach((leg, index) => leg.setLocalEulerAngles(0, 0, pose === "leap" ? (index < 2 ? stride : -stride) : (index % 2 ? 1 : -1) * (index < 2 ? stride : -stride)));
+  }
+
   /** One of the Queen's things, on its way down: a saucepan, a flat-iron, a rolling pin, or the kitchen sink. */
   private buildPot(kind: number): pc.Entity {
     const m = this.m;
@@ -1966,6 +2070,43 @@ export class Stage {
       glove.lamp.setLocalScale(glow, glow, glow);
     });
 
+    game.cats.forEach((state, index) => {
+      const cat = this.mousers[index];
+      if (!cat) return;
+      const def = state.def;
+      let x = state.x;
+      let y = state.y;
+      let z = CAT_Z;
+      cat.straw.enabled = false;
+      if (state.state === "asleep") this.poseCat(cat, "asleep", 0, 0);
+      else if (state.state === "awake") this.poseCat(cat, state.awake > CAT_STIR - 0.75 ? "crouch" : "stir", state.since, 0);
+      else if (state.state === "leap") {
+        // Up and over, and out to the front of the floor where the thing is.
+        const part = Math.min(1, state.since / CAT_LEAP);
+        y += Math.sin(part * Math.PI) * 0.9;
+        z = CAT_Z * (1 - part);
+        if (Math.abs(x - cat.was) > 0.001) cat.faces = Math.sign(x - cat.was);
+        this.poseCat(cat, "leap", state.since, part);
+      } else if (state.state === "fed") {
+        // Off home with it, and down on it.
+        const part = Math.min(1, state.since / 0.9);
+        x += (def.x - x) * part;
+        y += (def.y - y) * part + (part < 1 ? Math.abs(Math.sin(this.clock * 22)) * 0.08 : 0.26);
+        z = CAT_Z * part;
+        if (part < 1) cat.faces = Math.sign(def.x - state.x) || cat.faces;
+        cat.straw.enabled = true;
+        cat.straw.setLocalPosition(part < 1 ? -0.7 : 0, part < 1 ? 0.5 : -0.12, 0);
+        this.poseCat(cat, part < 1 ? "run" : "asleep", state.since, part);
+        if (part >= 1) for (const lid of cat.lids) lid.setLocalScale(0.1, 0.03, 0.12);
+      } else {
+        z = 0;
+        this.poseCat(cat, "sit", state.since, 0);
+      }
+      cat.was = state.x;
+      cat.root.setLocalPosition(x, y, z);
+      cat.root.setLocalEulerAngles(0, cat.faces > 0 ? 180 : 0, 0);
+    });
+
     game.traps.forEach((state, index) => {
       const snare = this.snares[index];
       if (!snare) return;
@@ -2265,6 +2406,20 @@ export class Stage {
           this.burst(event.x, event.y, m.hayDark, 9, 0.3, 4.5);
         }
         this.shake = Math.max(this.shake, event.what === "egg" ? 0.55 : 0.4);
+        break;
+      case "wake":
+        this.burst(event.x - 0.5, event.y + 1.1, m.gold, 3, 0.08, 2.5);
+        break;
+      case "leap":
+        this.burst(event.x, event.y + 0.2, m.dust, 5, 0.2, 2);
+        break;
+      case "fetch":
+        this.burst(event.x, event.y + 0.2, m.hay, 16, 0.4, 4.5);
+        this.shake = Math.max(this.shake, 0.3);
+        break;
+      case "pounce":
+        this.burst(event.x, event.y + 0.3, m.dust, 10, 0.3, 4);
+        this.shake = Math.max(this.shake, 0.8);
         break;
       case "snap":
         this.burst(event.x, event.y + 0.9, m.dust, 10, 0.3, 3.5);

@@ -273,6 +273,21 @@ export class Sound {
     this.tone("triangle", 322, 300, 0.7, 0.26, 0.05);
     this.tone("triangle", 483, 450, 0.55, 0.16, 0.05);
   }
+  /** The cat, woken: a question. And the cat, sprung: not one. And the cat, content. */
+  mew(): void {
+    this.tone("sawtooth", 520, 880, 0.16, 0.16);
+    this.tone("sawtooth", 880, 640, 0.3, 0.16, 0.15);
+    this.tone("sine", 1040, 1760, 0.16, 0.1);
+    this.tone("sine", 1760, 1280, 0.3, 0.1, 0.15);
+  }
+  yowl(): void {
+    this.tone("sawtooth", 420, 1250, 0.2, 0.3);
+    this.tone("sawtooth", 1250, 380, 0.45, 0.3, 0.19);
+    this.hiss("bandpass", 2600, 1200, 0.5, 0.4, 0.05);
+  }
+  purr(): void {
+    for (let index = 0; index < 9; index += 1) this.tone("sawtooth", 46, 40, 0.07, 0.3, 0.25 + index * 0.09);
+  }
   /** A hen that is not a hen. */
   tin(): void {
     for (const at of [0, 0.12, 0.24]) this.tone("square", 940, 900, 0.05, 0.11, at);

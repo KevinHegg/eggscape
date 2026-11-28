@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { before, test } from "node:test";
-import { BAKEHOUSE, BOIL, BURN, BUTTERY, CAGE, CELLAR, CISTERN, DOOR_LAPS, DOOR_TURN, Game, IDLE, LARDER, LEVELS, LIFT_SPEED, MILLROOM, PANTRY, PASTRY, POT_FALL, RACE, RISE, SCULLERY, SEAT_IDLE, SERVERY, SKY_EVERY, STEP, STOREY, TRAP_BEAT, WHEEL_TURN, WIND, YARD, loadPhysics, type GameEvent, type Input, type LevelDef } from "../src/sim/kitchen";
+import { BAKEHOUSE, BOIL, BURN, BUTTERY, CAGE, CAT_LEAP, CAT_NAP, CAT_STIR, CELLAR, CISTERN, DOOR_LAPS, DOOR_TURN, Game, IDLE, LARDER, LEVELS, LIFT_SPEED, MILLROOM, PANTRY, PASTRY, POT_FALL, RACE, RISE, SCULLERY, SEAT_IDLE, SERVERY, SKY_EVERY, STEP, STOREY, TRAP_BEAT, WHEEL_TURN, WIND, YARD, loadPhysics, type GameEvent, type Input, type LevelDef } from "../src/sim/kitchen";
 import { GOOD_DROP, LETS, PLANS, bakehousePlan, butteryPlan, cellarPlan, cisternPlan, larderPlan, millPlan, pantryPlan, pastryPlan, pilot, sculleryPlan, serveryPlan, yardPlan, type Move } from "../src/sim/pilot";
 
 before(async () => {
@@ -24,14 +24,99 @@ function run(hands: (game: Game) => Input, limit = 40, level: LevelDef = LARDER)
 
 const count = (events: GameEvent[], type: GameEvent["type"]): number => events.filter((event) => event.type === type).length;
 
-test("three bales in the right places get him home whole, with three stars", () => {
+test("three bales in the right places and one for the cat get him home whole, with three stars", () => {
   const { game, events } = run(pilot(larderPlan()));
   assert.equal(game.phase, "home");
   assert.equal(game.cracks, 0);
-  assert.equal(game.balesLeft, LARDER.bales - 3);
+  assert.equal(game.balesLeft, LARDER.bales - 4);
   assert.equal(game.stars, 3);
   assert.equal(count(events, "fling"), 1);
+  assert.equal(count(events, "fetch"), 1);
   assert.ok(game.time < 16, `a clean run is short: took ${game.time.toFixed(1)}s`);
+});
+
+const when = (events: Array<GameEvent & { t?: number }>, type: GameEvent["type"]): number => events.find((event) => event.type === type)?.t ?? -1;
+/** A run of the larder with the time of each thing that happened in it. */
+function larder(hands: (game: Game) => Input, limit = 40): { game: Game; events: Array<GameEvent & { t: number }> } {
+  const game = new Game(LARDER);
+  const events: Array<GameEvent & { t: number }> = [];
+  game.start();
+  while (!game.over && game.time < limit) {
+    game.step(hands(game));
+    for (const event of game.drain()) events.push({ ...event, t: game.time });
+  }
+  return { game, events };
+}
+
+test("cat: the see-saw wakes her, and with no bale of her own she has him", () => {
+  const { game, events } = larder(pilot(larderPlan(GOOD_DROP, true, false)));
+  assert.equal(game.phase, "broken");
+  assert.equal(count(events, "pounce"), 1);
+  assert.ok(Math.abs(when(events, "wake") - when(events, "fling")) < 0.02, "she wakes as it goes off");
+  assert.ok(Math.abs(when(events, "leap") - when(events, "wake") - CAT_STIR) < 0.05, "she is that long getting up");
+  assert.ok(Math.abs(when(events, "pounce") - when(events, "leap") - CAT_LEAP) < 0.05, "and that long in the air");
+});
+
+test("cat: she sleeps until the see-saw goes off, however long that is", () => {
+  const { game, events } = larder(pilot(larderPlan().slice(0, 2)), 7);
+  assert.equal(count(events, "wake"), 0);
+  assert.equal(game.cats[0]!.state, "asleep");
+  assert.equal(game.cats[0]!.awake, -1);
+  game.dispose();
+});
+
+test("cat: there are seconds to throw hers in, and not just one moment", () => {
+  for (const toy of [0, 0.7, 1.4, 2]) {
+    const { game, events } = larder(pilot(larderPlan(GOOD_DROP, true, toy)));
+    assert.equal(game.phase, "home", `thrown ${toy}s after she woke`);
+    assert.equal(game.stars, 3, `thrown ${toy}s after she woke`);
+    assert.equal(count(events, "pounce"), 0);
+  }
+  assert.equal(larder(pilot(larderPlan(GOOD_DROP, true, 2.3))).game.phase, "broken", "and then she has gone");
+});
+
+test("cat: she has a bale wherever on her floor it lands", () => {
+  for (const x of [-3.3, -2, -1.1, 0.2, 1.1]) {
+    const { game, events } = larder(pilot(larderPlan(GOOD_DROP, true, 0.3, { x, y: 19.6 - 0.36 * (x + 4) + 0.6 })));
+    assert.equal(count(events, "fetch"), 1, `at ${x}`);
+    assert.equal(game.phase, "home", `at ${x}`);
+    assert.equal(game.cracks, 0, `at ${x}`);
+  }
+});
+
+test("cat: straw that is not on her floor is not hers", () => {
+  // On the stone over her head, and in the nest below.
+  for (const at of [{ x: 1.4, y: 21.5 }, { x: 2.8, y: 15.2 }]) {
+    const { game, events } = larder(pilot(larderPlan(GOOD_DROP, true, 0.3, at)));
+    assert.equal(count(events, "fetch"), 0, `at ${at.x}, ${at.y}`);
+    assert.equal(game.phase, "broken", `at ${at.x}, ${at.y}`);
+  }
+});
+
+test("cat: straw that was lying there before she woke is nothing to her", () => {
+  const cat = LARDER.cats[0]!;
+  const early: Move = { when: (game) => game.time > 3, x: cat.x - 0.2, y: cat.y + 0.5 };
+  const plan = larderPlan(GOOD_DROP, true, false);
+  const { game, events } = larder(pilot([...plan.slice(0, 2), early, ...plan.slice(2)]));
+  assert.equal(count(events, "fetch"), 0);
+  assert.equal(game.phase, "broken");
+});
+
+test("cat: thrown straight after the see-saw's bale, hers counts: she was half awake", () => {
+  const cat = LARDER.cats[0]!;
+  const plan = larderPlan(GOOD_DROP, true, false);
+  const { game, events } = larder(pilot([...plan, { when: () => true, x: cat.x - 0.2, y: cat.y + 0.5 }]));
+  const bales = events.filter((event) => event.type === "bale");
+  assert.ok(when(events, "wake") - bales[bales.length - 1]!.t < CAT_NAP, "it was there before she woke");
+  assert.equal(count(events, "fetch"), 1);
+  assert.equal(game.phase, "home");
+});
+
+test("cat: she has the first bale that lands once she is awake, and if that is the one in the hole he is in the pan", () => {
+  const plug: Move = { when: (game) => (game.cats[0]?.awake ?? -1) >= 0.3, x: -1.1, y: 18.9 };
+  const { game, events } = larder(pilot([...larderPlan(GOOD_DROP, false, false), plug]));
+  assert.equal(count(events, "fetch"), 1);
+  assert.equal(game.phase, "fried");
 });
 
 test("left alone, the long drop ends him", () => {

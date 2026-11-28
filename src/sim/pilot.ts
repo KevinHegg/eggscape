@@ -1,4 +1,4 @@
-import { BUTTERY, CISTERN, PANTRY, PASTRY, SCULLERY, STOREY, YARD, type Game, type Input, type LevelDef } from "./kitchen";
+import { BUTTERY, CISTERN, LARDER, PANTRY, PASTRY, SCULLERY, STOREY, YARD, type Game, type Input, type LevelDef } from "./kitchen";
 
 /** What a player does on a screen, as a list of things to wait for and where to put the bale. */
 export interface Move {
@@ -27,13 +27,17 @@ export const GOOD_DROP = 24.2;
 
 /**
  * The first screen played properly: a bale where he comes down, one in the hole to the pan,
- * and one dropped on the see-saw once he is sitting in it.
+ * one dropped on the see-saw once he is sitting in it, and one for the cat as soon as that
+ * has woken her. `toy` as a number is how long after she wakes to throw hers; `at` is where.
  */
-export function larderPlan(drop = GOOD_DROP, stopHole = true): Move[] {
+export function larderPlan(drop = GOOD_DROP, stopHole = true, toy: boolean | number = true, at?: { x: number; y: number }): Move[] {
+  const cat = LARDER.cats[0]!;
+  const awake = (game: Game): boolean => (game.cats[0]?.awake ?? -1) >= (toy === true ? 0 : Number(toy));
   return [
     { when: (game) => game.time > 1.2, x: 2.9, y: 22.8 },
     ...(stopHole ? [{ when: (game: Game) => game.time > 2, x: -1.1, y: 18.9 }] : []),
     { when: settled, x: 0, y: drop },
+    ...(toy === false ? [] : [{ when: awake, x: at?.x ?? cat.x - 0.2, y: at?.y ?? cat.y + 0.5 }]),
   ];
 }
 

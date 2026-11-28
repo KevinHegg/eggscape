@@ -116,6 +116,11 @@ export const TRAP_BEAT = 0.7;
 export const POT_FALL = 5;
 export const POT_R = 0.36;
 export const SKY_EVERY = 4;
+/** The kitchen cat: how long she is waking once something has woken her, and how long her pounce is in the air. */
+export const CAT_STIR = 2.6;
+export const CAT_LEAP = 0.6;
+/** She was half awake already: a bale that came this long before she woke is new to her too. */
+export const CAT_NAP = 1;
 export const LIFT_SPEED = 3;
 export const LIFT_TILT = 0.1;
 /** How fast something has to be going to do damage: a barrel to straw and to him. */
@@ -429,6 +434,24 @@ export interface SkyDef {
   first: number;
 }
 
+/**
+ * The kitchen cat. She sleeps at the back of her floor until a see-saw wakes her, or he comes
+ * down on that floor. Awake, she wants something to pounce on: she is `CAT_STIR` seconds
+ * getting up, and then it is him. But a bale that lands on her floor once she is awake is a
+ * better thing than an egg, and she has that instead, and carries it off, and is content.
+ * Straw that was lying there before she woke is nothing to her.
+ */
+export interface CatDef {
+  /** Where she sleeps: her feet. */
+  x: number;
+  y: number;
+  /** Her floor, and as far above it as she takes notice. */
+  x0: number;
+  x1: number;
+  y0: number;
+  y1: number;
+}
+
 /** A mine: the middle of its plate, which lies in the face of a shelf; how that shelf leans; and how wide the plate is. */
 export interface MineDef {
   x: number;
@@ -481,6 +504,7 @@ export interface LevelDef {
   pies: PieDef[];
   gloves: GloveDef[];
   traps: TrapDef[];
+  cats: CatDef[];
   skies: SkyDef[];
   pits: PitDef[];
   /** Places there is no way out of: the hook has him out of one in `CAGE` seconds. */
@@ -524,11 +548,14 @@ const PIT = { x: -1.1, w: 1.1, well: BALE_W * Math.cos(LOW_TURN) + 0.12 };
 /** How far below the floor the well's ledges lie, straight down: one bale, measured square to the slope. */
 const WELL_DEEP = BALE_H / Math.cos(LOW_TURN);
 const WELL = { x0: PIT.x - PIT.well / 2, x1: PIT.x + PIT.well / 2 };
+/** Where the cat sleeps on that floor. */
+const MOUSER_X = 1.1;
 
 /**
  * The first screen. Three things to do with a bale, top to bottom: catch him at the foot of
  * the long drop; drop one on the see-saw to throw him across to a bed of straw; and stop the
- * hole to the frying pan before he rolls into it.
+ * hole to the frying pan before he rolls into it. And a fourth, which has to be done when it
+ * is wanted: the see-saw wakes the cat, and she must be thrown a bale of her own.
  */
 export const LARDER: LevelDef = {
   key: "larder",
@@ -542,7 +569,7 @@ export const LARDER: LevelDef = {
   start: { x: -2.9, y: 28.9 - (1.1 * 1.5) / 4.2 + EGG.blunt + 0.06 },
   shove: -2.4,
   bales: 5,
-  spare: 2,
+  spare: 1,
   blocks: [
     box(-4.8, 12.6, -4, 31.4, "wall"),
     box(4, 12.6, 4.8, 31.4, "wall"),
@@ -589,6 +616,8 @@ export const LARDER: LevelDef = {
   pies: [],
   gloves: [],
   traps: [],
+  // Asleep at the far end of the floor with the hole in it, by the way down to the nest.
+  cats: [{ x: MOUSER_X, y: lowAt(MOUSER_X), x0: -4, x1: 1.9, y0: lowAt(1.9) - 0.4, y1: 21.25 }],
   skies: [],
   pits: [{ x: PIT.x, y: lowAt(PIT.x) - WELL_DEEP, w: PIT.w, pan: FLOOR + 0.7, hung: false }],
   sockets: [
@@ -651,6 +680,7 @@ function lowered(level: LevelDef, by: number): LevelDef {
     gloves: level.gloves.map((glove) => ({ ...glove, y: glove.y - by, from: { x: glove.from.x, y: glove.from.y - by } })),
     traps: level.traps.map((trap) => ({ ...trap, floor: trap.floor - by, y0: trap.y0 - by, y1: trap.y1 - by })),
     skies: level.skies,
+    cats: level.cats.map((cat) => ({ ...cat, y: cat.y - by, y0: cat.y0 - by, y1: cat.y1 - by })),
     barrels: level.barrels.map((barrel) => ({
       ...barrel,
       y: barrel.y - by,
@@ -806,6 +836,7 @@ const SCULLERY_HERE: LevelDef = {
   pies: [],
   gloves: [],
   traps: [],
+  cats: [],
   skies: [],
   pits: [
     { x: GAP.x, y: rackAt(GAP.x) - GAP_DEEP, w: GAP.w, pan: rackAt(GAP.x) - GAP_DEEP - GAP.hang, hung: true },
@@ -928,6 +959,7 @@ const MILL_HERE: LevelDef = {
   pies: [],
   gloves: [],
   traps: [],
+  cats: [],
   skies: [],
   pits: [
     // Anything that comes out of the bottom of the wheel is in the tray.
@@ -1048,6 +1080,7 @@ const BUTTERY_HERE: LevelDef = {
   pies: [],
   gloves: [],
   traps: [],
+  cats: [],
   skies: [],
   pits: [{ x: TURN.x, y: TURN.y - DRUM + 0.05, w: 2.1, pan: TURN.y - DRUM - 0.8, hung: true }],
   cages: [],
@@ -1158,6 +1191,7 @@ const CISTERN_HERE: LevelDef = {
   pies: [],
   gloves: [],
   traps: [],
+  cats: [],
   skies: [],
   pits: [{ x: -3.1, y: VAT.lip - GUTTER.drop, w: 1.8, pan: 16.85, hung: true }],
   cages: [],
@@ -1268,6 +1302,7 @@ const SERVERY_HERE: LevelDef = {
   pies: [],
   gloves: [],
   traps: [],
+  cats: [],
   skies: [],
   pits: [],
   cages: [],
@@ -1372,6 +1407,7 @@ const CELLAR_HERE: LevelDef = {
   pies: [],
   gloves: [],
   traps: [],
+  cats: [],
   skies: [],
   pits: [{ x: VAULT.x, y: skidAt(SKID.end), w: VAULT.w, pan: VAULT.pan, hung: true }],
   cages: [],
@@ -1474,6 +1510,7 @@ const BAKEHOUSE_HERE: LevelDef = {
   pies: [],
   gloves: [],
   traps: [],
+  cats: [],
   skies: [],
   pits: [],
   cages: [],
@@ -1594,6 +1631,7 @@ const PASTRY_HERE: LevelDef = {
   ],
   gloves: [],
   traps: [],
+  cats: [],
   skies: [],
   pits: [{ x: RANGE.pit, y: RANGE.top, w: RANGE.w, pan: RANGE.pan, hung: false }],
   cages: [],
@@ -1721,6 +1759,7 @@ const PANTRY_HERE: LevelDef = {
     },
   ],
   traps: [{ x0: DECOY.x0, x1: DECOY.x1, floor: DECOY.floor, y0: pantryFloorAt(DECOY.x0), y1: pantryFloorAt(DECOY.x1) }],
+  cats: [],
   skies: [],
   pits: [{ x: SKILLET.x, y: SKILLET.pan + 1.6, w: SKILLET.w, pan: SKILLET.pan, hung: true }],
   cages: [],
@@ -1827,6 +1866,7 @@ const YARD_HERE: LevelDef = {
   pies: [],
   gloves: [],
   traps: [],
+  cats: [],
   skies: [
     // One, two, three: where he comes down, then the gap, then the feather bed. Each bale goes after its own pot.
     { x: SKY.top, every: SKY_EVERY, first: 1 },
@@ -1892,6 +1932,10 @@ export type GameEvent =
   | { type: "lure"; x: number; y: number }
   | { type: "snap"; by: "egg" | "bale"; x: number; y: number }
   | { type: "pot"; hit: "floor" | "bale" | "egg" | "pan"; column: number; kind: number; x: number; y: number }
+  | { type: "wake"; x: number; y: number }
+  | { type: "leap"; at: "egg" | "bale"; x: number; y: number }
+  | { type: "fetch"; id: number; x: number; y: number }
+  | { type: "pounce"; x: number; y: number }
   | { type: "caged"; x: number; y: number }
   | { type: "warn" }
   | { type: "caught" }
@@ -1923,6 +1967,8 @@ interface Bale {
   held: boolean;
   /** When it caught light, on embers; before that, -1. */
   lit: number;
+  /** When it came. */
+  born: number;
 }
 
 interface Incoming {
@@ -2065,6 +2111,17 @@ export class Game {
   private readonly fists: Array<{ def: GloveDef; readyAt: number; hitAt: number; told: boolean }> = [];
   /** Each egg trap: when it went and for what, and how long he has been sitting in it. */
   private readonly decoys: Array<{ def: TrapDef; sprungAt: number; by: "egg" | "bale" | null; inside: number }> = [];
+  /** Each cat: what she is doing and since when, where she is, where she sprang from and at what. */
+  private readonly mousers: Array<{
+    def: CatDef;
+    state: "asleep" | "awake" | "leap" | "fed" | "sat";
+    since: number;
+    wokeAt: number;
+    x: number;
+    y: number;
+    from: { x: number; y: number };
+    prey: Bale | "egg" | null;
+  }> = [];
   /** The sky's own clock, which runs before he is let go as well as after. */
   sky = 0;
   /** How many things each place in the sky has let go, and when the last of them came down on something. */
@@ -2377,6 +2434,7 @@ export class Game {
     }
     for (const def of level.gloves) this.fists.push({ def, readyAt: 0, hitAt: -1, told: true });
     for (const def of level.traps) this.decoys.push({ def, sprungAt: -1, by: null, inside: 0 });
+    for (const def of level.cats) this.mousers.push({ def, state: "asleep", since: 0, wokeAt: -1, x: def.x, y: def.y, from: { x: def.x, y: def.y }, prey: null });
     for (let column = 0; column < level.skies.length; column += 1) {
       this.dropped.push(0);
       this.downAt.push(-1);
@@ -2587,6 +2645,22 @@ export class Game {
     return this.falling.map((pot) => ({ ...pot }));
   }
 
+  /**
+   * Each cat: what she is doing and for how long she has been, where her feet are, what she is
+   * after, and how long she has been awake (-1 asleep).
+   */
+  get cats(): Array<{ def: CatDef; state: "asleep" | "awake" | "leap" | "fed" | "sat"; since: number; awake: number; x: number; y: number; prey: "egg" | "bale" | null }> {
+    return this.mousers.map((cat) => ({
+      def: cat.def,
+      state: cat.state,
+      since: this.time - cat.since,
+      awake: cat.wokeAt < 0 ? -1 : this.time - cat.wokeAt,
+      x: cat.x,
+      y: cat.y,
+      prey: cat.prey === null ? null : cat.prey === "egg" ? "egg" : "bale",
+    }));
+  }
+
   get flying(): boolean {
     return this.flight !== null;
   }
@@ -2731,6 +2805,7 @@ export class Game {
     this.flock();
     this.punch();
     this.bite();
+    this.prowl();
     this.rain();
     if (this.phase !== "run") return;
 
@@ -2755,7 +2830,7 @@ export class Game {
       body,
     );
     this.soft.add(collider.handle);
-    this.live.push({ id: bale.id, body, collider, fall: 0, spent: false, tank: false, washed: false, held: false, lit: -1 });
+    this.live.push({ id: bale.id, body, collider, fall: 0, spent: false, tank: false, washed: false, held: false, lit: -1, born: this.time });
     this.events.push({ type: "bale", id: bale.id, x: bale.x, y });
   }
 
@@ -3300,6 +3375,73 @@ export class Game {
       this.events.push({ type: "punch", what: "bale", glove: index, x: at.x, y: at.y });
       this.scrap(bale);
     });
+  }
+
+  /**
+   * The cat. Woken, she has the first bale that lands on her floor after that; and with none,
+   * once she is up, she has him.
+   */
+  private prowl(): void {
+    const p = this.eggBody.translation();
+    for (const cat of this.mousers) {
+      const def = cat.def;
+      const within = (at: { x: number; y: number }): boolean => at.x > def.x0 && at.x < def.x1 && at.y > def.y0 && at.y < def.y1;
+      const egg = this.phase === "run" && !this.flight && within(p);
+      if (cat.state === "asleep") {
+        if (this.phase !== "run" || (this.flungAt < 0 && !egg)) continue;
+        cat.state = "awake";
+        cat.since = this.time;
+        cat.wokeAt = this.time;
+        this.events.push({ type: "wake", x: cat.x, y: cat.y });
+        continue;
+      }
+      if (cat.state === "awake") {
+        const bale = this.live.find((each) => !each.held && each.born > cat.wokeAt - CAT_NAP && within(each.body.translation()));
+        if (!bale && !(egg && this.time >= cat.wokeAt + CAT_STIR)) continue;
+        cat.state = "leap";
+        cat.since = this.time;
+        cat.from = { x: cat.x, y: cat.y };
+        cat.prey = bale ?? "egg";
+        this.events.push({ type: "leap", at: bale ? "bale" : "egg", x: cat.x, y: cat.y });
+        continue;
+      }
+      if (cat.state !== "leap" || cat.prey === null) continue;
+      // She comes down where it is, not where it was.
+      const gone = cat.prey !== "egg" && !this.live.includes(cat.prey);
+      const at = gone ? { x: cat.x, y: cat.y } : cat.prey === "egg" ? p : cat.prey.body.translation();
+      const part = Math.min(1, (this.time - cat.since) / CAT_LEAP);
+      if (!gone) {
+        cat.x = cat.from.x + (at.x - cat.from.x) * part;
+        cat.y = cat.from.y + (at.y - cat.from.y) * part;
+      }
+      if (gone) {
+        // What she was after has burst under her: she is where she is, and looking about again.
+        cat.state = "awake";
+        cat.prey = null;
+        continue;
+      }
+      if (part < 1) continue;
+      if (cat.prey !== "egg") {
+        this.events.push({ type: "fetch", id: cat.prey.id, x: at.x, y: at.y });
+        this.scrap(cat.prey);
+        cat.state = "fed";
+        cat.since = this.time;
+        cat.prey = null;
+        continue;
+      }
+      cat.since = this.time;
+      cat.prey = null;
+      if (!egg) {
+        // He is off her floor before she is down: she sits and looks after him.
+        cat.state = "sat";
+        continue;
+      }
+      cat.state = "sat";
+      this.events.push({ type: "pounce", x: p.x, y: p.y });
+      this.phase = "broken";
+      this.cracks = SHELL + 1;
+      this.events.push({ type: "broken", x: p.x, y: p.y });
+    }
   }
 
   /** An egg trap goes for whatever comes to rest in its nest: and then its bar is a lid on it. */

@@ -178,6 +178,17 @@ them in passing; they are kept as they were on purpose.
     it, hands him to the blackbirds: `FLOCK` seconds along a spline (`along`) with gravity
     off, over the last jelly, under the one above and down into the nest. An open pie with
     nobody carried is a cage.
+- The Larder's cat (`CatDef`) is kinematic and has no collider: she keeps to the back of
+  her floor and he goes by in front. A see-saw's throw wakes her (or his coming down on her
+  floor). The first bale that lands in her box after that (or up to `CAT_NAP` before, so a
+  quick one-two counts) she leaps on, and it is gone; with none, `CAT_STIR` seconds after
+  waking she leaps on him, `CAT_LEAP` seconds in the air and coming down where he is, not
+  where he was.
+  - The user said the Larder was too easy and asked for "another challenge", "maybe
+    something new". The cat is that: the Larder's first three bales can be thrown at
+    leisure, and hers cannot. It now takes four bales of five, with one to spare.
+  - A bale thrown ahead of time is not hers, which is what stops all four going down at the
+    start; and she will take the bale out of the hole if that is the first to land.
 - The Pantry's gloves (`GloveDef`) punch by rule: whatever is in front of one (`near`..`far`
   out from the wall, at its height) when it is wound is thrown from `from` with `toss`
   (`launch`), and it is `WIND` seconds winding back. A loose bale in front of it takes the
